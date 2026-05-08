@@ -6239,9 +6239,10 @@ mod tests {
     use crate::parser::oracle_ir::context::ParseContext;
     use crate::parser::oracle_ir::diagnostic::OracleDiagnostic;
     use crate::types::ability::{
-        AbilityCondition, AbilityKind, Comparator, ContinuousModification, ControllerRef,
-        DamageModification, Duration, Effect, FilterProp, ObjectScope, PlayerFilter, PlayerScope,
-        PtValue, QuantityExpr, QuantityRef, TargetFilter, TypeFilter, TypedFilter, UnlessCost,
+        AbilityCondition, AbilityKind, AggregateFunction, Comparator, ContinuousModification,
+        ControllerRef, DamageModification, Duration, Effect, FilterProp, ObjectScope, PlayerFilter,
+        PlayerScope, PtValue, QuantityExpr, QuantityRef, TargetFilter, TypeFilter, TypedFilter,
+        UnlessCost,
     };
     use crate::types::counter::{CounterMatch, CounterType};
     use crate::types::replacements::ReplacementEvent;
@@ -8321,7 +8322,7 @@ mod tests {
 
     /// CR 603.4 + CR 701.9: "at the beginning of each end step, if an opponent
     /// discarded a card this turn, ..." — intervening-if must be hoisted as a
-    /// `QuantityComparison` against `OpponentDiscardedCardThisTurn`. Regression
+    /// scoped `CardsDiscardedThisTurn` quantity comparison. Regression
     /// for Tinybones, Trinket Thief (previously `condition: null`).
     #[test]
     fn trigger_intervening_if_opponent_discarded_this_turn() {
@@ -8347,7 +8348,11 @@ mod tests {
         assert_eq!(
             *lhs,
             QuantityExpr::Ref {
-                qty: QuantityRef::OpponentDiscardedCardThisTurn,
+                qty: QuantityRef::CardsDiscardedThisTurn {
+                    player: PlayerScope::Opponent {
+                        aggregate: AggregateFunction::Sum,
+                    },
+                },
             }
         );
     }

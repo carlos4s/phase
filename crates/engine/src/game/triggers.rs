@@ -8828,13 +8828,15 @@ mod dedup_regression_tests {
     }
 
     /// CR 603.4 + CR 701.9: Intervening-if "if an opponent discarded a card this
-    /// turn" evaluates against the per-turn discard set. Verifies both the
+    /// turn" evaluates against the per-turn discard counts. Verifies both the
     /// positive (opponent discarded → condition met) and negative (no opponent
     /// discarded → condition unmet, as well as only-controller-discarded →
     /// condition unmet) paths for Tinybones, Trinket Thief.
     #[test]
     fn intervening_if_opponent_discarded_this_turn_gates_trigger() {
-        use crate::types::ability::{Comparator, QuantityExpr, QuantityRef, TriggerCondition};
+        use crate::types::ability::{
+            AggregateFunction, Comparator, PlayerScope, QuantityExpr, QuantityRef, TriggerCondition,
+        };
 
         let mut state = GameState::new_two_player(42);
         let controller = PlayerId(0);
@@ -8842,7 +8844,11 @@ mod dedup_regression_tests {
 
         let condition = TriggerCondition::QuantityComparison {
             lhs: QuantityExpr::Ref {
-                qty: QuantityRef::OpponentDiscardedCardThisTurn,
+                qty: QuantityRef::CardsDiscardedThisTurn {
+                    player: PlayerScope::Opponent {
+                        aggregate: AggregateFunction::Sum,
+                    },
+                },
             },
             comparator: Comparator::GE,
             rhs: QuantityExpr::Fixed { value: 1 },
@@ -8855,16 +8861,14 @@ mod dedup_regression_tests {
         );
 
         // Only the controller discarded → still no opponent discard → condition unmet.
-        state
-            .players_who_discarded_card_this_turn
-            .insert(controller);
+        crate::game::restrictions::record_discard(&mut state, controller);
         assert!(
             !check_trigger_condition(&state, &condition, controller, None, None),
             "self-discard must not satisfy 'an opponent discarded a card this turn'"
         );
 
         // Opponent discarded → condition met.
-        state.players_who_discarded_card_this_turn.insert(opponent);
+        crate::game::restrictions::record_discard(&mut state, opponent);
         assert!(
             check_trigger_condition(&state, &condition, controller, None, None),
             "opponent-discard must satisfy 'an opponent discarded a card this turn'"

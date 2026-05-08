@@ -181,6 +181,10 @@ pub fn record_attackers_declared(
 
 pub fn record_discard(state: &mut crate::types::game_state::GameState, player: PlayerId) {
     state.players_who_discarded_card_this_turn.insert(player);
+    *state
+        .cards_discarded_this_turn_by_player
+        .entry(player)
+        .or_insert(0) += 1;
 }
 
 pub fn record_token_created(state: &mut crate::types::game_state::GameState, object_id: ObjectId) {

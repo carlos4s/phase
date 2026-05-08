@@ -2326,12 +2326,11 @@ pub enum QuantityRef {
         counters: crate::types::counter::CounterMatch,
         target: TargetFilter,
     },
-    /// CR 701.9 + CR 603.4: Whether any opponent of the controller discarded a
-    /// card this turn. Resolves to 1 when at least one opponent is recorded in
-    /// `players_who_discarded_card_this_turn`, else 0. Used by intervening-if
-    /// clauses like "if an opponent discarded a card this turn" (Tinybones,
-    /// Trinket Thief and similar).
-    OpponentDiscardedCardThisTurn,
+    /// CR 701.9 + CR 603.4: Number of cards discarded this turn, scoped by
+    /// `player`. Mirrors `CardsDrawnThisTurn` so conditions like "you've
+    /// discarded a card this turn" and "if an opponent discarded a card this
+    /// turn" reuse the existing per-player aggregate axis.
+    CardsDiscardedThisTurn { player: PlayerScope },
     /// CR 309.7: Number of dungeons the controller has completed.
     DungeonsCompleted,
     /// CR 107.3m: The value of X paid for the spell that produced the source

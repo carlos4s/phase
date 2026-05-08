@@ -1233,6 +1233,7 @@ fn parse_youve_this_turn(input: &str) -> OracleResult<'_, StaticCondition> {
         parse_cast_spell_count_this_turn,
         |input| parse_another_spell_cast_this_turn(input, 2),
         parse_cast_one_spell_this_turn,
+        parse_discarded_card_this_turn_after_actor,
         parse_sacrificed_this_turn_after_actor,
         value(
             make_quantity_ge(QuantityRef::CrimesCommittedThisTurn, 1),
@@ -1363,7 +1364,14 @@ fn parse_event_state_conditions(input: &str) -> OracleResult<'_, StaticCondition
         parse_player_lost_life_this_turn,
         // CR 701.9 + CR 603.4: "an opponent discarded a card this turn"
         value(
-            make_quantity_ge(QuantityRef::OpponentDiscardedCardThisTurn, 1),
+            make_quantity_ge(
+                QuantityRef::CardsDiscardedThisTurn {
+                    player: PlayerScope::Opponent {
+                        aggregate: AggregateFunction::Sum,
+                    },
+                },
+                1,
+            ),
             alt((
                 tag("an opponent discarded a card this turn"),
                 tag("any opponent discarded a card this turn"),
@@ -1400,6 +1408,7 @@ fn parse_event_state_conditions(input: &str) -> OracleResult<'_, StaticCondition
         // "no creatures are on the battlefield"
         parse_no_on_battlefield,
     ))
+    .or(parse_you_discarded_card_this_turn)
     .or(parse_you_sacrificed_this_turn)
     .parse(input)
 }
@@ -1870,6 +1879,26 @@ fn parse_one_spell_this_turn_after_cast(input: &str) -> OracleResult<'_, StaticC
             1,
         ),
     ))
+}
+
+fn parse_discarded_card_this_turn_after_actor(input: &str) -> OracleResult<'_, StaticCondition> {
+    let (rest, _) =
+        alt((tag("discarded a card"), tag("discarded one or more cards"))).parse(input)?;
+    let (rest, _) = tag(" this turn").parse(rest)?;
+    Ok((
+        rest,
+        make_quantity_ge(
+            QuantityRef::CardsDiscardedThisTurn {
+                player: PlayerScope::Controller,
+            },
+            1,
+        ),
+    ))
+}
+
+fn parse_you_discarded_card_this_turn(input: &str) -> OracleResult<'_, StaticCondition> {
+    let (rest, _) = tag("you ").parse(input)?;
+    parse_discarded_card_this_turn_after_actor(rest)
 }
 
 fn parse_you_sacrificed_this_turn(input: &str) -> OracleResult<'_, StaticCondition> {
@@ -4526,6 +4555,44 @@ mod tests {
             } => assert!(type_filters.contains(&TypeFilter::Subtype("Clue".to_string()))),
             other => panic!("expected Clue SacrificedThisTurn GE 3, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn youve_discarded_a_card_this_turn_counts_controller_discards() {
+        let (rest, c) = parse_inner_condition("you've discarded a card this turn").unwrap();
+        assert_eq!(rest, "");
+        assert_eq!(
+            c,
+            StaticCondition::QuantityComparison {
+                lhs: QuantityExpr::Ref {
+                    qty: QuantityRef::CardsDiscardedThisTurn {
+                        player: PlayerScope::Controller,
+                    },
+                },
+                comparator: Comparator::GE,
+                rhs: QuantityExpr::Fixed { value: 1 },
+            }
+        );
+    }
+
+    #[test]
+    fn opponent_discarded_a_card_this_turn_counts_opponent_discards() {
+        let (rest, c) = parse_inner_condition("an opponent discarded a card this turn").unwrap();
+        assert_eq!(rest, "");
+        assert_eq!(
+            c,
+            StaticCondition::QuantityComparison {
+                lhs: QuantityExpr::Ref {
+                    qty: QuantityRef::CardsDiscardedThisTurn {
+                        player: PlayerScope::Opponent {
+                            aggregate: AggregateFunction::Sum,
+                        },
+                    },
+                },
+                comparator: Comparator::GE,
+                rhs: QuantityExpr::Fixed { value: 1 },
+            }
+        );
     }
 
     #[test]

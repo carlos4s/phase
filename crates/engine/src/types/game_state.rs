@@ -2835,6 +2835,8 @@ pub struct GameState {
     #[serde(default)]
     pub players_who_discarded_card_this_turn: HashSet<PlayerId>,
     #[serde(default)]
+    pub cards_discarded_this_turn_by_player: HashMap<PlayerId, u32>,
+    #[serde(default)]
     pub players_who_sacrificed_artifact_this_turn: HashSet<PlayerId>,
     /// CR 701.21a: Sacrificed permanent snapshots this turn, preserving
     /// event-time characteristics for filtered "you sacrificed [quality] this
@@ -3290,6 +3292,7 @@ impl GameState {
             players_who_created_token_this_turn: HashSet::new(),
             counter_added_this_turn: Vec::new(),
             players_who_discarded_card_this_turn: HashSet::new(),
+            cards_discarded_this_turn_by_player: HashMap::new(),
             players_who_sacrificed_artifact_this_turn: HashSet::new(),
             sacrificed_permanents_this_turn: Vec::new(),
             zone_changes_this_turn: Vec::new(),
@@ -3503,6 +3506,7 @@ impl PartialEq for GameState {
             && self.counter_added_this_turn == other.counter_added_this_turn
             && self.players_who_discarded_card_this_turn
                 == other.players_who_discarded_card_this_turn
+            && self.cards_discarded_this_turn_by_player == other.cards_discarded_this_turn_by_player
             && self.players_who_sacrificed_artifact_this_turn
                 == other.players_who_sacrificed_artifact_this_turn
             && self.sacrificed_permanents_this_turn == other.sacrificed_permanents_this_turn

@@ -537,6 +537,13 @@ mod tests {
         assert!(state
             .players_who_discarded_card_this_turn
             .contains(&PlayerId(0)));
+        assert_eq!(
+            state
+                .cards_discarded_this_turn_by_player
+                .get(&PlayerId(0))
+                .copied(),
+            Some(1)
+        );
     }
 
     #[test]

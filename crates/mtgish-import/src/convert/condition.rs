@@ -32,6 +32,14 @@ fn counter_added_this_turn_on_permanent_quantity() -> QuantityRef {
     }
 }
 
+fn opponent_cards_discarded_this_turn_quantity() -> QuantityRef {
+    QuantityRef::CardsDiscardedThisTurn {
+        player: PlayerScope::Opponent {
+            aggregate: AggregateFunction::Sum,
+        },
+    }
+}
+
 /// CR 608.2c + CR 700.4: Convert an mtgish `Condition` for use as an
 /// `AbilityCondition` (sub-ability gating: "if [cond], [effect]"). The
 /// engine's `AbilityCondition` enum has no general boolean fan-out; only
@@ -2486,7 +2494,7 @@ fn devotion_color_list(colors: &ColorList) -> ConvResult<Vec<ManaColor>> {
 //   - `Players::You`     → collapses to the singular dispatcher.
 //   - `Players::Opponent` → predicate maps onto opponent-axis QuantityRefs
 //     (`OpponentLifeTotal`, `OpponentHandSize`, `OpponentLifeLostThisTurn`,
-//     `OpponentDiscardedCardThisTurn`) and opponent-controlled filter
+//     `CardsDiscardedThisTurn { Opponent }`) and opponent-controlled filter
 //     primitives (`ControlsType`/`IsPresent` with `ControllerRef::Opponent`-
 //     stamped filters). Numeric predicates are only safely expressible when
 //     the comparator direction matches the aggregate the QuantityRef
@@ -2653,7 +2661,7 @@ fn opponent_predicate_trigger(predicate: &Players) -> ConvResult<TriggerConditio
         // CR 701.9: "if an opponent discarded a card this turn".
         Players::DiscardedACardThisTurn => TriggerCondition::QuantityComparison {
             lhs: QuantityExpr::Ref {
-                qty: QuantityRef::OpponentDiscardedCardThisTurn,
+                qty: opponent_cards_discarded_this_turn_quantity(),
             },
             comparator: Comparator::GE,
             rhs: QuantityExpr::Fixed { value: 1 },
@@ -2765,7 +2773,7 @@ fn opponent_predicate_ability(predicate: &Players) -> ConvResult<AbilityConditio
         }
         Players::DiscardedACardThisTurn => AbilityCondition::QuantityCheck {
             lhs: QuantityExpr::Ref {
-                qty: QuantityRef::OpponentDiscardedCardThisTurn,
+                qty: opponent_cards_discarded_this_turn_quantity(),
             },
             comparator: Comparator::GE,
             rhs: QuantityExpr::Fixed { value: 1 },
@@ -2875,7 +2883,7 @@ fn opponent_predicate_static(predicate: &Players) -> ConvResult<StaticCondition>
         }
         Players::DiscardedACardThisTurn => StaticCondition::QuantityComparison {
             lhs: QuantityExpr::Ref {
-                qty: QuantityRef::OpponentDiscardedCardThisTurn,
+                qty: opponent_cards_discarded_this_turn_quantity(),
             },
             comparator: Comparator::GE,
             rhs: QuantityExpr::Fixed { value: 1 },

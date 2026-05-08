@@ -127,6 +127,9 @@ pub(crate) fn quantity_expr_uses_recipient(expr: &QuantityExpr) -> bool {
             | QuantityRef::CardsDrawnThisTurn {
                 player: PlayerScope::RecipientController,
             }
+            | QuantityRef::CardsDiscardedThisTurn {
+                player: PlayerScope::RecipientController,
+            }
             | QuantityRef::PartySize {
                 player: PlayerScope::RecipientController,
             } => true,
@@ -1340,19 +1343,17 @@ fn resolve_ref(
                 })
                 .fold(0, |total: u32, record| total.saturating_add(record.count)),
         ),
-        // CR 701.9 + CR 603.4: Whether any opponent of the controller discarded
-        // a card this turn. Mirrors `LifeLostThisTurn { Opponent { Sum } }`
-        // semantics — scans the per-turn discard set for any player != controller.
-        QuantityRef::OpponentDiscardedCardThisTurn => {
-            if state
-                .players_who_discarded_card_this_turn
-                .iter()
-                .any(|&p| p != controller)
-            {
-                1
-            } else {
-                0
-            }
+        // CR 701.9 + CR 603.4: Cards discarded this turn, scoped via PlayerScope.
+        QuantityRef::CardsDiscardedThisTurn { player } => {
+            resolve_per_player_scalar(state, *player, controller, ctx, targets, |p| {
+                u32_to_i32_saturating(
+                    state
+                        .cards_discarded_this_turn_by_player
+                        .get(&p.id)
+                        .copied()
+                        .unwrap_or_default(),
+                )
+            })
         }
         // CR 309.7: Number of dungeons the controller has completed.
         QuantityRef::DungeonsCompleted => state
@@ -3719,6 +3720,27 @@ mod tests {
 
         assert_eq!(resolve_quantity(&state, &expr, PlayerId(0), ObjectId(1)), 4);
         assert_eq!(resolve_quantity(&state, &expr, PlayerId(2), ObjectId(1)), 5);
+    }
+
+    /// CR 701.9: `CardsDiscardedThisTurn` reads the per-player discard-count
+    /// map populated by discard resolution and composes through PlayerScope.
+    #[test]
+    fn resolve_quantity_cards_discarded_this_turn_sum_opponents() {
+        let mut state = GameState::new_two_player(42);
+        crate::game::restrictions::record_discard(&mut state, PlayerId(0));
+        crate::game::restrictions::record_discard(&mut state, PlayerId(1));
+        crate::game::restrictions::record_discard(&mut state, PlayerId(1));
+
+        let expr = QuantityExpr::Ref {
+            qty: QuantityRef::CardsDiscardedThisTurn {
+                player: PlayerScope::Opponent {
+                    aggregate: AggregateFunction::Sum,
+                },
+            },
+        };
+
+        assert_eq!(resolve_quantity(&state, &expr, PlayerId(0), ObjectId(1)), 2);
+        assert_eq!(resolve_quantity(&state, &expr, PlayerId(1), ObjectId(1)), 1);
     }
 
     #[test]
