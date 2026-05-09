@@ -16619,6 +16619,35 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn effect_pay_mana_and_life_cost() {
+        let e = parse_effect("pay {1} and 3 life");
+        match e {
+            Effect::PayCost {
+                cost:
+                    PaymentCost::AbilityCost {
+                        cost: crate::types::ability::AbilityCost::Composite { costs },
+                    },
+                ..
+            } => {
+                assert_eq!(costs.len(), 2);
+                assert!(matches!(
+                    &costs[0],
+                    crate::types::ability::AbilityCost::Mana {
+                        cost: crate::types::mana::ManaCost::Cost { generic: 1, .. }
+                    }
+                ));
+                assert!(matches!(
+                    &costs[1],
+                    crate::types::ability::AbilityCost::PayLife {
+                        amount: crate::types::ability::QuantityExpr::Fixed { value: 3 }
+                    }
+                ));
+            }
+            other => panic!("expected composite PayCost, got {other:?}"),
+        }
+    }
+
     /// CR 118.8 + CR 603.2: "pay life equal to its power" resolves against the
     /// triggering event's source power (Madame Null, Power Broker). The outer
     /// Effect here is just the PayCost — the "you may" optionality and

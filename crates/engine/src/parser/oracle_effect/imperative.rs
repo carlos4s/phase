@@ -24,7 +24,7 @@ use crate::parser::oracle_static::{
 #[cfg(test)]
 use crate::types::ability::FilterProp;
 use crate::types::ability::{
-    AbilityDefinition, AbilityKind, CategoryChooserScope, ChoiceType, Chooser,
+    AbilityCost, AbilityDefinition, AbilityKind, CategoryChooserScope, ChoiceType, Chooser,
     ContinuousModification, ControllerRef, Duration, Effect, GainLifePlayer, LibraryPosition,
     MultiTargetSpec, PaymentCost, PlayerScope, PreventionAmount, PreventionScope, PtValue,
     QuantityExpr, QuantityRef, SearchSelectionConstraint, StaticDefinition, TargetFilter,
@@ -3608,6 +3608,27 @@ fn parse_pay_life_amount(rest: &str) -> Option<QuantityExpr> {
     None
 }
 
+fn parse_mana_and_life_payment(rest_orig: &str) -> Option<PaymentCost> {
+    let (mana_cost, after_mana) = parse_mana_symbols(rest_orig.trim())?;
+    let after_mana_lower = after_mana.to_lowercase();
+    let (_, after_and) = nom_on_lower(after_mana, &after_mana_lower, |input| {
+        value(
+            (),
+            preceded(nom::character::complete::multispace0, tag("and ")),
+        )
+        .parse(input)
+    })?;
+    let amount = parse_pay_life_amount(after_and.trim_start())?;
+    Some(PaymentCost::AbilityCost {
+        cost: AbilityCost::Composite {
+            costs: vec![
+                AbilityCost::Mana { cost: mana_cost },
+                AbilityCost::PayLife { amount },
+            ],
+        },
+    })
+}
+
 pub(super) fn parse_cost_resource_ast(
     text: &str,
     lower: &str,
@@ -3630,6 +3651,9 @@ pub(super) fn parse_cost_resource_ast(
         nom_on_lower(text, lower, |input| value((), tag("pay ")).parse(input))
     {
         let rest = &lower[lower.len() - rest_orig.len()..];
+        if let Some(cost) = parse_mana_and_life_payment(rest_orig) {
+            return Some(CostResourceImperativeAst::Pay { cost });
+        }
         // CR 118.8 + CR 119.4: `pay <amount> life` — literal count, X variable,
         // or dynamic reference (`pay life equal to its power`). Dispatched with
         // nom combinators over the post-"pay " remainder.
