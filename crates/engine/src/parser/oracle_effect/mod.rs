@@ -10612,6 +10612,8 @@ fn strip_return_destination_ext(text: &str) -> (&str, Option<ReturnDestination>)
             false,
         ),
         (" to your graveyard", Zone::Graveyard, false, false, false),
+        // Command-zone destinations
+        (" to the command zone", Zone::Command, false, false, false),
         // NOTE: Library destinations ("to the top/bottom of owner's library") are
         // intentionally NOT handled here. They require PutAtLibraryPosition (positional
         // placement without shuffling), not ChangeZone (which auto-shuffles).
@@ -10650,6 +10652,7 @@ fn parse_leading_return_destination(input: &str) -> OracleResult<'_, ReturnDesti
         parse_leading_battlefield_return_destination,
         parse_leading_hand_return_destination,
         parse_leading_graveyard_return_destination,
+        parse_leading_command_return_destination,
     ))
     .parse(input)
 }
@@ -10722,6 +10725,20 @@ fn parse_leading_graveyard_return_destination(input: &str) -> OracleResult<'_, R
         input,
         ReturnDestination {
             zone: Zone::Graveyard,
+            transformed: false,
+            under_your_control: false,
+            enter_tapped: false,
+            enter_with_counters: vec![],
+        },
+    ))
+}
+
+fn parse_leading_command_return_destination(input: &str) -> OracleResult<'_, ReturnDestination> {
+    let (input, _) = tag("to the command zone ").parse(input)?;
+    Ok((
+        input,
+        ReturnDestination {
+            zone: Zone::Command,
             transformed: false,
             under_your_control: false,
             enter_tapped: false,
@@ -14541,6 +14558,15 @@ mod tests {
         let (target, dest) = strip_return_destination_ext("it to its owner's graveyard");
         assert_eq!(target, "it");
         assert_eq!(dest.unwrap().zone, Zone::Graveyard);
+    }
+
+    #[test]
+    fn strip_return_destination_command_zone() {
+        let (target, dest) = strip_return_destination_ext(
+            "commander they control from the battlefield to the command zone",
+        );
+        assert_eq!(target, "commander they control from the battlefield");
+        assert_eq!(dest.unwrap().zone, Zone::Command);
     }
 
     #[test]

@@ -824,6 +824,26 @@ pub fn parse_target_with_ctx<'a>(text: &'a str, ctx: &mut ParseContext) -> (Targ
         }
     }
 
+    // Bare commander reference with a controller suffix ("commander they
+    // control", "commanders target player controls"). This is the non-possessive
+    // companion to the commander reference above and must not synthesize a
+    // Commander subtype.
+    if let Ok((after_commander, _)) =
+        alt((tag::<_, _, OracleError<'_>>("commanders"), tag("commander"))).parse(lower.as_str())
+    {
+        if let Some((ctrl, ctrl_len)) = parse_controller_suffix(after_commander, ctx) {
+            let consumed = lower.len() - after_commander.len() + ctrl_len;
+            return (
+                TargetFilter::Typed(TypedFilter {
+                    controller: Some(ctrl),
+                    properties: vec![FilterProp::IsCommander],
+                    ..Default::default()
+                }),
+                &text[consumed..],
+            );
+        }
+    }
+
     // Bare type phrase fallback: try parse_type_phrase before giving up.
     // Handles "other nonland permanents you own and control" after quantifier stripping.
     let (filter, rest) = parse_type_phrase_with_ctx(text, ctx);
@@ -3806,6 +3826,25 @@ mod tests {
             f,
             TargetFilter::Typed(TypedFilter::creature().controller(ControllerRef::You))
         );
+    }
+
+    #[test]
+    fn bare_commander_they_control_uses_relative_player_scope() {
+        let mut ctx = ParseContext {
+            relative_player_scope: Some(ControllerRef::TargetPlayer),
+            ..Default::default()
+        };
+        let (f, rest) =
+            parse_target_with_ctx("commander they control from the battlefield", &mut ctx);
+        assert_eq!(
+            f,
+            TargetFilter::Typed(TypedFilter {
+                controller: Some(ControllerRef::TargetPlayer),
+                properties: vec![FilterProp::IsCommander],
+                ..Default::default()
+            })
+        );
+        assert_eq!(rest, " from the battlefield");
     }
 
     #[test]

@@ -3404,6 +3404,50 @@ mod tests {
     }
 
     #[test]
+    fn leadership_vacuum_returns_target_players_commanders_to_command_zone() {
+        let r = parse(
+            "Target player returns each commander they control from the battlefield to the command zone.\nDraw a card.",
+            "Leadership Vacuum",
+            &[],
+            &["Instant"],
+            &[],
+        );
+        assert!(
+            r.parse_warnings.is_empty(),
+            "unexpected parse warnings: {:?}",
+            r.parse_warnings
+        );
+        assert!(matches!(
+            *r.abilities[0].effect,
+            Effect::TargetOnly {
+                target: TargetFilter::Player
+            }
+        ));
+        let sub = r.abilities[0]
+            .sub_ability
+            .as_ref()
+            .expect("expected target-player sub-ability");
+        match &*sub.effect {
+            Effect::ChangeZoneAll {
+                origin,
+                destination,
+                target:
+                    TargetFilter::Typed(TypedFilter {
+                        controller: Some(ControllerRef::You),
+                        properties,
+                        ..
+                    }),
+                ..
+            } => {
+                assert_eq!(*origin, None);
+                assert_eq!(*destination, Zone::Command);
+                assert!(properties.contains(&FilterProp::IsCommander));
+            }
+            other => panic!("expected command-zone ChangeZoneAll, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn nonmodal_spell_contiguous_resolution_lines_chain_once() {
         let r = parse("Scry 1.\nDraw a card.", "Test Opt", &[], &["Instant"], &[]);
 

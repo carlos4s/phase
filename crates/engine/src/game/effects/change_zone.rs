@@ -785,7 +785,7 @@ pub fn resolve_all(
 mod tests {
     use super::*;
     use crate::game::zones::create_object;
-    use crate::types::ability::TargetFilter;
+    use crate::types::ability::{ControllerRef, FilterProp, TargetFilter};
     use crate::types::card_type::CoreType;
     use crate::types::identifiers::{CardId, ObjectId};
     use crate::types::player::PlayerId;
@@ -1278,6 +1278,58 @@ mod tests {
             Zone::Graveyard,
             "controller's graveyard must be untouched"
         );
+    }
+
+    #[test]
+    fn change_zone_all_target_player_commander_moves_chosen_players_commander() {
+        let mut state = GameState::new_two_player(42);
+
+        let chosen_commander = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(1),
+            "Chosen Commander".to_string(),
+            Zone::Battlefield,
+        );
+        state
+            .objects
+            .get_mut(&chosen_commander)
+            .unwrap()
+            .is_commander = true;
+
+        let controller_commander = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(0),
+            "Controller Commander".to_string(),
+            Zone::Battlefield,
+        );
+        state
+            .objects
+            .get_mut(&controller_commander)
+            .unwrap()
+            .is_commander = true;
+
+        let ability = ResolvedAbility::new(
+            Effect::ChangeZoneAll {
+                origin: None,
+                destination: Zone::Command,
+                target: TargetFilter::Typed(TypedFilter {
+                    controller: Some(ControllerRef::You),
+                    properties: vec![FilterProp::IsCommander],
+                    ..Default::default()
+                }),
+                enter_tapped: false,
+            },
+            vec![TargetRef::Player(PlayerId(1))],
+            ObjectId(100),
+            PlayerId(0),
+        );
+        let mut events = Vec::new();
+        resolve_all(&mut state, &ability, &mut events).unwrap();
+
+        assert_eq!(state.objects[&chosen_commander].zone, Zone::Command);
+        assert_eq!(state.objects[&controller_commander].zone, Zone::Battlefield);
     }
 
     #[test]
