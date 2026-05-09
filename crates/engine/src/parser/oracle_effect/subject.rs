@@ -1970,10 +1970,14 @@ pub(super) fn try_parse_targeted_controller_gain_life(text: &str) -> Option<Pars
     tag::<_, _, OracleError<'_>>("its controller ")
         .parse(lower.as_str())
         .ok()?;
-    if !lower.contains("gain") || !lower.contains("life") {
+    if !nom_primitives::scan_contains(&lower, "gain")
+        || !nom_primitives::scan_contains(&lower, "life")
+    {
         return None;
     }
-    let amount = if lower.contains("equal to its power") || lower.contains("its power") {
+    let amount = if nom_primitives::scan_contains(&lower, "equal to its power")
+        || nom_primitives::scan_contains(&lower, "its power")
+    {
         QuantityExpr::Ref {
             qty: QuantityRef::Power {
                 scope: crate::types::ability::ObjectScope::Target,
@@ -1984,6 +1988,14 @@ pub(super) fn try_parse_targeted_controller_gain_life(text: &str) -> Option<Pars
     {
         QuantityExpr::Ref {
             qty: QuantityRef::Toughness {
+                scope: crate::types::ability::ObjectScope::Target,
+            },
+        }
+    } else if nom_primitives::scan_contains(&lower, "equal to its mana value")
+        || nom_primitives::scan_contains(&lower, "its mana value")
+    {
+        QuantityExpr::Ref {
+            qty: QuantityRef::ObjectManaValue {
                 scope: crate::types::ability::ObjectScope::Target,
             },
         }
@@ -2510,6 +2522,26 @@ mod tests {
             Effect::GainLife {
                 amount: QuantityExpr::Ref {
                     qty: QuantityRef::Toughness {
+                        scope: crate::types::ability::ObjectScope::Target
+                    }
+                },
+                player: GainLifePlayer::TargetedController
+            }
+        ));
+    }
+
+    #[test]
+    fn targeted_controller_gains_life_equal_to_target_mana_value() {
+        let clause = try_parse_targeted_controller_gain_life(
+            "Its controller gains life equal to its mana value.",
+        )
+        .expect("targeted controller mana value gain life clause");
+
+        assert!(matches!(
+            clause.effect,
+            Effect::GainLife {
+                amount: QuantityExpr::Ref {
+                    qty: QuantityRef::ObjectManaValue {
                         scope: crate::types::ability::ObjectScope::Target
                     }
                 },
