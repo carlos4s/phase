@@ -7907,6 +7907,26 @@ pub enum ReplacementMode {
     },
 }
 
+/// CR 614.12a + CR 615.5: Continuation effect that runs after a replacement
+/// effect's modifications complete. Stashed by the replacement pipeline,
+/// drained by callers (`engine_replacement`, `stack`, `deal_damage`,
+/// `engine`).
+///
+/// Two binding states share one slot:
+/// - `Template`: an `AbilityDefinition` AST that needs the replacement
+///   source for resolution context (e.g. "As ~ enters, choose a basic land
+///   type" — controller and source come from the resolving permanent).
+/// - `Resolved`: a `ResolvedAbility` that already carries selected targets
+///   and resolution-time context, ready for direct dispatch (e.g. Phyrexian
+///   Hydra's prevented-damage follow-up captures the source and counter
+///   quantity from the resolution that created the prevention shield).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "ability")]
+pub enum PostReplacementContinuation {
+    Template(Box<AbilityDefinition>),
+    Resolved(Box<ResolvedAbility>),
+}
+
 /// Replacement effect definition with typed fields. Zero params HashMap.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReplacementDefinition {

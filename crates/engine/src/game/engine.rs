@@ -3526,9 +3526,7 @@ fn handle_play_land(
             // execute ability is non-modifier work (Choose, etc.). Without this,
             // the choice prompt would fire at a random later resolution point with
             // the wrong controller context.
-            if state.post_replacement_effect.is_some()
-                || state.post_replacement_resolved_effect.is_some()
-            {
+            if state.post_replacement_continuation.is_some() {
                 state.post_replacement_source = None;
                 if let Some(next_waiting_for) =
                     engine_replacement::apply_pending_post_replacement_effect(

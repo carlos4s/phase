@@ -2554,20 +2554,38 @@ pub struct GameState {
 
     // Replacement effects
     pub pending_replacement: Option<PendingReplacement>,
-    /// Transient: effect to resolve after a replacement choice's zone change completes.
-    /// Set by `continue_replacement` for Optional replacements, consumed by the caller.
+    /// CR 614.12a + CR 615.5: Continuation effect to resolve after a
+    /// replacement's modifications complete. The two binding states (Template
+    /// AST vs. Resolved with captured targets) share one slot via
+    /// `PostReplacementContinuation`. Set by `continue_replacement` for
+    /// Optional replacements and by `apply_single_replacement` for Mandatory
+    /// post-effects; drained by `apply_pending_post_replacement_effect`.
+    ///
+    /// Pre-2026-05-09 audit M4 fold: legacy `post_replacement_effect` and
+    /// `post_replacement_resolved_effect` fields were merged here. Old saved
+    /// JSON migrates via `migrate_post_replacement_continuation`, called from
+    /// `finalize_public_state`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub post_replacement_effect: Option<Box<crate::types::ability::AbilityDefinition>>,
-    /// Transient resolved continuation for runtime-created replacement shields.
-    /// This preserves selected targets for CR 615.5 prevention follow-ups.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub post_replacement_resolved_effect: Option<Box<crate::types::ability::ResolvedAbility>>,
+    pub post_replacement_continuation: Option<crate::types::ability::PostReplacementContinuation>,
+    /// Pre-2026-05-09 audit M4 compat: legacy template slot. Read from old
+    /// JSON only; migrated into `post_replacement_continuation` by
+    /// `migrate_post_replacement_continuation`. Never written to.
+    #[serde(default, skip_serializing, rename = "post_replacement_effect")]
+    pub(crate) legacy_post_replacement_effect:
+        Option<Box<crate::types::ability::AbilityDefinition>>,
+    /// Pre-2026-05-09 audit M4 compat: legacy resolved slot. Read from old
+    /// JSON only; migrated into `post_replacement_continuation` by
+    /// `migrate_post_replacement_continuation`. Never written to.
+    #[serde(default, skip_serializing, rename = "post_replacement_resolved_effect")]
+    pub(crate) legacy_post_replacement_resolved_effect:
+        Option<Box<crate::types::ability::ResolvedAbility>>,
 
     /// CR 615.5: Source object of the replacement that stashed
-    /// `post_replacement_effect`. Used by prevention follow-ups (e.g. Phyrexian
-    /// Hydra) so the post-effect's `SelfRef`-targeted PutCounter resolves
-    /// against the shield's own object rather than the damaged target. Set
-    /// alongside `post_replacement_effect` and consumed at the same time.
+    /// `post_replacement_continuation`. Used by prevention follow-ups (e.g.
+    /// Phyrexian Hydra) so the post-effect's `SelfRef`-targeted PutCounter
+    /// resolves against the shield's own object rather than the damaged target.
+    /// Set alongside `post_replacement_continuation` and consumed at the same
+    /// time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post_replacement_source: Option<crate::types::identifiers::ObjectId>,
 
@@ -3299,8 +3317,9 @@ impl GameState {
             max_lands_per_turn: 1,
             priority_pass_count: 0,
             pending_replacement: None,
-            post_replacement_effect: None,
-            post_replacement_resolved_effect: None,
+            post_replacement_continuation: None,
+            legacy_post_replacement_effect: None,
+            legacy_post_replacement_resolved_effect: None,
             post_replacement_source: None,
             post_replacement_event_source: None,
             post_replacement_event_target: None,
@@ -3489,6 +3508,32 @@ impl GameState {
         self.layers_dirty = true;
         id
     }
+
+    /// CR 614.12a + CR 615.5: Migrate the pre-2026-05-09 audit M4 split-slot
+    /// shape (`post_replacement_effect` + `post_replacement_resolved_effect`)
+    /// into the unified `post_replacement_continuation` slot. Idempotent —
+    /// no-op when both legacy slots are empty (the steady-state case once a
+    /// post-load hop has run). Called from `finalize_public_state` so every
+    /// deserialize boundary (engine-wasm restore, multiplayer host resume,
+    /// gamePersistence rehydration) gets the migration without per-callsite
+    /// plumbing. The Resolved arm wins when both legacy slots are
+    /// (impossibly) populated, mirroring the pre-fold dispatcher precedence
+    /// at `engine_replacement.rs::apply_pending_post_replacement_effect`.
+    pub fn migrate_post_replacement_continuation(&mut self) {
+        if self.post_replacement_continuation.is_some() {
+            self.legacy_post_replacement_effect = None;
+            self.legacy_post_replacement_resolved_effect = None;
+            return;
+        }
+        if let Some(resolved) = self.legacy_post_replacement_resolved_effect.take() {
+            self.post_replacement_continuation =
+                Some(crate::types::ability::PostReplacementContinuation::Resolved(resolved));
+            self.legacy_post_replacement_effect = None;
+        } else if let Some(template) = self.legacy_post_replacement_effect.take() {
+            self.post_replacement_continuation =
+                Some(crate::types::ability::PostReplacementContinuation::Template(template));
+        }
+    }
 }
 
 impl Default for GameState {
@@ -3623,7 +3668,10 @@ impl Eq for GameState {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::ability::{AbilityKind, Effect, QuantityExpr};
+    use crate::types::ability::{
+        AbilityDefinition, AbilityKind, Effect, PostReplacementContinuation, QuantityExpr,
+        ResolvedAbility, TargetFilter,
+    };
 
     #[test]
     fn default_creates_two_player_game() {
@@ -4375,5 +4423,85 @@ mod tests {
         let mut deserialized: GameState = serde_json::from_str(&serialized).unwrap();
         deserialized.rng = ChaCha20Rng::seed_from_u64(deserialized.rng_seed);
         assert_eq!(state, deserialized);
+    }
+
+    /// 2026-05-09 audit M4 backward-compat: a JSON snapshot saved before the
+    /// post-replacement-continuation slot fold (with the legacy
+    /// `post_replacement_effect` field) deserializes cleanly and the legacy
+    /// content lifts into the new unified slot once
+    /// `migrate_post_replacement_continuation` runs (called from
+    /// `finalize_public_state` at every deserialize boundary).
+    #[test]
+    fn legacy_post_replacement_effect_field_lifts_into_unified_slot() {
+        // Build a baseline state, serialize it, then splice in the legacy
+        // field name so the snapshot mirrors a pre-fold producer.
+        let baseline = GameState::new_two_player(42);
+        let mut snapshot: serde_json::Value = serde_json::to_value(&baseline).unwrap();
+        let template = AbilityDefinition::new(
+            AbilityKind::Spell,
+            Effect::LoseLife {
+                amount: QuantityExpr::Fixed { value: 1 },
+                target: None,
+            },
+        );
+        let template_json = serde_json::to_value(&template).unwrap();
+        snapshot
+            .as_object_mut()
+            .unwrap()
+            .insert("post_replacement_effect".to_string(), template_json);
+
+        let serialized = serde_json::to_string(&snapshot).unwrap();
+        let mut state: GameState = serde_json::from_str(&serialized).unwrap();
+        // Pre-migration: legacy slot populated, unified slot empty.
+        assert!(state.post_replacement_continuation.is_none());
+        assert!(state.legacy_post_replacement_effect.is_some());
+
+        state.migrate_post_replacement_continuation();
+
+        match state.post_replacement_continuation {
+            Some(PostReplacementContinuation::Template(ref def)) => {
+                assert_eq!(**def, template);
+            }
+            other => panic!("expected Template after migration, got {other:?}"),
+        }
+        assert!(state.legacy_post_replacement_effect.is_none());
+    }
+
+    /// 2026-05-09 audit M4 backward-compat (Resolved variant): a pre-fold
+    /// snapshot with `post_replacement_resolved_effect` lifts to
+    /// `PostReplacementContinuation::Resolved` after migration.
+    #[test]
+    fn legacy_post_replacement_resolved_effect_field_lifts_into_unified_slot() {
+        let baseline = GameState::new_two_player(42);
+        let mut snapshot: serde_json::Value = serde_json::to_value(&baseline).unwrap();
+        let resolved = ResolvedAbility::new(
+            Effect::LoseLife {
+                amount: QuantityExpr::Fixed { value: 1 },
+                target: Some(TargetFilter::Controller),
+            },
+            Vec::new(),
+            ObjectId(1),
+            PlayerId(0),
+        );
+        let resolved_json = serde_json::to_value(&resolved).unwrap();
+        snapshot.as_object_mut().unwrap().insert(
+            "post_replacement_resolved_effect".to_string(),
+            resolved_json,
+        );
+
+        let serialized = serde_json::to_string(&snapshot).unwrap();
+        let mut state: GameState = serde_json::from_str(&serialized).unwrap();
+        assert!(state.post_replacement_continuation.is_none());
+        assert!(state.legacy_post_replacement_resolved_effect.is_some());
+
+        state.migrate_post_replacement_continuation();
+
+        match state.post_replacement_continuation {
+            Some(PostReplacementContinuation::Resolved(ref boxed)) => {
+                assert_eq!(**boxed, resolved);
+            }
+            other => panic!("expected Resolved after migration, got {other:?}"),
+        }
+        assert!(state.legacy_post_replacement_resolved_effect.is_none());
     }
 }
