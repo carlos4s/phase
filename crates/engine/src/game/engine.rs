@@ -9997,6 +9997,7 @@ mod exile_return_tests {
                 description: Some("When WA enters...".to_string()),
                 condition: None,
                 trigger_event: None,
+                source_name: String::new(),
             },
         });
 

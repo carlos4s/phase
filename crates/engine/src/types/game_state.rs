@@ -2564,6 +2564,14 @@ pub enum StackEntryKind {
         /// Used by the frontend to distinguish triggers from the same source.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         description: Option<String>,
+        /// Display name of the source object captured when this trigger went on
+        /// the stack. Pre-resolved here so the frontend can render
+        /// "From <name>" without dereferencing `source_id` through the objects
+        /// map (which is display-layer logic per the engine/frontend split).
+        /// Empty when the source has no name (synthetic game-rule triggers
+        /// like monarch draw use `ObjectId(0)`).
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        source_name: String,
     },
     /// CR 113.3b: Activated keyword abilities (Equip / Crew / Saddle / Station)
     /// enter the stack after cost-payment + target selection and resolve with

@@ -885,6 +885,7 @@ fn test_search_changezone_shuffle_continuation_completes() {
             condition: None,
             trigger_event: None,
             description: None,
+            source_name: String::new(),
         },
     };
     stack::push_to_stack(&mut state, entry, &mut vec![]);
@@ -1246,6 +1247,7 @@ fn test_earthbender_ascension_etb_completes_with_landfall() {
             condition: None,
             trigger_event: None,
             description: None,
+            source_name: String::new(),
         },
     };
     stack::push_to_stack(&mut state, entry, &mut vec![]);

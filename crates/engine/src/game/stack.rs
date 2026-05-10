@@ -1201,6 +1201,7 @@ mod tests {
                 condition: None,
                 trigger_event: Some(trigger_event.clone()),
                 description: None,
+                source_name: String::new(),
             },
         });
 
@@ -1959,6 +1960,7 @@ mod tests {
                     condition: None,
                     trigger_event: None,
                     description: Some("landfall copy trigger".to_string()),
+                    source_name: String::new(),
                 },
             });
         }
@@ -2007,6 +2009,7 @@ mod tests {
                 condition: None,
                 trigger_event: None,
                 description: None,
+                source_name: String::new(),
             },
         };
         state.stack.push_back(mk_entry(s1));
@@ -2057,6 +2060,7 @@ mod tests {
                 condition: None,
                 trigger_event: None,
                 description: Some("target player loses 1 life".to_string()),
+                source_name: String::new(),
             },
         };
         state

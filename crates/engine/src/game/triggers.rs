@@ -558,7 +558,7 @@ pub fn process_triggers(state: &mut GameState, events: &[GameEvent]) {
                             trigger_event: Some(event.clone()),
                             modal: None,
                             mode_abilities: vec![],
-                            description: None,
+                            description: prowess_trig_def.description,
                             may_trigger_origin: None,
                         }));
                     }
@@ -639,7 +639,7 @@ pub fn process_triggers(state: &mut GameState, events: &[GameEvent]) {
                             trigger_event: Some(event.clone()),
                             modal: None,
                             mode_abilities: vec![],
-                            description: None,
+                            description: fb_trig_def.description,
                             may_trigger_origin: None,
                         }));
                         // Track bending type for Avatar Aang's "if you've done all four"
@@ -795,7 +795,7 @@ pub fn process_triggers(state: &mut GameState, events: &[GameEvent]) {
                                         trigger_event: Some(event.clone()),
                                         modal: None,
                                         mode_abilities: vec![],
-                                        description: None,
+                                        description: Some("Ward".to_string()),
                                         may_trigger_origin: None,
                                     }));
                                 }
@@ -1077,7 +1077,7 @@ pub fn process_triggers(state: &mut GameState, events: &[GameEvent]) {
                         trigger_event: Some(event.clone()),
                         modal: None,
                         mode_abilities: vec![],
-                        description: None,
+                        description: trig_def.description,
                         may_trigger_origin: None,
                     }));
                 }
@@ -1109,7 +1109,7 @@ pub fn process_triggers(state: &mut GameState, events: &[GameEvent]) {
                         trigger_event: Some(event.clone()),
                         modal: None,
                         mode_abilities: vec![],
-                        description: None,
+                        description: trig_def.description,
                         may_trigger_origin: None,
                     }));
                 }
@@ -1149,7 +1149,7 @@ pub fn process_triggers(state: &mut GameState, events: &[GameEvent]) {
                             trigger_event: Some(event.clone()),
                             modal: None,
                             mode_abilities: vec![],
-                            description: None,
+                            description: trig_def.description,
                             may_trigger_origin: None,
                         }));
                     }
@@ -1188,7 +1188,7 @@ pub fn process_triggers(state: &mut GameState, events: &[GameEvent]) {
                             trigger_event: Some(event.clone()),
                             modal: None,
                             mode_abilities: vec![],
-                            description: None,
+                            description: trig_def.description,
                             may_trigger_origin: None,
                         }));
                     }
@@ -1228,7 +1228,7 @@ pub fn process_triggers(state: &mut GameState, events: &[GameEvent]) {
                     trigger_event: Some(event.clone()),
                     modal: None,
                     mode_abilities: vec![],
-                    description: None,
+                    description: trig_def.description,
                     may_trigger_origin: None,
                 }));
                 mark_speed_trigger_used(state, trigger_controller);
@@ -1272,7 +1272,7 @@ pub fn process_triggers(state: &mut GameState, events: &[GameEvent]) {
                     trigger_event: Some(event.clone()),
                     modal: None,
                     mode_abilities: vec![],
-                    description: None,
+                    description: trig_def.description,
                     may_trigger_origin: None,
                 }));
             }
@@ -1474,6 +1474,16 @@ fn push_pending_trigger_to_stack_with_event_batch(
             .stack_trigger_event_batches
             .insert(entry_id, trigger_events);
     }
+    // Capture the source's display name at stack-push time so viewers can
+    // render "From <name>" without rederiving from `objects` (display-layer
+    // logic belongs in the engine per CLAUDE.md). Synthetic game-rule triggers
+    // (monarch draw, rad counters) use `ObjectId(0)`, which has no object —
+    // `source_name` is left empty in that case.
+    let source_name = state
+        .objects
+        .get(&source_id)
+        .map(|o| o.name.clone())
+        .unwrap_or_default();
     let entry = StackEntry {
         id: entry_id,
         source_id,
@@ -1484,6 +1494,7 @@ fn push_pending_trigger_to_stack_with_event_batch(
             condition,
             trigger_event,
             description,
+            source_name,
         },
     };
     stack::push_to_stack(state, entry, events);
