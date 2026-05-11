@@ -8278,17 +8278,21 @@ fn rewrite_player_scope_refs(def: &mut AbilityDefinition) {
                             player: PlayerScope::ScopedPlayer,
                         }
                     }
-                    crate::types::ability::ZoneRef::Library => {
+                    // CR 608.2 + CR 109.5 — Issue #310: "their library" inside
+                    // an iterating `player_scope` resolves against the
+                    // iterated player's library. Pre-fix this rewrite emitted
+                    // `CountScope::Controller` (caster) which broke
+                    // Maddening Cacophony's kicker mode. `CountScope::ScopedPlayer`
+                    // falls back to Controller outside iteration, so non-scoped
+                    // sites still resolve correctly.
+                    crate::types::ability::ZoneRef::Library
+                    | crate::types::ability::ZoneRef::Graveyard => {
                         *qty = QuantityRef::ZoneCardCount {
-                            zone: crate::types::ability::ZoneRef::Library,
+                            zone: zone.clone(),
                             card_types: Vec::new(),
-                            scope: crate::types::ability::CountScope::Controller,
+                            scope: crate::types::ability::CountScope::ScopedPlayer,
                         };
                     }
-                    // GraveyardSize / ZoneCardCount are still controller-based;
-                    // leave target-scoped graveyard/exile counts unchanged until
-                    // CountScope has a scoped-player axis.
-                    crate::types::ability::ZoneRef::Graveyard => {}
                     // Exile has no clean controller-scoped equivalent in the
                     // current `QuantityRef` set. Leave untouched — the
                     // scoped-controller resolver path does not exist for

@@ -67,6 +67,65 @@ pub fn build_resolved_from_def_with_targets(
     resolved
 }
 
+/// CR 608.2c + CR 608.2e: Apply an "instead" swap from a sub-ability override
+/// onto a parent `ResolvedAbility`. Produces a new `ResolvedAbility` whose
+/// **identity / runtime context** comes from the parent (controller, source,
+/// already-announced targets, kicker context, chosen-X, etc.) but whose
+/// **effect-shape fields** come from the sub (effect, player_scope, optional,
+/// description, repeat_for, …).
+///
+/// This is the single authority for instead-swap semantics. Adding a sibling
+/// instead-shape (kicker / target-keyword / condition-instead) goes through
+/// here so no field is silently dropped on the swap. Mirrors the lesson from
+/// commit `4475b1939` where partial clones on the casting path silently
+/// dropped `player_scope`.
+///
+/// Fields from `sub`: effect, duration, sub_ability, else_ability,
+/// player_scope, optional, optional_for, optional_targeting, multi_target,
+/// target_choice_timing, description, repeat_for, forward_result, unless_pay,
+/// distribution, target_selection_mode.
+///
+/// Fields preserved from `parent`: controller, source_id, kind, context,
+/// original_controller, scoped_player, targets, chosen_x, cost_paid_object,
+/// ability_index, may_trigger_origin.
+///
+/// `condition` is intentionally **cleared** — the override sub's own
+/// `ConditionInstead { inner }` (or AdditionalCostPaidInstead, etc.) has
+/// already been evaluated by the caller; the inner condition encodes all
+/// resolution checks (CR 608.2c).
+pub(crate) fn apply_instead_swap(
+    parent: &ResolvedAbility,
+    sub: &ResolvedAbility,
+) -> ResolvedAbility {
+    let mut overridden = parent.clone();
+    overridden.effect = sub.effect.clone();
+    overridden.duration = sub.duration.clone();
+    // CR 608.2c: The override sub is consumed; its own sub_ability becomes the
+    // new chain tail. The else_ability mirrors that chain.
+    overridden.sub_ability = sub.sub_ability.clone();
+    overridden.else_ability = sub.else_ability.clone();
+    // CR 608.2c: "Instead" semantics replace the entire effect clause. The
+    // ConditionInstead inner condition already encodes all resolution checks
+    // (e.g., Revolt + MV ≤ 4 via And). The parent's base condition (e.g.,
+    // MV ≤ 2) is superseded — it only applies when the swap does NOT fire.
+    overridden.condition = None;
+    // CR 608.2 + CR 608.2c: Effect-shape fields belong to the swapped effect,
+    // not the parent.
+    overridden.player_scope = sub.player_scope;
+    overridden.optional = sub.optional;
+    overridden.optional_for = sub.optional_for;
+    overridden.optional_targeting = sub.optional_targeting;
+    overridden.multi_target = sub.multi_target.clone();
+    overridden.target_choice_timing = sub.target_choice_timing;
+    overridden.description = sub.description.clone();
+    overridden.repeat_for = sub.repeat_for.clone();
+    overridden.forward_result = sub.forward_result;
+    overridden.unless_pay = sub.unless_pay.clone();
+    overridden.distribution = sub.distribution.clone();
+    overridden.target_selection_mode = sub.target_selection_mode;
+    overridden
+}
+
 /// CR 700.2: For modal spells/abilities, build a chained resolved ability from the
 /// selected mode indices, linking them via the sub_ability chain.
 ///
@@ -2634,6 +2693,77 @@ mod tests {
             .as_ref()
             .expect("Draw sub must survive multi-mode chaining");
         assert!(matches!(draw_node.effect, Effect::Draw { .. }));
+    }
+
+    /// Issue #310: `apply_instead_swap` must preserve every effect-shape
+    /// field from the sub (player_scope, optional, multi_target, …) and every
+    /// runtime-context field from the parent (controller, targets,
+    /// chosen_x, …). Pre-fix the swap site in `effects/mod.rs` hand-rolled a
+    /// partial clone that silently dropped `sub.player_scope` — same shape
+    /// as the casting-path bug fixed by commit 4475b1939.
+    #[test]
+    fn apply_instead_swap_preserves_sub_player_scope_and_optional() {
+        let parent = ResolvedAbility::new(
+            Effect::Mill {
+                count: QuantityExpr::Fixed { value: 1 },
+                target: TargetFilter::Controller,
+                destination: crate::types::zones::Zone::Graveyard,
+            },
+            vec![TargetRef::Player(PlayerId(0))],
+            ObjectId(10),
+            PlayerId(0),
+        );
+        // Parent has no player_scope; sub has player_scope=Opponent — the
+        // bug-class scenario. Pre-fix: swap silently dropped player_scope.
+        let mut sub = ResolvedAbility::new(
+            Effect::Draw {
+                count: QuantityExpr::Fixed { value: 1 },
+                target: TargetFilter::Controller,
+            },
+            vec![],
+            ObjectId(10),
+            PlayerId(0),
+        );
+        sub.player_scope = Some(crate::types::ability::PlayerFilter::Opponent);
+        sub.optional = true;
+        sub.description = Some("override description".to_string());
+
+        let swapped = apply_instead_swap(&parent, &sub);
+
+        // Effect-shape fields come from sub.
+        assert!(
+            matches!(swapped.effect, Effect::Draw { .. }),
+            "swap must adopt sub's effect"
+        );
+        assert_eq!(
+            swapped.player_scope,
+            Some(crate::types::ability::PlayerFilter::Opponent),
+            "swap must preserve sub.player_scope (issue #310)"
+        );
+        assert!(swapped.optional, "swap must preserve sub.optional");
+        assert_eq!(swapped.description.as_deref(), Some("override description"));
+        // Identity / runtime-context fields come from parent.
+        assert_eq!(
+            swapped.controller,
+            PlayerId(0),
+            "swap must preserve parent.controller"
+        );
+        assert_eq!(
+            swapped.source_id,
+            ObjectId(10),
+            "swap must preserve parent.source_id"
+        );
+        assert_eq!(
+            swapped.targets,
+            vec![TargetRef::Player(PlayerId(0))],
+            "swap must preserve parent.targets (announced before resolution)"
+        );
+        // The parent's condition was carrying the "instead" gate which has
+        // already been evaluated; swap clears it.
+        assert!(
+            swapped.condition.is_none(),
+            "swap must clear parent.condition (CR 608.2c)"
+        );
     }
 
     /// Issue #310: spell-cast and ability-activate paths now delegate to

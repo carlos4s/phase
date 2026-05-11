@@ -585,7 +585,7 @@ fn resolve_ref(
         // Per-player u32 is widened to u64 before summing; the i32::try_from
         // saturates on the (only theoretically reachable) overflow.
         QuantityRef::PlayerCounter { kind, scope } => {
-            let total: u64 = scoped_players(state, scope, controller)
+            let total: u64 = scoped_players(state, scope, ctx, controller)
                 .map(|p| u64::from(p.player_counter(kind)))
                 .sum();
             i32::try_from(total).unwrap_or(i32::MAX)
@@ -947,11 +947,8 @@ fn resolve_ref(
                     ZoneRef::Exile => {
                         for &obj_id in &state.exile {
                             if let Some(obj) = state.objects.get(&obj_id) {
-                                let owner_matches = match scope {
-                                    CountScope::Controller => obj.owner == controller,
-                                    CountScope::All => true,
-                                    CountScope::Opponents => obj.owner != controller,
-                                };
+                                let owner_matches =
+                                    count_scope_owner_matches(scope, ctx, controller, obj.owner);
                                 if owner_matches {
                                     for ct in &obj.card_types.core_types {
                                         seen.insert(*ct);
@@ -961,7 +958,7 @@ fn resolve_ref(
                         }
                     }
                     ZoneRef::Graveyard | ZoneRef::Library | ZoneRef::Hand => {
-                        for player in scoped_players(state, scope, controller) {
+                        for player in scoped_players(state, scope, ctx, controller) {
                             let zone_ids = match zone {
                                 ZoneRef::Graveyard => &player.graveyard,
                                 ZoneRef::Library => &player.library,
@@ -1023,7 +1020,7 @@ fn resolve_ref(
             // Per-player zones (graveyard, library)
             match zone {
                 ZoneRef::Graveyard | ZoneRef::Library | ZoneRef::Hand => {
-                    for player in scoped_players(state, scope, controller) {
+                    for player in scoped_players(state, scope, ctx, controller) {
                         let zone_ids = match zone {
                             ZoneRef::Graveyard => &player.graveyard,
                             ZoneRef::Library => &player.library,
@@ -1041,11 +1038,8 @@ fn resolve_ref(
                 ZoneRef::Exile => {
                     for &obj_id in &state.exile {
                         if let Some(obj) = state.objects.get(&obj_id) {
-                            let owner_matches = match scope {
-                                CountScope::Controller => obj.owner == controller,
-                                CountScope::All => true,
-                                CountScope::Opponents => obj.owner != controller,
-                            };
+                            let owner_matches =
+                                count_scope_owner_matches(scope, ctx, controller, obj.owner);
                             if owner_matches && matches_zone_card_filter(state, obj_id, card_types)
                             {
                                 count += 1;
@@ -1243,7 +1237,7 @@ fn resolve_ref(
         }
         // CR 117.1: Count spells cast this turn by the scoped players, optionally filtered.
         QuantityRef::SpellsCastThisTurn { scope, ref filter } => usize_to_i32_saturating(
-            scoped_players(state, scope, controller)
+            scoped_players(state, scope, ctx, controller)
                 .filter_map(|player| state.spells_cast_this_turn_by_player.get(&player.id))
                 .map(|list| match filter {
                     None => list.len(),
@@ -1397,7 +1391,7 @@ fn resolve_ref(
                 .counter_added_this_turn
                 .iter()
                 .filter(|record| {
-                    counter_added_actor_matches(actor, controller, record.actor)
+                    counter_added_actor_matches(actor, ctx, controller, record.actor)
                         && counters.matches(&record.counter_type)
                         && matches_target_filter_on_counter_added_record(
                             state,
@@ -1587,22 +1581,56 @@ fn matches_zone_card_filter(
     })
 }
 
-/// Return an iterator over players matching the given `CountScope`.
+/// CR 608.2 + CR 109.5: Resolve which player a `CountScope` variant binds to,
+/// then return an iterator over matching players.
+///
+/// `Controller` always means the printed ability's controller (caster) — this
+/// is the "you" axis. `ScopedPlayer` (Issue #310) means the currently iterated
+/// player when a surrounding `player_scope` is active, falling back to
+/// `Controller` outside iteration. `Opponents` and `All` are computed
+/// relative to `Controller` (the caster), preserving CR 109.5's "you" semantics
+/// for unscoped opponent/all counts.
 fn scoped_players<'a>(
     state: &'a GameState,
     scope: &'a CountScope,
+    ctx: QuantityContext,
     controller: PlayerId,
 ) -> impl Iterator<Item = &'a crate::types::player::Player> {
+    let scoped_player = ctx.scoped_player.unwrap_or(controller);
     state.players.iter().filter(move |p| match scope {
         CountScope::Controller => p.id == controller,
+        CountScope::ScopedPlayer => p.id == scoped_player,
         CountScope::All => true,
         CountScope::Opponents => p.id != controller,
     })
 }
 
-fn counter_added_actor_matches(scope: &CountScope, controller: PlayerId, actor: PlayerId) -> bool {
+/// CR 608.2 + CR 109.5: Owner-axis owner-match for `CountScope` against a
+/// known object owner. Mirrors `scoped_players` for global zones (exile)
+/// where iteration over players is replaced by per-object owner predication.
+fn count_scope_owner_matches(
+    scope: &CountScope,
+    ctx: QuantityContext,
+    controller: PlayerId,
+    owner: PlayerId,
+) -> bool {
+    match scope {
+        CountScope::Controller => owner == controller,
+        CountScope::ScopedPlayer => owner == ctx.scoped_player.unwrap_or(controller),
+        CountScope::All => true,
+        CountScope::Opponents => owner != controller,
+    }
+}
+
+fn counter_added_actor_matches(
+    scope: &CountScope,
+    ctx: QuantityContext,
+    controller: PlayerId,
+    actor: PlayerId,
+) -> bool {
     match scope {
         CountScope::Controller => actor == controller,
+        CountScope::ScopedPlayer => actor == ctx.scoped_player.unwrap_or(controller),
         CountScope::All => true,
         CountScope::Opponents => actor != controller,
     }

@@ -1003,6 +1003,7 @@ fn fmt_quantity_ref(qty: &QuantityRef) -> String {
         QuantityRef::PlayerCounter { kind, scope } => {
             let scope_s = match scope {
                 CountScope::Controller => "you have",
+                CountScope::ScopedPlayer => "the scoped player has",
                 CountScope::Opponents => "each opponent has",
                 CountScope::All => "each player has",
             };
@@ -1230,6 +1231,7 @@ fn fmt_core_type(ct: &CoreType) -> &'static str {
 fn fmt_count_scope(scope: &CountScope) -> &'static str {
     match scope {
         CountScope::Controller => "your",
+        CountScope::ScopedPlayer => "their",
         CountScope::All => "all",
         CountScope::Opponents => "opponents'",
     }

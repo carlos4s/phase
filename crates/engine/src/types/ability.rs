@@ -414,9 +414,25 @@ pub enum ChosenSubtypeKind {
 }
 
 /// Which players' zones to count across for zone-based quantity references.
+///
+/// CR 608.2 + CR 109.5: `Controller` and `ScopedPlayer` are distinct axes
+/// during `player_scope` iteration. `Controller` always means the printed
+/// ability's controller (the "you" axis from CR 109.5). `ScopedPlayer` means
+/// the player whose iteration copy is currently running (e.g., each opponent
+/// in "Each opponent mills half of *their* library, rounded up." — Maddening
+/// Cacophony's kicker mode). Outside iteration, `ScopedPlayer` falls back
+/// to `Controller`. Mirrors the `ControllerRef::You` vs
+/// `ControllerRef::ScopedPlayer` split.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CountScope {
+    /// CR 109.5: The printed ability's controller — "you" / "your" semantics.
     Controller,
+    /// CR 608.2 + CR 109.5: The currently iterated player during a
+    /// `player_scope` resolution — "they" / "their" semantics relative to the
+    /// iteration. Issue #310: distinguishes "their library" (per-iteration)
+    /// from "your library" (always caster). Falls back to `Controller`
+    /// outside iteration.
+    ScopedPlayer,
     All,
     Opponents,
 }

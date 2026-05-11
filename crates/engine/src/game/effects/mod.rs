@@ -1487,20 +1487,14 @@ pub fn resolve_ability_chain(
             false
         };
         if should_swap {
-            let mut overridden = ability.clone();
-            overridden.effect = sub.effect.clone();
-            if let Some(ref sub_duration) = sub.duration {
-                overridden.duration = Some(sub_duration.clone());
-            }
-            // CR 608.2c: "Instead" semantics replace the entire effect clause.
-            // The ConditionInstead inner condition already encodes all resolution
-            // checks (e.g., Revolt + MV ≤ 4 via And). The parent's base condition
-            // (e.g., MV ≤ 2) is superseded — it only applies when the swap does NOT fire.
-            overridden.condition = None;
-            // The override sub is consumed; its own sub_ability becomes the new chain tail.
-            overridden.sub_ability = sub.sub_ability.clone();
-            overridden.else_ability = sub.else_ability.clone();
-            Cow::Owned(overridden)
+            // CR 608.2c + CR 608.2e: Single-authority swap helper preserves
+            // every effect-shape field on the sub (player_scope, optional,
+            // multi_target, repeat_for, …) and every runtime-context field on
+            // the parent (controller, targets, chosen_x, …). See
+            // `ability_utils::apply_instead_swap` for the full field map.
+            // Issue #310: a hand-rolled clone here previously dropped
+            // `sub.player_scope`.
+            Cow::Owned(super::ability_utils::apply_instead_swap(ability, sub))
         } else {
             Cow::Borrowed(ability)
         }

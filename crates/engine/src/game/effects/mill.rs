@@ -395,4 +395,165 @@ mod tests {
             "each opponent must be milled"
         );
     }
+
+    /// Issue #310 (Maddening Cacophony kicker mode): "Each opponent mills
+    /// half their library, rounded up." Parses as
+    /// `Effect::Mill { count: ZoneCardCount{scope: ScopedPlayer, ...}/2 ceil,
+    /// target: Controller }` with `player_scope: Opponent` after the parser
+    /// rewrite at `parser/oracle_effect/mod.rs` promotes the
+    /// `TargetZoneCardCount{Library}` form.
+    ///
+    /// CR 608.2 + CR 109.5: `CountScope::ScopedPlayer` MUST bind to the
+    /// iterated player's library — not the caster's. A three-player game
+    /// with libraries of differing sizes (caster: 4, opponent 1: 6,
+    /// opponent 2: 10) exposes the bug clearly: opponent 1 must mill
+    /// `ceil(6/2)=3`, opponent 2 must mill `ceil(10/2)=5`, and the caster
+    /// must NOT be milled at all. Pre-fix the rewrite emitted
+    /// `CountScope::Controller`, which counted the caster's 4-card library
+    /// for both, milling each opponent `ceil(4/2)=2`.
+    #[test]
+    fn player_scope_opponent_mill_half_their_library_uses_iterated_library() {
+        use crate::types::ability::{CountScope, RoundingMode, ZoneRef};
+        use crate::types::format::FormatConfig;
+
+        let mut state = GameState::new(FormatConfig::standard(), 3, 42);
+        // Library sizes: caster (P0) = 4, opponent 1 (P1) = 6, opponent 2 (P2) = 10.
+        // Differing sizes prove the count is computed per-iterated-player,
+        // not from the caster's library.
+        let library_sizes = [4u64, 6u64, 10u64];
+        for (p, &size) in library_sizes.iter().enumerate() {
+            for i in 0..size {
+                create_object(
+                    &mut state,
+                    CardId(100 + (p as u64) * 100 + i),
+                    PlayerId(p as u8),
+                    format!("P{p} Library {i}"),
+                    Zone::Library,
+                );
+            }
+        }
+
+        let mut ability = ResolvedAbility::new(
+            Effect::Mill {
+                count: QuantityExpr::DivideRounded {
+                    inner: Box::new(QuantityExpr::Ref {
+                        qty: QuantityRef::ZoneCardCount {
+                            zone: ZoneRef::Library,
+                            card_types: vec![],
+                            scope: CountScope::ScopedPlayer,
+                        },
+                    }),
+                    divisor: 2,
+                    rounding: RoundingMode::Up,
+                },
+                target: TargetFilter::Controller,
+                destination: Zone::Graveyard,
+            },
+            vec![],
+            ObjectId(100),
+            PlayerId(0),
+        );
+        ability.player_scope = Some(PlayerFilter::Opponent);
+
+        let mut events = Vec::new();
+        resolve_ability_chain(&mut state, &ability, &mut events, 0).unwrap();
+
+        assert_eq!(
+            state.players[0].graveyard.len(),
+            0,
+            "caster must NOT be milled — player_scope=Opponent only iterates opponents"
+        );
+        assert_eq!(
+            state.players[1].graveyard.len(),
+            3,
+            "opponent 1 (library=6) must mill ceil(6/2)=3 — counted from their library, not caster's"
+        );
+        assert_eq!(
+            state.players[2].graveyard.len(),
+            5,
+            "opponent 2 (library=10) must mill ceil(10/2)=5 — counted from their library, not caster's"
+        );
+    }
+
+    /// Issue #310: `CountScope::Controller` (caster's "your library") MUST
+    /// continue to mean the caster — even inside a `player_scope` iteration.
+    /// "Each player sacrifices a land for each card in YOUR hand"
+    /// (Thoughts of Ruin shape) is the canonical case: the count is the
+    /// caster's hand size regardless of which iterated player is sacrificing.
+    /// Pin this so any future change to the per-iteration semantics keeps
+    /// `Controller` distinct from `ScopedPlayer`.
+    #[test]
+    fn player_scope_controller_count_scope_remains_caster_perspective() {
+        use crate::types::ability::{CountScope, ZoneRef};
+        use crate::types::format::FormatConfig;
+
+        let mut state = GameState::new(FormatConfig::standard(), 3, 42);
+        // Caster (P0) hand: 5 cards. Iterated players (P1, P2) hand: 1 card each.
+        for i in 0..5 {
+            create_object(
+                &mut state,
+                CardId(100 + i),
+                PlayerId(0),
+                format!("Caster Hand {i}"),
+                Zone::Hand,
+            );
+        }
+        for p in 1u8..3 {
+            create_object(
+                &mut state,
+                CardId(200 + u64::from(p)),
+                PlayerId(p),
+                format!("P{p} Hand"),
+                Zone::Hand,
+            );
+        }
+        // P1 / P2 each have a 10-card library so Mill is observable.
+        for p in 1u8..3 {
+            for i in 0..10 {
+                create_object(
+                    &mut state,
+                    CardId(300 + u64::from(p) * 20 + i),
+                    PlayerId(p),
+                    format!("P{p} Library {i}"),
+                    Zone::Library,
+                );
+            }
+        }
+
+        // Mill N where N = "cards in your hand" (CountScope::Controller).
+        // player_scope=Opponent → each opponent mills 5 (caster's hand size),
+        // not 1 (their own hand size).
+        let mut ability = ResolvedAbility::new(
+            Effect::Mill {
+                count: QuantityExpr::Ref {
+                    qty: QuantityRef::ZoneCardCount {
+                        zone: ZoneRef::Hand,
+                        card_types: vec![],
+                        scope: CountScope::Controller,
+                    },
+                },
+                target: TargetFilter::Controller,
+                destination: Zone::Graveyard,
+            },
+            vec![],
+            ObjectId(100),
+            PlayerId(0),
+        );
+        ability.player_scope = Some(PlayerFilter::Opponent);
+
+        let mut events = Vec::new();
+        resolve_ability_chain(&mut state, &ability, &mut events, 0).unwrap();
+
+        assert_eq!(state.players[0].graveyard.len(), 0, "caster not milled");
+        assert_eq!(
+            state.players[1].graveyard.len(),
+            5,
+            "opponent 1 mills 5 — count uses CASTER's hand size (5), not their own (1)"
+        );
+        assert_eq!(
+            state.players[2].graveyard.len(),
+            5,
+            "opponent 2 mills 5 — count uses CASTER's hand size (5), not their own (1)"
+        );
+    }
 }

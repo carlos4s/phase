@@ -729,22 +729,64 @@ fn gain_life_applier(
     // `Offset { inner: EventContextAmount, offset: 1 }` for "you gain that
     // much life plus 1 instead". CR 614.1a: the replacement substitutes a
     // new event (the replaced amount), not an additive delta.
-    let Some(new_amount) = gain_life_replacement_amount(state, rid, &event) else {
+    if let Some(new_amount) = gain_life_replacement_amount(state, rid, &event) {
+        if let ProposedEvent::LifeGain {
+            player_id, applied, ..
+        } = event
+        {
+            return ApplyResult::Modified(ProposedEvent::LifeGain {
+                player_id,
+                amount: new_amount,
+                applied,
+            });
+        }
         return ApplyResult::Modified(event);
-    };
-
-    if let ProposedEvent::LifeGain {
-        player_id, applied, ..
-    } = event
-    {
-        ApplyResult::Modified(ProposedEvent::LifeGain {
-            player_id,
-            amount: new_amount,
-            applied,
-        })
-    } else {
-        ApplyResult::Modified(event)
     }
+
+    // Branch 3: Cross-event-type substitution — "If you would gain life,
+    // [other-effect] instead." Lich ("draw that many cards instead"),
+    // Lich's Mirror, etc. CR 614.1a: the replacement substitutes a new
+    // event of a different type. The original LifeGain event is
+    // suppressed; the substitute effect runs as a post-replacement
+    // continuation (stashed by `apply_single_replacement`'s mandatory
+    // branch). `EventContextAmount` in the substitute reads
+    // `last_effect_count` (CR 615.5 fallback); stamp it to the original
+    // amount so "draw that many" sees the prevented life-gain quantity.
+    if gain_life_execute_substitutes_event_type(state, rid) {
+        if let ProposedEvent::LifeGain { amount, .. } = event {
+            state.last_effect_count = Some(amount as i32);
+        }
+        return ApplyResult::Prevented;
+    }
+
+    ApplyResult::Modified(event)
+}
+
+/// CR 614.1a: True iff the replacement's `execute` carries an effect whose
+/// type does NOT match the LifeGain event — i.e., this is a cross-event-type
+/// substitution ("If you would gain life, X instead" where X is not
+/// `GainLife`). `Effect::Unimplemented` is treated as **not** substitution
+/// (silent passthrough preserves coverage when the parser hasn't fully
+/// decomposed the replacement yet — a future parser improvement promotes the
+/// case to the proper branch).
+///
+/// Centralizes the "execute shape ≠ matched event type" check so siblings
+/// (life-loss substitution, counter substitution, …) can extend through the
+/// same primitive when their cards land.
+fn gain_life_execute_substitutes_event_type(state: &GameState, rid: ReplacementId) -> bool {
+    let Some(execute) = state
+        .objects
+        .get(&rid.source)
+        .and_then(|obj| obj.replacement_definitions.get(rid.index))
+        .and_then(|def| def.execute.as_deref())
+    else {
+        return false;
+    };
+    let effect = &*execute.effect;
+    if matches!(effect, Effect::Unimplemented { .. }) {
+        return false;
+    }
+    !matches!(effect, Effect::GainLife { .. })
 }
 
 fn gain_life_replacement_amount(
