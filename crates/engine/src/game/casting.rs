@@ -653,14 +653,22 @@ fn has_exile_cast_permission(
         || obj.casting_permissions.iter().any(|p| match p {
             crate::types::ability::CastingPermission::AdventureCreature
             | crate::types::ability::CastingPermission::ExileWithEnergyCost => obj.owner == player,
-            crate::types::ability::CastingPermission::ExileWithAltCost { granted_to, .. }
+            crate::types::ability::CastingPermission::ExileWithAltCost {
+                granted_to,
+                constraint,
+                ..
+            }
             | crate::types::ability::CastingPermission::ExileWithAltAbilityCost {
                 granted_to,
+                constraint,
                 ..
-            } => match granted_to {
-                Some(p) => *p == player,
-                None => obj.owner == player,
-            },
+            } => {
+                let grantee_matches = match granted_to {
+                    Some(p) => *p == player,
+                    None => obj.owner == player,
+                };
+                grantee_matches && cast_permission_constraint_allows_known_object(obj, constraint)
+            }
             crate::types::ability::CastingPermission::PlayFromExile { .. } => false,
             crate::types::ability::CastingPermission::WarpExile {
                 castable_after_turn,
@@ -672,6 +680,22 @@ fn has_exile_cast_permission(
                 obj.owner == player && turn_number > *turn_foretold
             }
         })
+}
+
+fn cast_permission_constraint_allows_known_object(
+    obj: &crate::game::game_object::GameObject,
+    constraint: &Option<crate::types::ability::CastPermissionConstraint>,
+) -> bool {
+    use crate::types::ability::{CastPermissionConstraint, QuantityExpr};
+
+    match constraint {
+        Some(CastPermissionConstraint::ManaValue {
+            comparator,
+            value: QuantityExpr::Fixed { value },
+        }) => comparator.evaluate(obj.mana_cost.mana_value() as i32, *value),
+        Some(CastPermissionConstraint::ManaValue { .. }) => true,
+        Some(CastPermissionConstraint::CascadeResultingMvBelow { .. }) | None => true,
+    }
 }
 
 fn source_has_collection_counter_play_permission(

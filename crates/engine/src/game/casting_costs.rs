@@ -2156,6 +2156,13 @@ pub(super) fn finalize_cast_with_phyrexian_choices(
                 return handle_cascade_rejection(state, player, object_id, exiled_misses, events);
             }
         }
+        if !mana_value_permission_constraint_accepts(state, object_id, player, resulting_mv) {
+            let pending_for_cancel = PendingCast::new(object_id, card_id, ability, cost.clone());
+            super::casting::handle_cancel_cast(state, &pending_for_cancel, events);
+            return Err(EngineError::ActionNotAllowed(
+                "Spell mana value does not satisfy the cast permission".to_string(),
+            ));
+        }
     }
 
     // CR 700.14: Snapshot pool size before payment to compute actual mana spent.
@@ -2498,6 +2505,42 @@ fn evaluate_cascade_constraint_with_resulting_mv(
     } else {
         CascadeCheck::Rejected { exiled_misses }
     }
+}
+
+fn mana_value_permission_constraint_accepts(
+    state: &GameState,
+    object_id: ObjectId,
+    player: PlayerId,
+    resulting_mv: u32,
+) -> bool {
+    use crate::types::ability::{CastPermissionConstraint, CastingPermission};
+
+    state.objects.get(&object_id).is_none_or(|obj| {
+        obj.casting_permissions
+            .iter()
+            .filter(|permission| match permission {
+                CastingPermission::ExileWithAltCost { granted_to, .. }
+                | CastingPermission::ExileWithAltAbilityCost { granted_to, .. } => {
+                    granted_to.map_or(obj.owner == player, |grantee| grantee == player)
+                }
+                _ => false,
+            })
+            .all(|permission| match permission {
+                CastingPermission::ExileWithAltCost {
+                    constraint: Some(CastPermissionConstraint::ManaValue { comparator, value }),
+                    ..
+                }
+                | CastingPermission::ExileWithAltAbilityCost {
+                    constraint: Some(CastPermissionConstraint::ManaValue { comparator, value }),
+                    ..
+                } => {
+                    let required =
+                        super::quantity::resolve_quantity(state, value, obj.controller, object_id);
+                    comparator.evaluate(resulting_mv as i32, required)
+                }
+                _ => true,
+            })
+    })
 }
 
 /// CR 702.85a: Unwind a cascade-rejected cast — remove the announcement-time
