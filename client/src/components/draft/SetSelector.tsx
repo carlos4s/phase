@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { useDraftStore } from "../../stores/draftStore";
-import { menuButtonClass } from "../menu/buttonStyles";
-import type { MenuButtonTone } from "../menu/buttonStyles";
 
 // ── Types ───────────────────────────────────────────────────────────────
 
@@ -31,14 +29,6 @@ const DIFFICULTY_LABELS = [
   "Hard",
   "Very Hard",
 ] as const;
-
-const DIFFICULTY_TONES: MenuButtonTone[] = [
-  "emerald",
-  "blue",
-  "amber",
-  "red",
-  "purple",
-];
 
 // ── Component ───────────────────────────────────────────────────────────
 
@@ -97,24 +87,30 @@ export function SetSelector({ onStartDraft }: SetSelectorProps) {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Difficulty selector */}
+      {/* Difficulty selector — single-axis scale, so a segmented control rather than per-level colors */}
       <div className="flex flex-col gap-2">
         <h3 className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
           Bot Difficulty
         </h3>
-        <div className="flex flex-wrap gap-2">
-          {DIFFICULTY_LABELS.map((label, idx) => (
-            <button
-              key={label}
-              onClick={() => setDifficulty(idx)}
-              className={menuButtonClass({
-                tone: difficulty === idx ? DIFFICULTY_TONES[idx] : "neutral",
-                size: "sm",
-              })}
-            >
-              {label}
-            </button>
-          ))}
+        <div className="flex w-full max-w-md rounded-xl border border-white/10 bg-black/18 p-1 backdrop-blur-md">
+          {DIFFICULTY_LABELS.map((label, idx) => {
+            const selected = difficulty === idx;
+            return (
+              <button
+                key={label}
+                type="button"
+                onClick={() => setDifficulty(idx)}
+                aria-pressed={selected}
+                className={`flex-1 cursor-pointer rounded-lg px-2 py-2 text-xs font-medium transition-colors ${
+                  selected
+                    ? "bg-emerald-400/15 text-emerald-100 shadow-[inset_0_0_0_1px] shadow-emerald-300/25"
+                    : "text-white/45 hover:bg-white/[0.05] hover:text-white/70"
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -123,12 +119,6 @@ export function SetSelector({ onStartDraft }: SetSelectorProps) {
         <h3 className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
           Choose a Set
         </h3>
-
-        {loading && (
-          <div className="py-8 text-center text-sm text-white/40">
-            Loading available sets...
-          </div>
-        )}
 
         {error && (
           <div className="py-4 text-center text-sm text-red-300">{error}</div>
@@ -141,28 +131,38 @@ export function SetSelector({ onStartDraft }: SetSelectorProps) {
         )}
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-          {sets.map(({ code, name, icon }) => (
-            <button
-              key={code}
-              onClick={() => handleSetClick(code, name)}
-              className="flex cursor-pointer flex-col items-center gap-2 rounded-[16px] border border-white/10 bg-black/18 p-4 backdrop-blur-md transition-colors hover:border-white/20 hover:bg-white/8"
-            >
-              {icon ? (
-                <img
-                  src={icon}
-                  alt={`${name} set icon`}
-                  className="h-10 w-10 invert opacity-80"
-                />
-              ) : (
-                <span className="text-2xl font-bold tracking-wider text-white">
-                  {code}
-                </span>
-              )}
-              <span className="text-center text-xs leading-tight text-white/50">
-                {name}
-              </span>
-            </button>
-          ))}
+          {loading
+            ? Array.from({ length: 10 }, (_, i) => (
+                <div
+                  key={i}
+                  className="flex animate-pulse flex-col items-center gap-2 rounded-[16px] border border-white/8 bg-black/18 p-4"
+                >
+                  <div className="h-10 w-10 rounded-full bg-white/10" />
+                  <div className="h-2.5 w-3/4 rounded bg-white/8" />
+                </div>
+              ))
+            : sets.map(({ code, name, icon }) => (
+                <button
+                  key={code}
+                  onClick={() => handleSetClick(code, name)}
+                  className="flex cursor-pointer flex-col items-center gap-2 rounded-[16px] border border-white/10 bg-black/18 p-4 backdrop-blur-md transition-colors hover:border-white/20 hover:bg-white/8"
+                >
+                  {icon ? (
+                    <img
+                      src={icon}
+                      alt={`${name} set icon`}
+                      className="h-10 w-10 invert opacity-80"
+                    />
+                  ) : (
+                    <span className="text-2xl font-bold tracking-wider text-white">
+                      {code}
+                    </span>
+                  )}
+                  <span className="text-center text-xs leading-tight text-white/55">
+                    {name}
+                  </span>
+                </button>
+              ))}
         </div>
       </div>
     </div>

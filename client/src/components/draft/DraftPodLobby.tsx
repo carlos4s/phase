@@ -180,7 +180,7 @@ export function DraftPodLobby({ onLeave }: DraftPodLobbyProps) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-white">Draft Pod Lobby</h2>
+          <h2 className="menu-display text-2xl text-white">Draft Pod Lobby</h2>
           <p className="mt-1 text-sm text-white/50">
             {config.setName || config.setCode} &mdash;{" "}
             {config.kind} Draft

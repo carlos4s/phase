@@ -42,7 +42,7 @@ export function DraftIntro({ mode, podSize = 8, onContinue }: DraftIntroProps) {
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col items-center gap-8 py-12">
       <div className="flex flex-col items-center gap-2">
-        <h1 className="text-2xl font-bold text-white">{title}</h1>
+        <h1 className="menu-display text-3xl text-white">{title}</h1>
         <p className="text-sm text-white/50">Here's how it works</p>
       </div>
 

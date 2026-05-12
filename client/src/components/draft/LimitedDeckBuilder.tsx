@@ -1,10 +1,20 @@
 import { useMemo } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 
 import { useCardImage } from "../../hooks/useCardImage";
 import { useDraftStore } from "../../stores/draftStore";
 import { menuButtonClass } from "../menu/buttonStyles";
 import type { DraftCardInstance } from "../../adapter/draft-adapter";
 import { ManaCurve } from "./ManaCurve";
+
+// Shared enter/exit for cards moving between the pool and the deck.
+const CARD_MOTION = {
+  layout: true,
+  initial: { opacity: 0, scale: 0.85 },
+  animate: { opacity: 1, scale: 1 },
+  exit: { opacity: 0, scale: 0.85 },
+  transition: { duration: 0.18, ease: "easeOut" as const },
+};
 
 // ── Constants ───────────────────────────────────────────────────────────
 
@@ -81,16 +91,20 @@ function LandRow({ name, colorClass, count, onDecrement, onIncrement }: LandRowP
       <div className={`h-3 w-3 shrink-0 rounded-full ${colorClass}`} />
       <span className="flex-1 text-sm text-white/60">{name}</span>
       <button
+        type="button"
         onClick={onDecrement}
         disabled={count <= 0}
-        className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-[10px] border border-white/10 bg-black/18 text-sm font-bold text-white/60 transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-30"
+        aria-label={`Remove ${name}`}
+        className={menuButtonClass({ tone: "neutral", size: "icon", disabled: count <= 0, className: "font-bold" })}
       >
         -
       </button>
       <span className="w-6 text-center text-sm tabular-nums text-white">{count}</span>
       <button
+        type="button"
         onClick={onIncrement}
-        className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-[10px] border border-white/10 bg-black/18 text-sm font-bold text-white/60 transition-colors hover:bg-white/8"
+        aria-label={`Add ${name}`}
+        className={menuButtonClass({ tone: "neutral", size: "icon", className: "font-bold" })}
       >
         +
       </button>
@@ -180,118 +194,146 @@ export function LimitedDeckBuilder() {
   if (!view) return null;
 
   return (
-    <div className="flex h-full gap-6">
-      {/* Left column: Pool + Main Deck */}
-      <div className="flex min-w-0 flex-[7] flex-col gap-6 overflow-y-auto">
-        {/* Pool section */}
-        <section>
-          <h3 className="mb-3 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
-            Pool ({remainingPool.length} available)
-          </h3>
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8">
-            {remainingPool.map((card) => (
-              <CardTile
-                key={card.instance_id}
-                card={card}
-                dimmed
-                onClick={() => addToDeck(card.name)}
-              />
-            ))}
-          </div>
-          {remainingPool.length === 0 && (
-            <p className="py-4 text-sm text-white/30">All cards added to deck.</p>
-          )}
-        </section>
+    <div className="flex h-full flex-col gap-4">
+      <DeckStatus spells={mainDeck.length} lands={totalLands} min={MIN_DECK_SIZE} />
 
-        {/* Main deck section */}
-        <section>
-          <h3 className="mb-3 text-[0.68rem] font-semibold uppercase tracking-[0.18em]">
-            <span className="text-slate-500">Main Deck </span>
-            <span className={mainDeck.length >= 23 ? "text-emerald-400" : "text-slate-500"}>
-              ({mainDeck.length} spells)
-            </span>
-          </h3>
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8">
-            {deckGroups.map(({ card, count }) => (
-              <CardTile
-                key={card.instance_id}
-                card={card}
-                count={count}
-                onClick={() => removeFromDeck(card.name)}
-              />
-            ))}
-          </div>
-          {mainDeck.length === 0 && (
-            <p className="py-4 text-sm text-white/30">
-              Click cards from the pool to add them to your deck.
-            </p>
-          )}
-        </section>
-      </div>
-
-      {/* Right column: Lands, Mana Curve, Actions */}
-      <div className="flex min-w-[220px] flex-[3] flex-col gap-6">
-        {/* Land counts */}
-        <section>
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
-              Basic Lands
+      <div className="flex min-h-0 flex-1 gap-6">
+        {/* Left column: Pool + Main Deck */}
+        <div className="flex min-w-0 flex-[7] flex-col gap-6 overflow-y-auto">
+          {/* Pool section */}
+          <section>
+            <h3 className="mb-3 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
+              Pool ({remainingPool.length})
             </h3>
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7">
+              <AnimatePresence mode="popLayout" initial={false}>
+                {remainingPool.map((card) => (
+                  <motion.div key={card.instance_id} {...CARD_MOTION}>
+                    <CardTile card={card} dimmed onClick={() => addToDeck(card.name)} />
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </div>
+            {remainingPool.length === 0 && (
+              <p className="py-4 text-sm text-white/30">All cards added to deck.</p>
+            )}
+          </section>
+
+          {/* Main deck section */}
+          <section>
+            <h3 className="mb-3 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
+              Main Deck
+            </h3>
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7">
+              <AnimatePresence mode="popLayout" initial={false}>
+                {deckGroups.map(({ card, count }) => (
+                  <motion.div key={card.instance_id} {...CARD_MOTION}>
+                    <CardTile card={card} count={count} onClick={() => removeFromDeck(card.name)} />
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </div>
+            {mainDeck.length === 0 && (
+              <p className="py-4 text-sm text-white/30">
+                Click cards from the pool to add them to your deck.
+              </p>
+            )}
+          </section>
+        </div>
+
+        {/* Right column: Lands, Mana Curve, Actions */}
+        <div className="flex min-w-[220px] flex-[3] flex-col gap-6 overflow-y-auto">
+          {/* Land counts */}
+          <section>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Basic Lands
+              </h3>
+              <button
+                type="button"
+                onClick={autoSuggestLands}
+                className={menuButtonClass({ tone: "neutral", size: "xs", ghost: true })}
+              >
+                Auto Lands
+              </button>
+            </div>
+            <div className="flex flex-col gap-2">
+              {BASIC_LANDS.map(({ name, colorClass }) => (
+                <LandRow
+                  key={name}
+                  name={name}
+                  colorClass={colorClass}
+                  count={landCounts[name] ?? 0}
+                  onDecrement={() => setLandCount(name, (landCounts[name] ?? 0) - 1)}
+                  onIncrement={() => setLandCount(name, (landCounts[name] ?? 0) + 1)}
+                />
+              ))}
+            </div>
+          </section>
+
+          {/* Mana curve */}
+          <section>
+            <ManaCurve cards={mainDeck} />
+          </section>
+
+          {/* Actions */}
+          <section className="flex flex-col gap-3">
             <button
-              onClick={autoSuggestLands}
-              className="cursor-pointer text-xs text-cyan-400 transition-colors hover:text-cyan-300"
+              type="button"
+              onClick={autoSuggestDeck}
+              className={menuButtonClass({ tone: "neutral", size: "sm", className: "w-full" })}
             >
-              Auto Lands
+              Suggest Deck
             </button>
-          </div>
-          <div className="flex flex-col gap-2">
-            {BASIC_LANDS.map(({ name, colorClass }) => (
-              <LandRow
-                key={name}
-                name={name}
-                colorClass={colorClass}
-                count={landCounts[name] ?? 0}
-                onDecrement={() => setLandCount(name, (landCounts[name] ?? 0) - 1)}
-                onIncrement={() => setLandCount(name, (landCounts[name] ?? 0) + 1)}
-              />
-            ))}
-          </div>
-          <div className="mt-2 text-xs text-white/30">
-            Total lands: {totalLands}
-          </div>
-        </section>
 
-        {/* Mana curve */}
-        <section>
-          <ManaCurve cards={mainDeck} />
-        </section>
+            <button
+              type="button"
+              onClick={submitDeck}
+              disabled={!deckValid}
+              className={menuButtonClass({
+                tone: "emerald",
+                size: "md",
+                disabled: !deckValid,
+                className: "w-full",
+              })}
+            >
+              Submit Deck
+            </button>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
 
-        {/* Total count + actions */}
-        <section className="flex flex-col gap-3">
-          <div className={`text-center text-sm font-medium ${deckValid ? "text-emerald-400" : "text-red-400"}`}>
-            {totalCards} / {MIN_DECK_SIZE} minimum
-          </div>
+// ── Deck status bar ─────────────────────────────────────────────────────
 
-          <button
-            onClick={autoSuggestDeck}
-            className={menuButtonClass({ tone: "neutral", size: "sm", className: "w-full" })}
-          >
-            Suggest Deck
-          </button>
+function DeckStatus({ spells, lands, min }: { spells: number; lands: number; min: number }) {
+  const total = spells + lands;
+  const valid = total >= min;
+  const remaining = Math.max(0, min - total);
+  const pct = Math.min(100, (total / min) * 100);
 
-          <button
-            onClick={submitDeck}
-            disabled={!deckValid}
-            className={menuButtonClass({
-              tone: "amber",
-              size: "md",
-              disabled: !deckValid,
-              className: "w-full",
-            })}
-          >
-            Submit Deck
-          </button>
-        </section>
+  return (
+    <div className="rounded-[16px] border border-white/10 bg-black/18 px-4 py-3 backdrop-blur-md">
+      <div className="flex items-baseline justify-between">
+        <span className="text-sm font-medium text-white">
+          {total} <span className="text-white/40">/ {min} cards</span>
+        </span>
+        <span className="text-xs text-white/45">
+          {spells} spell{spells === 1 ? "" : "s"} · {lands} land{lands === 1 ? "" : "s"}
+          {valid ? (
+            <span className="ml-2 font-medium text-emerald-300">ready to submit</span>
+          ) : (
+            <span className="ml-2 text-white/55">{remaining} more needed</span>
+          )}
+        </span>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/8">
+        <div
+          className={`h-full rounded-full transition-all duration-300 ${valid ? "bg-emerald-400/80" : "bg-white/30"}`}
+          style={{ width: `${pct}%` }}
+        />
       </div>
     </div>
   );

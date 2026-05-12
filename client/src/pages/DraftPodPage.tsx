@@ -58,7 +58,7 @@ function PodSetup() {
     return (
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-8">
         <div className="flex flex-col items-center gap-2">
-          <h1 className="text-3xl font-bold text-white">Pod Draft</h1>
+          <h1 className="menu-display text-3xl text-white">Pod Draft</h1>
           <p className="text-sm text-white/50">
             Draft with friends — open packs, pick cards, and play tournament matches.
           </p>
@@ -117,7 +117,7 @@ function PodSetup() {
           >
             &larr; Back
           </button>
-          <h1 className="text-3xl font-bold text-white">Host a Pod</h1>
+          <h1 className="menu-display text-3xl text-white">Host a Pod</h1>
         </div>
 
         {/* Display name */}
@@ -272,7 +272,7 @@ function PodSetup() {
         >
           &larr; Back
         </button>
-        <h1 className="text-3xl font-bold text-white">Join a Pod</h1>
+        <h1 className="menu-display text-3xl text-white">Join a Pod</h1>
       </div>
 
       {/* Display name */}
@@ -560,7 +560,7 @@ function phaseContent(
     case "complete":
       return (
         <div className="mx-auto flex w-full max-w-2xl flex-col items-center gap-6 py-8">
-          <div className="text-2xl font-bold text-white">Draft Complete</div>
+          <h1 className="menu-display text-3xl text-white">Draft Complete</h1>
           <FormatStandings />
           <button
             onClick={onLeave}
