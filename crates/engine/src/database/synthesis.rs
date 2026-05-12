@@ -8433,6 +8433,38 @@ mod bloodthirst_runtime_tests {
         );
     }
 
+    /// CR 702.54b: the source of the earlier damage is irrelevant. Damage
+    /// records must still count after the source object has left the game.
+    #[test]
+    fn bloodthirst_x_etb_counts_opponent_damage_from_missing_source() {
+        let face = bloodthirst_x_face("Test Bloodthirst X", 3);
+
+        let mut state = setup_state_with_priority(PlayerId(0));
+        let source_id = create_damage_source(&mut state, PlayerId(0));
+        state.damage_dealt_this_turn.push(DamageRecord {
+            source_id,
+            source_controller: PlayerId(0),
+            target: TargetRef::Player(PlayerId(1)),
+            amount: 4,
+            is_combat: true,
+        });
+        state.objects.remove(&source_id);
+
+        let obj_id = spawn_bloodthirst_via_etb_pipeline(&mut state, &face, PlayerId(0));
+
+        let p1p1 = *state
+            .objects
+            .get(&obj_id)
+            .unwrap()
+            .counters
+            .get(&CounterType::Plus1Plus1)
+            .unwrap_or(&0);
+        assert_eq!(
+            p1p1, 4,
+            "Bloodthirst X must count opponent damage even if the source left"
+        );
+    }
+
     /// CR 702.54a + CR 614.1c: the condition is checked at the ETB window
     /// (replacement-applicability time). If opponent damage happens AFTER
     /// the permanent has entered, no retroactive counters appear.

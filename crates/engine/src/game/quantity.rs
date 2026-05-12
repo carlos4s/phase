@@ -1728,6 +1728,9 @@ fn damage_record_source_matches(
     filter: &TargetFilter,
     ctx: &FilterContext<'_>,
 ) -> bool {
+    if matches!(filter, TargetFilter::Any) {
+        return true;
+    }
     matches_target_filter(state, source_id, filter, ctx)
 }
 

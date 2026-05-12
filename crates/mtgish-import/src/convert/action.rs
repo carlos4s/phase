@@ -1143,6 +1143,7 @@ fn convert_targeted_distributed(
             })
         }
         Action::PutDistributedCounters(counter_type) => {
+            let distribution_counter_type = counter_type_display_name(counter_type);
             let counter_type = counter_type_name(counter_type);
             Ok(ActionsConversion::Distributed {
                 effects: vec![Effect::PutCounter {
@@ -1151,7 +1152,7 @@ fn convert_targeted_distributed(
                     target,
                 }],
                 multi_target,
-                distribute: DistributionUnit::Counters(counter_type.as_str().to_string()),
+                distribute: DistributionUnit::Counters(distribution_counter_type),
             })
         }
         Action::SpellDealsDistributedDamage(source) => {
@@ -4767,6 +4768,14 @@ pub(crate) fn counter_type_name(ct: &CounterType) -> EngineCounterType {
     parse_counter_type(&raw)
 }
 
+fn counter_type_display_name(ct: &CounterType) -> String {
+    if let CounterType::PTCounter(p, t) = ct {
+        format!("{p:+}/{t:+}")
+    } else {
+        counter_type_name(ct).as_str().to_string()
+    }
+}
+
 fn amass_subtype_name(subtype: &CreatureType) -> String {
     filter_mod::creature_type_name(subtype)
 }
@@ -7100,7 +7109,7 @@ mod tests {
         assert_eq!(ability.multi_target, Some(MultiTargetSpec::fixed(0, 4)));
         assert_eq!(
             ability.distribute,
-            Some(DistributionUnit::Counters("P1P1".to_string()))
+            Some(DistributionUnit::Counters("+1/+1".to_string()))
         );
         let Effect::PutCounter {
             counter_type,

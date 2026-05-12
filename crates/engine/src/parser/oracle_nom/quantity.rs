@@ -521,6 +521,7 @@ fn parse_number_of_inner(input: &str) -> OracleResult<'_, QuantityRef> {
         parse_creatures_in_your_party_tail,
         parse_entered_this_turn_ref,
         parse_tokens_created_this_turn_tail,
+        parse_number_of_distinct_colors_among_permanents_tail,
         parse_number_of_controlled_type,
         parse_cards_exiled_with_source,
         // CR 109.4 + CR 115.7: "cards in their <zone>" / "cards in that player's <zone>"
@@ -555,6 +556,23 @@ fn parse_number_of_inner(input: &str) -> OracleResult<'_, QuantityRef> {
         parse_number_of_object_colors_tail,
     )))
     .parse(input)
+}
+
+/// Parse "colors among [filter]" after "the number of".
+fn parse_number_of_distinct_colors_among_permanents_tail(
+    input: &str,
+) -> OracleResult<'_, QuantityRef> {
+    let (rest, _) = tag("colors among ").parse(input)?;
+    let (remainder, filter) = super::target::parse_type_phrase(rest)?;
+    if !matches!(remainder.trim(), "" | "." | ",")
+        || !quantity_filter_has_meaningful_content(&filter)
+    {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Fail,
+        )));
+    }
+    Ok(("", QuantityRef::DistinctColorsAmongPermanents { filter }))
 }
 
 /// Parse "[type(s)] you control" after "the number of".
@@ -2893,6 +2911,23 @@ mod tests {
             }
         );
         assert_eq!(rest, "");
+    }
+
+    #[test]
+    fn test_parse_number_of_distinct_colors_among_permanents() {
+        let (rest, q) =
+            parse_quantity_ref("the number of colors among permanents you control").unwrap();
+        assert_eq!(rest, "");
+        match q {
+            QuantityRef::DistinctColorsAmongPermanents { filter } => match filter {
+                TargetFilter::Typed(tf) => {
+                    assert_eq!(tf.type_filters, vec![TypeFilter::Permanent]);
+                    assert_eq!(tf.controller, Some(ControllerRef::You));
+                }
+                other => panic!("expected typed permanent filter, got {other:?}"),
+            },
+            other => panic!("expected DistinctColorsAmongPermanents, got {other:?}"),
+        }
     }
 
     #[test]
