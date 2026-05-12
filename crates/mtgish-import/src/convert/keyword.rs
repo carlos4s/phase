@@ -11,7 +11,8 @@
 //! keywords need real conversion logic, so they land with their phase.
 
 use engine::types::keywords::{
-    BuybackCost, CyclingCost, FlashbackCost, HexproofFilter, ProtectionTarget, WardCost,
+    BloodthirstValue, BuybackCost, CyclingCost, FlashbackCost, HexproofFilter, ProtectionTarget,
+    WardCost,
 };
 use engine::types::mana::ManaColor;
 use engine::types::Keyword;
@@ -124,7 +125,12 @@ pub fn try_convert(rule: &Rule, path: &str) -> ConvResult<Option<Keyword>> {
 
         // === GameNumber payload — only `Integer(n)` resolves today ===
         Rule::Bushido(g) => Keyword::Bushido(int_or_gap(g, "Rule::Bushido", path)?),
-        Rule::Bloodthirst(g) => Keyword::Bloodthirst(int_or_gap(g, "Rule::Bloodthirst", path)?),
+        Rule::Bloodthirst(g) => Keyword::Bloodthirst(BloodthirstValue::Fixed(int_or_gap(
+            g,
+            "Rule::Bloodthirst",
+            path,
+        )?)),
+        Rule::BloodthirstX => Keyword::Bloodthirst(BloodthirstValue::X),
         Rule::Casualty(g) => Keyword::Casualty(int_or_gap(g, "Rule::Casualty", path)?),
         Rule::Dredge(g) => Keyword::Dredge(int_or_gap(g, "Rule::Dredge", path)?),
         Rule::Modular(g) => Keyword::Modular(int_or_gap(g, "Rule::Modular", path)?),

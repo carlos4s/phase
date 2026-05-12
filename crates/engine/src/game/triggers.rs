@@ -3003,6 +3003,33 @@ pub mod tests {
     }
 
     #[test]
+    fn soulbond_source_enter_rechecks_source_on_battlefield() {
+        let mut state = setup();
+        state.active_player = PlayerId(0);
+        state.priority_player = PlayerId(0);
+        let source = make_soulbond_creature(&mut state, PlayerId(0), "Soulbond Source");
+        let partner = make_creature(&mut state, PlayerId(0), "Partner", 1, 1);
+
+        process_triggers(
+            &mut state,
+            &[zone_changed_event(
+                source,
+                Zone::Stack,
+                Zone::Battlefield,
+                vec![CoreType::Creature],
+                vec![],
+            )],
+        );
+        assert_eq!(state.stack.len(), 1);
+        crate::game::zones::move_to_zone(&mut state, source, Zone::Graveyard, &mut Vec::new());
+
+        resolve_stack_without_soulbond_prompt(&mut state);
+
+        assert_eq!(state.objects[&source].paired_with, None);
+        assert_eq!(state.objects[&partner].paired_with, None);
+    }
+
+    #[test]
     fn soulbond_pair_choice_ignores_targeting_restrictions() {
         let mut state = setup();
         state.active_player = PlayerId(0);
@@ -3118,6 +3145,33 @@ pub mod tests {
         );
         assert_eq!(state.stack.len(), 1);
         state.objects.get_mut(&entrant).unwrap().controller = PlayerId(1);
+
+        resolve_stack_without_soulbond_prompt(&mut state);
+
+        assert_eq!(state.objects[&source].paired_with, None);
+        assert_eq!(state.objects[&entrant].paired_with, None);
+    }
+
+    #[test]
+    fn soulbond_other_enters_rechecks_triggering_creature_on_battlefield() {
+        let mut state = setup();
+        state.active_player = PlayerId(0);
+        state.priority_player = PlayerId(0);
+        let source = make_soulbond_creature(&mut state, PlayerId(0), "Soulbond Source");
+        let entrant = make_creature(&mut state, PlayerId(0), "New Partner", 1, 1);
+
+        process_triggers(
+            &mut state,
+            &[zone_changed_event(
+                entrant,
+                Zone::Stack,
+                Zone::Battlefield,
+                vec![CoreType::Creature],
+                vec![],
+            )],
+        );
+        assert_eq!(state.stack.len(), 1);
+        crate::game::zones::move_to_zone(&mut state, entrant, Zone::Graveyard, &mut Vec::new());
 
         resolve_stack_without_soulbond_prompt(&mut state);
 

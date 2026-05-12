@@ -81,6 +81,7 @@ pub mod manifest;
 pub mod manifest_dread;
 pub mod mill;
 pub mod monstrosity;
+pub mod myriad;
 pub mod overload;
 pub mod pair_with;
 pub mod paradigm;
@@ -644,6 +645,7 @@ pub fn resolve_effect(
         Effect::SwitchPT { .. } => switch_pt::resolve(state, ability, events),
         Effect::CopySpell { .. } => copy_spell::resolve(state, ability, events),
         Effect::CopyTokenOf { .. } => token_copy::resolve(state, ability, events),
+        Effect::Myriad => myriad::resolve(state, ability, events),
         Effect::BecomeCopy { .. } => become_copy::resolve(state, ability, events),
         Effect::ChooseCard { .. } => choose_card::resolve(state, ability, events),
         Effect::PutCounter { .. } => counters::resolve_add(state, ability, events),
@@ -1217,6 +1219,15 @@ fn ability_with_event_context_targets(
     ability: &ResolvedAbility,
 ) -> ResolvedAbility {
     let mut pending = ability.clone();
+    if matches!(pending.effect, Effect::Myriad) && pending.targets.is_empty() {
+        if let Some(defending_player) = myriad::defending_player_from_attack_event(
+            state.current_trigger_event.as_ref(),
+            pending.source_id,
+        ) {
+            pending.targets.push(TargetRef::Player(defending_player));
+        }
+        return pending;
+    }
     if pending.targets.is_empty() {
         if let Some(filter) = pending.effect.target_filter() {
             if filter.is_context_ref() {

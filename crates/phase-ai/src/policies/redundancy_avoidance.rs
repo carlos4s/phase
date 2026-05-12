@@ -246,6 +246,7 @@ fn redundancy_delta(
         | Effect::SwitchPT { .. }
         | Effect::CopySpell { .. }
         | Effect::CopyTokenOf { .. }
+        | Effect::Myriad
         | Effect::BecomeCopy { .. }
         | Effect::ChooseCard { .. }
         | Effect::PutCounter { .. }

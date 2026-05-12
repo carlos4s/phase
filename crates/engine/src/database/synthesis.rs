@@ -4,18 +4,19 @@ use crate::database::mtgjson::{parse_mtgjson_mana_cost, AtomicCard};
 use crate::game::printed_cards::derive_colors_from_mana_cost;
 use crate::parser::oracle::{oracle_text_allows_commander, parse_oracle_text};
 use crate::types::ability::{
-    AbilityCondition, AbilityCost, AbilityDefinition, AbilityKind, AdditionalCost, CardPlayMode,
-    CastVariantPaid, ChoiceType, ContinuousModification, ControllerRef, CounterTriggerFilter,
-    Duration, Effect, FilterProp, KickerVariant, ManaContribution, ManaProduction,
-    ModalSelectionCondition, ModalSelectionConstraint, NinjutsuVariant, ObjectScope, PtValue,
-    QuantityExpr, QuantityRef, ReplacementCondition, ReplacementDefinition, RuntimeHandler,
-    SearchSelectionConstraint, StaticDefinition, TargetChoiceTiming, TargetFilter,
-    TriggerCondition, TriggerDefinition, TypeFilter, TypedFilter, UnlessPayModifier,
+    AbilityCondition, AbilityCost, AbilityDefinition, AbilityKind, AdditionalCost,
+    AggregateFunction, CardPlayMode, CastVariantPaid, ChoiceType, ContinuousModification,
+    ControllerRef, CounterTriggerFilter, Duration, Effect, FilterProp, KickerVariant,
+    ManaContribution, ManaProduction, ModalSelectionCondition, ModalSelectionConstraint,
+    NinjutsuVariant, ObjectScope, PtValue, QuantityExpr, QuantityRef, ReplacementCondition,
+    ReplacementDefinition, RuntimeHandler, SearchSelectionConstraint, StaticDefinition,
+    TargetChoiceTiming, TargetFilter, TriggerCondition, TriggerDefinition, TypeFilter, TypedFilter,
+    UnlessPayModifier,
 };
 use crate::types::card::{CardFace, CardLayout};
 use crate::types::card_type::{CardType, CoreType, Supertype};
 use crate::types::counter::{CounterMatch, CounterType};
-use crate::types::keywords::{BuybackCost, CyclingCost, Keyword, PartnerType};
+use crate::types::keywords::{BloodthirstValue, BuybackCost, CyclingCost, Keyword, PartnerType};
 use crate::types::mana::{ManaColor, ManaCost};
 use crate::types::phase::Phase;
 use crate::types::replacements::ReplacementEvent;
@@ -130,6 +131,7 @@ impl KeywordTriggerInstaller {
                 "M1M1", "-1/-1", "702.79a",
             )],
             Keyword::Annihilator(n) => vec![build_annihilator_trigger(*n)],
+            Keyword::Myriad => vec![build_myriad_trigger()],
             Keyword::Soulbond => build_soulbond_triggers(),
             _ => Vec::new(),
         }
@@ -145,6 +147,7 @@ impl KeywordTriggerInstaller {
                 is_dies_return_with_counter_trigger(trigger, &CounterType::Minus1Minus1)
             }
             Keyword::Annihilator(_) => is_annihilator_attack_trigger(trigger),
+            Keyword::Myriad => is_myriad_attack_trigger(trigger),
             Keyword::Soulbond => is_soulbond_trigger(trigger),
             _ => false,
         }
@@ -1523,6 +1526,18 @@ pub fn synthesize_annihilator(face: &mut CardFace) {
     KeywordTriggerInstaller::install_matching(face, |kw| matches!(kw, Keyword::Annihilator(_)));
 }
 
+/// CR 702.116a: Myriad is an attack trigger. On resolution, the controller may
+/// create one tapped attacking copy token for each opponent other than the
+/// source creature's defending player; if any are created, they are exiled at
+/// end of combat. The resolver chooses the player branch of "that player or a
+/// planeswalker they control" until the engine has UI for that choice.
+///
+/// CR 702.116b: Multiple Myriad instances trigger separately, so one trigger is
+/// synthesized per `Keyword::Myriad` instance.
+pub fn synthesize_myriad(face: &mut CardFace) {
+    KeywordTriggerInstaller::install_matching(face, |kw| matches!(kw, Keyword::Myriad));
+}
+
 /// CR 702.95a + CR 115.10a: Soulbond represents two optional triggered
 /// abilities. One fires when the soulbond creature enters and can pair it with
 /// another unpaired creature you control; the other fires when another unpaired
@@ -1532,11 +1547,16 @@ pub fn synthesize_soulbond(face: &mut CardFace) {
     KeywordTriggerInstaller::install_matching(face, |kw| matches!(kw, Keyword::Soulbond));
 }
 
-fn unpaired_creature_you_control() -> TargetFilter {
+fn unpaired_creature_you_control_on_battlefield() -> TargetFilter {
     TargetFilter::Typed(
         TypedFilter::creature()
             .controller(ControllerRef::You)
-            .properties(vec![FilterProp::Unpaired]),
+            .properties(vec![
+                FilterProp::InZone {
+                    zone: Zone::Battlefield,
+                },
+                FilterProp::Unpaired,
+            ]),
     )
 }
 
@@ -1548,15 +1568,29 @@ fn another_unpaired_creature_you_control() -> TargetFilter {
     )
 }
 
+fn another_unpaired_creature_you_control_on_battlefield() -> TargetFilter {
+    TargetFilter::Typed(
+        TypedFilter::creature()
+            .controller(ControllerRef::You)
+            .properties(vec![
+                FilterProp::Another,
+                FilterProp::InZone {
+                    zone: Zone::Battlefield,
+                },
+                FilterProp::Unpaired,
+            ]),
+    )
+}
+
 fn build_soulbond_triggers() -> Vec<TriggerDefinition> {
     let source_unpaired = TriggerCondition::SourceMatchesFilter {
-        filter: unpaired_creature_you_control(),
+        filter: unpaired_creature_you_control_on_battlefield(),
     };
     let source_enters_condition = TriggerCondition::And {
         conditions: vec![
             source_unpaired.clone(),
             TriggerCondition::ControlsType {
-                filter: another_unpaired_creature_you_control(),
+                filter: another_unpaired_creature_you_control_on_battlefield(),
             },
         ],
     };
@@ -1566,14 +1600,14 @@ fn build_soulbond_triggers() -> Vec<TriggerDefinition> {
             TriggerCondition::ZoneChangeObjectMatchesFilter {
                 origin: None,
                 destination: Zone::Battlefield,
-                filter: another_unpaired_creature_you_control(),
+                filter: another_unpaired_creature_you_control_on_battlefield(),
             },
         ],
     };
     let pair_target = AbilityDefinition::new(
         AbilityKind::Spell,
         Effect::PairWith {
-            target: another_unpaired_creature_you_control(),
+            target: another_unpaired_creature_you_control_on_battlefield(),
         },
     )
     .target_choice_timing(TargetChoiceTiming::Resolution)
@@ -1643,6 +1677,14 @@ fn is_annihilator_attack_trigger(t: &TriggerDefinition) -> bool {
     )
 }
 
+fn is_myriad_attack_trigger(t: &TriggerDefinition) -> bool {
+    matches!(t.mode, TriggerMode::Attacks)
+        && matches!(t.valid_card, Some(TargetFilter::SelfRef))
+        && t.execute.as_deref().is_some_and(|ability| {
+            ability.optional && matches!(ability.effect.as_ref(), Effect::Myriad)
+        })
+}
+
 fn is_echo_trigger(t: &TriggerDefinition) -> bool {
     matches!(t.mode, TriggerMode::PayEcho)
         && t.phase == Some(Phase::Upkeep)
@@ -1655,6 +1697,21 @@ fn is_echo_trigger(t: &TriggerDefinition) -> bool {
                 target: TargetFilter::SelfRef,
                 ..
             })
+        )
+}
+
+fn build_myriad_trigger() -> TriggerDefinition {
+    let execute = AbilityDefinition::new(AbilityKind::Spell, Effect::Myriad)
+        .optional()
+        .description(
+            "Create token copies for each opponent other than defending player".to_string(),
+        );
+
+    TriggerDefinition::new(TriggerMode::Attacks)
+        .valid_card(TargetFilter::SelfRef)
+        .execute(execute)
+        .description(
+            "CR 702.116a: Myriad — whenever this creature attacks, you may create tapped attacking copy tokens for each opponent other than defending player, then exile them at end of combat.".to_string(),
         )
 }
 
@@ -2015,36 +2072,23 @@ fn is_modular_dies_transfer_trigger(t: &TriggerDefinition) -> bool {
     )
 }
 
-/// CR 702.54a: Bloodthirst N is a static ability. "Bloodthirst N" means
-/// "If an opponent was dealt damage this turn, this permanent enters with
-/// N +1/+1 counters on it." Modeled as a `ReplacementEvent::Moved` (i.e.,
-/// ETB) replacement on `SelfRef` whose `condition` is the per-turn
-/// damage-history gate `ReplacementCondition::OpponentDamagedThisTurn`. The
-/// gate is checked at replacement-applicability time so the condition
-/// reflects game state at the moment the permanent attempts to enter, not
-/// at synthesis time.
+/// CR 702.54a + CR 702.54b: Bloodthirst is a static ability that creates an
+/// enters-with-counters replacement. Fixed-N Bloodthirst is conditional on an
+/// opponent being dealt damage this turn; Bloodthirst X is unconditional and
+/// resolves X from the total damage opponents were dealt this turn.
 ///
 /// CR 702.54c + CR 113.2c: Each Bloodthirst instance applies separately.
-/// No printed card today carries two instances, but the per-N idempotency
+/// No printed card today carries two instances, but the per-value idempotency
 /// match below treats the count as load-bearing so a granted-Bloodthirst
 /// case or future printing routes correctly. The idempotency predicate
-/// additionally requires the gating `OpponentDamagedThisTurn` condition,
-/// so a parsed `ReplacementEvent::Moved` + `PutCounter(SelfRef, P1P1,
-/// Fixed(N))` without the condition (e.g., a printed unconditional "enters
-/// with N counters" replacement) does NOT pre-satisfy the Bloodthirst
-/// emission — both will coexist.
-///
-/// Bloodthirst X (CR 702.54b, single printed card "Petrified Wood-Kin")
-/// is NOT handled here: it currently parses to `Bloodthirst(1)` due to a
-/// parser-side limitation in representing X-form Bloodthirst, and the
-/// X-resolution-to-damage-amount semantics are distinct from Fixed-N.
-/// That gap is tracked separately as a parser-bug ticket.
+/// includes the condition axis, so fixed-N and X forms do not dedupe each
+/// other or unrelated ETB-with-counters replacements.
 pub fn synthesize_bloodthirst(face: &mut CardFace) {
-    let bloodthirst_values: Vec<u32> = face
+    let bloodthirst_values: Vec<BloodthirstValue> = face
         .keywords
         .iter()
         .filter_map(|kw| match kw {
-            Keyword::Bloodthirst(n) => Some(*n),
+            Keyword::Bloodthirst(value) => Some(value.clone()),
             _ => None,
         })
         .collect();
@@ -2054,13 +2098,13 @@ pub fn synthesize_bloodthirst(face: &mut CardFace) {
 
     // Per CR 702.54c + CR 113.2c: each Bloodthirst instance emits its own
     // ETB replacement. To survive re-running synthesis idempotently, count
-    // existing same-N replacements and emit only the delta.
-    for &n in &bloodthirst_values {
-        let needed = bloodthirst_values.iter().filter(|m| **m == n).count();
+    // existing same-value replacements and emit only the delta.
+    for value in &bloodthirst_values {
+        let needed = bloodthirst_values.iter().filter(|v| *v == value).count();
         let existing = face
             .replacements
             .iter()
-            .filter(|r| is_bloodthirst_etb_replacement(r, n))
+            .filter(|r| is_bloodthirst_etb_replacement(r, value))
             .count();
         if existing >= needed {
             continue;
@@ -2069,37 +2113,81 @@ pub fn synthesize_bloodthirst(face: &mut CardFace) {
             AbilityKind::Spell,
             Effect::PutCounter {
                 counter_type: CounterType::Plus1Plus1,
-                count: QuantityExpr::Fixed { value: n as i32 },
+                count: bloodthirst_counter_quantity(value),
                 target: TargetFilter::SelfRef,
             },
         )
-        .description(format!(
-            "This permanent enters with {n} +1/+1 counter{} on it",
-            if n == 1 { "" } else { "s" }
-        ));
+        .description(bloodthirst_execute_description(value));
 
         let replacement = ReplacementDefinition {
             event: ReplacementEvent::Moved,
             execute: Some(Box::new(etb_counters)),
             valid_card: Some(TargetFilter::SelfRef),
-            condition: Some(ReplacementCondition::OpponentDamagedThisTurn),
-            description: Some(format!(
-                "CR 702.54a: Bloodthirst {n} — if an opponent was dealt damage this turn, this permanent enters with {n} +1/+1 counter{} on it.",
-                if n == 1 { "" } else { "s" }
-            )),
+            condition: bloodthirst_condition(value),
+            description: Some(bloodthirst_replacement_description(value)),
             ..ReplacementDefinition::new(ReplacementEvent::Moved)
         };
         face.replacements.push(replacement);
     }
 }
 
+fn bloodthirst_counter_quantity(value: &BloodthirstValue) -> QuantityExpr {
+    match value {
+        BloodthirstValue::Fixed(n) => QuantityExpr::Fixed { value: *n as i32 },
+        BloodthirstValue::X => QuantityExpr::Ref {
+            qty: QuantityRef::DamageDealtThisTurn {
+                source: Box::new(TargetFilter::Any),
+                target: Box::new(bloodthirst_opponent_player_filter()),
+                aggregate: AggregateFunction::Sum,
+                group_by: None,
+            },
+        },
+    }
+}
+
+fn bloodthirst_opponent_player_filter() -> TargetFilter {
+    TargetFilter::And {
+        filters: vec![
+            TargetFilter::Player,
+            TargetFilter::Typed(TypedFilter::default().controller(ControllerRef::Opponent)),
+        ],
+    }
+}
+
+fn bloodthirst_condition(value: &BloodthirstValue) -> Option<ReplacementCondition> {
+    match value {
+        BloodthirstValue::Fixed(_) => Some(ReplacementCondition::OpponentDamagedThisTurn),
+        BloodthirstValue::X => None,
+    }
+}
+
+fn bloodthirst_execute_description(value: &BloodthirstValue) -> String {
+    match value {
+        BloodthirstValue::Fixed(n) => format!(
+            "This permanent enters with {n} +1/+1 counter{} on it",
+            if *n == 1 { "" } else { "s" }
+        ),
+        BloodthirstValue::X => "This permanent enters with X +1/+1 counters on it".to_string(),
+    }
+}
+
+fn bloodthirst_replacement_description(value: &BloodthirstValue) -> String {
+    match value {
+        BloodthirstValue::Fixed(n) => format!(
+            "CR 702.54a: Bloodthirst {n} — if an opponent was dealt damage this turn, this permanent enters with {n} +1/+1 counter{} on it.",
+            if *n == 1 { "" } else { "s" }
+        ),
+        BloodthirstValue::X => {
+            "CR 702.54b: Bloodthirst X — this permanent enters with X +1/+1 counters on it, where X is the total damage your opponents have been dealt this turn.".to_string()
+        }
+    }
+}
+
 /// Idempotency-shape predicate for `synthesize_bloodthirst`. True iff
-/// `replacement` is a `Moved` replacement on `SelfRef` gated by
-/// `ReplacementCondition::OpponentDamagedThisTurn` whose execute body is
-/// `Effect::PutCounter` placing exactly `expected_n` P1P1 counters on
-/// `SelfRef` with a fixed count.
+/// `replacement` is a `Moved` replacement on `SelfRef` whose condition and
+/// execute count match the requested Bloodthirst value.
 ///
-/// The `expected_n` argument is load-bearing: a card carrying both a parsed
+/// The `expected_value` argument is load-bearing: a card carrying both a parsed
 /// "enters with K +1/+1 counters" replacement AND `Keyword::Bloodthirst(N)`
 /// with K ≠ N must NOT silently dedupe. The condition match is also
 /// load-bearing: an unconditional ETB-with-counters replacement (e.g., a
@@ -2107,27 +2195,44 @@ pub fn synthesize_bloodthirst(face: &mut CardFace) {
 /// same N is NOT a Bloodthirst replacement and must not pre-satisfy the
 /// emit (Bloodthirst is conditional on damage history, the printed
 /// unconditional one always fires).
-fn is_bloodthirst_etb_replacement(replacement: &ReplacementDefinition, expected_n: u32) -> bool {
+fn is_bloodthirst_etb_replacement(
+    replacement: &ReplacementDefinition,
+    expected_value: &BloodthirstValue,
+) -> bool {
     if !matches!(replacement.event, ReplacementEvent::Moved)
         || !matches!(replacement.valid_card, Some(TargetFilter::SelfRef))
-        || !matches!(
-            replacement.condition,
-            Some(ReplacementCondition::OpponentDamagedThisTurn)
-        )
+        || replacement.condition != bloodthirst_condition(expected_value)
     {
         return false;
     }
     let Some(execute) = replacement.execute.as_deref() else {
         return false;
     };
-    matches!(
-        &*execute.effect,
-        Effect::PutCounter {
-            counter_type,
-            count: QuantityExpr::Fixed { value },
-            target: TargetFilter::SelfRef,
-        } if *counter_type == CounterType::Plus1Plus1 && *value == expected_n as i32
-    )
+    let Effect::PutCounter {
+        counter_type,
+        count,
+        target,
+    } = &*execute.effect
+    else {
+        return false;
+    };
+
+    *counter_type == CounterType::Plus1Plus1
+        && *target == TargetFilter::SelfRef
+        && *count == bloodthirst_counter_quantity(expected_value)
+}
+
+#[cfg(test)]
+fn is_fixed_bloodthirst_etb_replacement(
+    replacement: &ReplacementDefinition,
+    expected_n: u32,
+) -> bool {
+    is_bloodthirst_etb_replacement(replacement, &BloodthirstValue::Fixed(expected_n))
+}
+
+#[cfg(test)]
+fn is_bloodthirst_x_etb_replacement(replacement: &ReplacementDefinition) -> bool {
+    is_bloodthirst_etb_replacement(replacement, &BloodthirstValue::X)
 }
 
 /// CR 702.62a: Suspend N—{cost} synthesizes three abilities for every face
@@ -2452,6 +2557,11 @@ pub fn synthesize_all(face: &mut CardFace) {
     // separately. Defending player resolved per-attacker via
     // `ControllerRef::DefendingPlayer` (CR 508.5 / 508.5a).
     synthesize_annihilator(face);
+    // CR 702.116a: Myriad — attack trigger creating tapped attacking copy
+    // tokens for each opponent other than the source creature's defending
+    // player, exiled at end of combat. CR 702.116b: each instance triggers
+    // separately.
+    synthesize_myriad(face);
     // CR 702.95a: Soulbond — two optional ETB triggers that create pair
     // relationships under the resolution checks in CR 702.95c-d.
     synthesize_soulbond(face);
@@ -2459,9 +2569,8 @@ pub fn synthesize_all(face: &mut CardFace) {
     // dies-trigger transferring counters (LKI-counted) to a target artifact
     // creature. Each instance functions independently.
     synthesize_modular(face);
-    // CR 702.54a + CR 702.54c: Bloodthirst N — ETB-with-N-P1P1 replacement
-    // gated on "an opponent was dealt damage this turn". Each instance
-    // functions independently. Bloodthirst X is parser-deferred.
+    // CR 702.54a + CR 702.54b + CR 702.54c: Bloodthirst N/X —
+    // ETB-with-P1P1 replacement. Each instance functions independently.
     synthesize_bloodthirst(face);
     // CR 702.62a: Suspend — hand-activated alt-cost + upkeep counter-removal +
     // last-counter free-cast. Runs after Evoke to keep alt-cost synthesizers
@@ -2721,8 +2830,14 @@ fn build_oracle_face_inner(
     // When the Oracle parser extracts a parameterized keyword (e.g., Morph({2}{B}{G}{U})),
     // remove any MTGJSON-derived default of the same kind (e.g., Morph(zero)).
     for extracted_kw in &parsed.extracted_keywords {
-        let kind = extracted_kw.kind();
-        keywords.retain(|existing| existing.kind() != kind || existing == extracted_kw);
+        if matches!(extracted_kw, Keyword::Bloodthirst(_)) {
+            keywords.retain(|existing| {
+                !matches!(existing, Keyword::Bloodthirst(_)) || existing == extracted_kw
+            });
+        } else {
+            let kind = extracted_kw.kind();
+            keywords.retain(|existing| existing.kind() != kind || existing == extracted_kw);
+        }
     }
     keywords.extend(parsed.extracted_keywords);
 
@@ -4865,6 +4980,238 @@ mod annihilator_runtime_tests {
             }
             other => panic!("expected EffectZoneChoice on P1, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod myriad_runtime_tests {
+    use super::*;
+    use crate::game::combat::AttackTarget;
+    use crate::game::printed_cards::apply_card_face_to_object;
+    use crate::game::zones::create_object;
+    use crate::types::actions::GameAction;
+    use crate::types::card_type::CoreType;
+    use crate::types::events::GameEvent;
+    use crate::types::format::FormatConfig;
+    use crate::types::game_state::{GameState, StackEntryKind, WaitingFor};
+    use crate::types::identifiers::{CardId, ObjectId};
+    use crate::types::phase::Phase;
+    use crate::types::player::PlayerId;
+
+    fn myriad_creature_face(name: &str, instances: usize) -> CardFace {
+        let mut face = CardFace {
+            name: name.to_string(),
+            power: Some(PtValue::Fixed(2)),
+            toughness: Some(PtValue::Fixed(2)),
+            keywords: vec![Keyword::Myriad; instances],
+            ..CardFace::default()
+        };
+        face.card_type.core_types.push(CoreType::Creature);
+        synthesize_all(&mut face);
+        face
+    }
+
+    fn setup_attack_state(player_count: u8, face: &CardFace) -> (GameState, ObjectId) {
+        let mut state = GameState::new(FormatConfig::standard(), player_count, 42);
+        state.turn_number = 2;
+        state.phase = Phase::DeclareAttackers;
+        state.active_player = PlayerId(0);
+        state.priority_player = PlayerId(0);
+        state.waiting_for = WaitingFor::DeclareAttackers {
+            player: PlayerId(0),
+            valid_attacker_ids: vec![],
+            valid_attack_targets: vec![],
+        };
+
+        let card_id = CardId(state.next_object_id);
+        let attacker_id = create_object(
+            &mut state,
+            card_id,
+            PlayerId(0),
+            face.name.clone(),
+            Zone::Battlefield,
+        );
+        {
+            let attacker = state.objects.get_mut(&attacker_id).unwrap();
+            apply_card_face_to_object(attacker, face);
+            attacker.entered_battlefield_turn = Some(1);
+        }
+        (state, attacker_id)
+    }
+
+    fn declare_attack(state: &mut GameState, attacker_id: ObjectId, defender: PlayerId) {
+        crate::game::engine::apply_as_current(
+            state,
+            GameAction::DeclareAttackers {
+                attacks: vec![(attacker_id, AttackTarget::Player(defender))],
+            },
+        )
+        .expect("declare Myriad attacker");
+    }
+
+    fn resolve_myriad_trigger(state: &mut GameState) {
+        let mut events = Vec::new();
+        crate::game::stack::resolve_top(state, &mut events);
+        assert!(matches!(
+            state.waiting_for,
+            WaitingFor::OptionalEffectChoice { .. }
+        ));
+        crate::game::engine::apply_as_current(
+            state,
+            GameAction::DecideOptionalEffect { accept: true },
+        )
+        .expect("accept Myriad trigger");
+    }
+
+    fn myriad_tokens(state: &GameState, source_name: &str) -> Vec<ObjectId> {
+        state
+            .objects
+            .iter()
+            .filter_map(|(id, obj)| {
+                (obj.is_token && obj.name == source_name && obj.zone == Zone::Battlefield)
+                    .then_some(*id)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn myriad_three_player_attack_creates_token_attacking_other_opponent_and_exiles_at_eoc() {
+        let face = myriad_creature_face("Blade of Selves Bear", 1);
+        let (mut state, attacker_id) = setup_attack_state(3, &face);
+
+        declare_attack(&mut state, attacker_id, PlayerId(1));
+        assert_eq!(state.stack.len(), 1, "Myriad attack trigger goes on stack");
+
+        resolve_myriad_trigger(&mut state);
+
+        let tokens = myriad_tokens(&state, &face.name);
+        assert_eq!(tokens.len(), 1, "3-player Myriad creates one token");
+        let token_id = tokens[0];
+        let token = state.objects.get(&token_id).unwrap();
+        assert!(token.tapped, "Myriad token enters tapped");
+
+        let token_attacker = state
+            .combat
+            .as_ref()
+            .unwrap()
+            .attackers
+            .iter()
+            .find(|attacker| attacker.object_id == token_id)
+            .expect("Myriad token is attacking");
+        assert_eq!(token_attacker.defending_player, PlayerId(2));
+        assert_eq!(
+            token_attacker.attack_target,
+            AttackTarget::Player(PlayerId(2))
+        );
+
+        assert_eq!(
+            state.delayed_triggers.len(),
+            1,
+            "EOC exile trigger scheduled"
+        );
+        let delayed_targets = &state.delayed_triggers[0].ability.targets;
+        assert_eq!(
+            delayed_targets,
+            &vec![crate::types::ability::TargetRef::Object(token_id)]
+        );
+
+        let eoc_events = crate::game::triggers::check_delayed_triggers(
+            &mut state,
+            &[GameEvent::PhaseChanged {
+                phase: Phase::EndCombat,
+            }],
+        );
+        assert!(!eoc_events.is_empty(), "EOC delayed trigger fires");
+        let mut resolve_events = Vec::new();
+        crate::game::stack::resolve_top(&mut state, &mut resolve_events);
+        assert_eq!(state.objects.get(&token_id).unwrap().zone, Zone::Exile);
+    }
+
+    #[test]
+    fn myriad_uses_attack_event_defending_player_after_source_removed_from_combat() {
+        let face = myriad_creature_face("Detached Myriad Bear", 1);
+        let (mut state, attacker_id) = setup_attack_state(3, &face);
+
+        declare_attack(&mut state, attacker_id, PlayerId(1));
+        assert_eq!(state.stack.len(), 1, "Myriad attack trigger goes on stack");
+
+        crate::game::effects::remove_from_combat::remove_object_from_combat(
+            &mut state,
+            attacker_id,
+        );
+        assert!(
+            state.combat.as_ref().is_some_and(|combat| combat
+                .attackers
+                .iter()
+                .all(|attacker| attacker.object_id != attacker_id)),
+            "source was removed from live combat before Myriad resolved"
+        );
+
+        resolve_myriad_trigger(&mut state);
+
+        let tokens = myriad_tokens(&state, &face.name);
+        assert_eq!(
+            tokens.len(),
+            1,
+            "Myriad must use the attack event's defending player LKI"
+        );
+        let token_attacker = state
+            .combat
+            .as_ref()
+            .unwrap()
+            .attackers
+            .iter()
+            .find(|attacker| attacker.object_id == tokens[0])
+            .expect("Myriad token is attacking");
+        assert_eq!(token_attacker.defending_player, PlayerId(2));
+        assert_eq!(
+            token_attacker.attack_target,
+            AttackTarget::Player(PlayerId(2))
+        );
+    }
+
+    #[test]
+    fn myriad_two_player_attack_creates_no_token() {
+        let face = myriad_creature_face("Duke Ulder's Cub", 1);
+        let (mut state, attacker_id) = setup_attack_state(2, &face);
+
+        declare_attack(&mut state, attacker_id, PlayerId(1));
+        assert_eq!(state.stack.len(), 1, "Myriad still triggers in two-player");
+
+        resolve_myriad_trigger(&mut state);
+
+        assert!(myriad_tokens(&state, &face.name).is_empty());
+        assert!(
+            state.delayed_triggers.is_empty(),
+            "no EOC cleanup trigger is scheduled when no tokens are created"
+        );
+    }
+
+    #[test]
+    fn multiple_myriad_instances_create_independent_token_sets() {
+        let face = myriad_creature_face("Echoing Myriad Bear", 2);
+        let (mut state, attacker_id) = setup_attack_state(3, &face);
+
+        declare_attack(&mut state, attacker_id, PlayerId(1));
+        let trigger_count = state
+            .stack
+            .iter()
+            .filter(|entry| matches!(entry.kind, StackEntryKind::TriggeredAbility { .. }))
+            .count();
+        assert_eq!(
+            trigger_count, 2,
+            "CR 702.116b: each Myriad instance triggers"
+        );
+
+        resolve_myriad_trigger(&mut state);
+        resolve_myriad_trigger(&mut state);
+
+        assert_eq!(
+            myriad_tokens(&state, &face.name).len(),
+            2,
+            "each Myriad trigger creates its own token"
+        );
+        assert_eq!(state.delayed_triggers.len(), 2);
     }
 }
 
@@ -7544,17 +7891,22 @@ mod modular_runtime_tests {
 
 #[cfg(test)]
 mod bloodthirst_synthesis_tests {
-    //! CR 702.54a + CR 702.54c: Shape tests for the synthesized Bloodthirst
-    //! ETB-with-counters replacement. Pinned to the exact wire-up the
-    //! runtime resolver consumes: `ReplacementEvent::Moved` with `valid_card
-    //! = SelfRef`, `condition = OpponentDamagedThisTurn`, execute
-    //! `Effect::PutCounter { counter_type: "P1P1", count: Fixed(N), target:
-    //! SelfRef }`.
+    //! CR 702.54a + CR 702.54b + CR 702.54c: Shape tests for the
+    //! synthesized Bloodthirst ETB-with-counters replacement. Pinned to the
+    //! exact wire-up the runtime resolver consumes.
     use super::*;
 
     fn face_with_bloodthirst(n: u32) -> CardFace {
         let mut face = CardFace::default();
-        face.keywords.push(Keyword::Bloodthirst(n));
+        face.keywords
+            .push(Keyword::Bloodthirst(BloodthirstValue::Fixed(n)));
+        face
+    }
+
+    fn face_with_bloodthirst_x() -> CardFace {
+        let mut face = CardFace::default();
+        face.keywords
+            .push(Keyword::Bloodthirst(BloodthirstValue::X));
         face
     }
 
@@ -7568,7 +7920,7 @@ mod bloodthirst_synthesis_tests {
         let replacement = face
             .replacements
             .iter()
-            .find(|r| is_bloodthirst_etb_replacement(r, 2))
+            .find(|r| is_fixed_bloodthirst_etb_replacement(r, 2))
             .expect("bloodthirst should synthesize an ETB-with-counters replacement");
 
         assert!(matches!(replacement.event, ReplacementEvent::Moved));
@@ -7598,6 +7950,100 @@ mod bloodthirst_synthesis_tests {
         assert!(matches!(count, QuantityExpr::Fixed { value: 2 }));
     }
 
+    /// CR 702.54b: Bloodthirst X is not gated by
+    /// `OpponentDamagedThisTurn`; X itself resolves to the total damage
+    /// opponents were dealt this turn.
+    #[test]
+    fn synthesize_bloodthirst_x_adds_unconditional_dynamic_etb_replacement() {
+        let mut face = face_with_bloodthirst_x();
+        synthesize_bloodthirst(&mut face);
+
+        let replacement = face
+            .replacements
+            .iter()
+            .find(|r| is_bloodthirst_x_etb_replacement(r))
+            .expect("bloodthirst X should synthesize a dynamic ETB replacement");
+
+        assert!(matches!(replacement.event, ReplacementEvent::Moved));
+        assert!(matches!(
+            replacement.valid_card,
+            Some(TargetFilter::SelfRef)
+        ));
+        assert_eq!(replacement.condition, None);
+
+        let execute = replacement
+            .execute
+            .as_deref()
+            .expect("ETB replacement requires execute body");
+        let Effect::PutCounter {
+            counter_type,
+            count,
+            target,
+        } = &*execute.effect
+        else {
+            panic!("bloodthirst X ETB execute body should be Effect::PutCounter");
+        };
+        assert_eq!(counter_type, &CounterType::Plus1Plus1);
+        assert!(matches!(target, TargetFilter::SelfRef));
+        assert_eq!(count, &bloodthirst_counter_quantity(&BloodthirstValue::X));
+    }
+
+    #[test]
+    fn mtgjson_bloodthirst_x_oracle_overrides_fixed_fallback() {
+        let mtgjson = AtomicCard {
+            name: "Petrified Wood-Kin".to_string(),
+            mana_cost: Some("{6}{G}".to_string()),
+            colors: vec!["G".to_string()],
+            color_identity: vec!["G".to_string()],
+            power: Some("3".to_string()),
+            toughness: Some("3".to_string()),
+            loyalty: None,
+            defense: None,
+            text: Some(
+                "Bloodthirst X (This creature enters with X +1/+1 counters on it, where X is the damage dealt to your opponents this turn.)"
+                    .to_string(),
+            ),
+            layout: "normal".to_string(),
+            type_line: Some("Creature — Elemental Warrior".to_string()),
+            types: vec!["Creature".to_string()],
+            subtypes: vec!["Elemental".to_string(), "Warrior".to_string()],
+            supertypes: Vec::new(),
+            keywords: Some(vec!["Bloodthirst".to_string()]),
+            side: None,
+            face_name: None,
+            mana_value: 7.0,
+            legalities: Default::default(),
+            leadership_skills: None,
+            printings: Vec::new(),
+            rulings: Vec::new(),
+            identifiers: crate::database::mtgjson::AtomicIdentifiers {
+                scryfall_oracle_id: None,
+            },
+        };
+
+        let face = build_oracle_face(&mtgjson, None);
+
+        assert!(
+            face.keywords
+                .contains(&Keyword::Bloodthirst(BloodthirstValue::X)),
+            "Oracle Bloodthirst X must replace MTGJSON's bare Bloodthirst fallback"
+        );
+        assert!(
+            !face
+                .keywords
+                .contains(&Keyword::Bloodthirst(BloodthirstValue::Fixed(1))),
+            "Bloodthirst X must not leave the fixed-1 fallback behind"
+        );
+        assert_eq!(
+            face.replacements
+                .iter()
+                .filter(|r| is_bloodthirst_x_etb_replacement(r))
+                .count(),
+            1,
+            "Bloodthirst X should synthesize exactly one dynamic replacement"
+        );
+    }
+
     /// Re-running synthesis must not duplicate the replacement.
     #[test]
     fn synthesize_bloodthirst_is_idempotent() {
@@ -7608,7 +8054,7 @@ mod bloodthirst_synthesis_tests {
         assert_eq!(
             face.replacements
                 .iter()
-                .filter(|r| is_bloodthirst_etb_replacement(r, 3))
+                .filter(|r| is_fixed_bloodthirst_etb_replacement(r, 3))
                 .count(),
             1,
             "ETB replacement should be deduped"
@@ -7642,19 +8088,21 @@ mod bloodthirst_synthesis_tests {
     #[test]
     fn synthesize_bloodthirst_emits_one_replacement_per_instance() {
         let mut face = CardFace::default();
-        face.keywords.push(Keyword::Bloodthirst(1));
-        face.keywords.push(Keyword::Bloodthirst(3));
+        face.keywords
+            .push(Keyword::Bloodthirst(BloodthirstValue::Fixed(1)));
+        face.keywords
+            .push(Keyword::Bloodthirst(BloodthirstValue::Fixed(3)));
         synthesize_bloodthirst(&mut face);
 
         let replacement_n1 = face
             .replacements
             .iter()
-            .filter(|r| is_bloodthirst_etb_replacement(r, 1))
+            .filter(|r| is_fixed_bloodthirst_etb_replacement(r, 1))
             .count();
         let replacement_n3 = face
             .replacements
             .iter()
-            .filter(|r| is_bloodthirst_etb_replacement(r, 3))
+            .filter(|r| is_fixed_bloodthirst_etb_replacement(r, 3))
             .count();
         assert_eq!(replacement_n1, 1, "exactly one Fixed(1) ETB replacement");
         assert_eq!(replacement_n3, 1, "exactly one Fixed(3) ETB replacement");
@@ -7697,7 +8145,7 @@ mod bloodthirst_synthesis_tests {
         let fixed_2_with_condition = face
             .replacements
             .iter()
-            .filter(|r| is_bloodthirst_etb_replacement(r, 2))
+            .filter(|r| is_fixed_bloodthirst_etb_replacement(r, 2))
             .count();
         assert_eq!(
             fixed_2_with_condition, 1,
@@ -7735,7 +8183,7 @@ mod bloodthirst_synthesis_tests {
             face2
                 .replacements
                 .iter()
-                .filter(|r| is_bloodthirst_etb_replacement(r, 2))
+                .filter(|r| is_fixed_bloodthirst_etb_replacement(r, 2))
                 .count(),
             1,
             "only the gated one is a Bloodthirst replacement"
@@ -7745,13 +8193,10 @@ mod bloodthirst_synthesis_tests {
 
 #[cfg(test)]
 mod bloodthirst_runtime_tests {
-    //! CR 702.54a runtime integration: a Bloodthirst-bearing creature
-    //! enters with N +1/+1 counters via the synthesized Moved replacement
-    //! ONLY IF an opponent of the controller was dealt damage earlier this
-    //! turn (recorded in `state.damage_dealt_this_turn`). Without the
-    //! recorded damage the replacement still matches the event but its
-    //! condition is false, so the ETB-with-counters effect is suppressed
-    //! and the permanent enters with 0 counters.
+    //! CR 702.54a + CR 702.54b runtime integration: a Bloodthirst-bearing
+    //! creature enters with +1/+1 counters via the synthesized Moved
+    //! replacement. Fixed N is gated by opponent damage; X is dynamic and
+    //! resolves from opponent damage totals.
 
     use super::*;
     use crate::game::printed_cards::apply_card_face_to_object;
@@ -7763,14 +8208,27 @@ mod bloodthirst_runtime_tests {
     use crate::types::identifiers::{CardId, ObjectId};
     use crate::types::player::PlayerId;
 
-    /// Build a creature face with `Keyword::Bloodthirst(n)` and run the
+    /// Build a creature face with `Keyword::Bloodthirst(Fixed(n))` and run the
     /// full synthesis pipeline.
     fn bloodthirst_face(name: &str, n: u32, base_pt: i32) -> CardFace {
         let mut face = CardFace {
             name: name.to_string(),
             power: Some(PtValue::Fixed(base_pt)),
             toughness: Some(PtValue::Fixed(base_pt)),
-            keywords: vec![Keyword::Bloodthirst(n)],
+            keywords: vec![Keyword::Bloodthirst(BloodthirstValue::Fixed(n))],
+            ..CardFace::default()
+        };
+        face.card_type.core_types.push(CoreType::Creature);
+        synthesize_all(&mut face);
+        face
+    }
+
+    fn bloodthirst_x_face(name: &str, base_pt: i32) -> CardFace {
+        let mut face = CardFace {
+            name: name.to_string(),
+            power: Some(PtValue::Fixed(base_pt)),
+            toughness: Some(PtValue::Fixed(base_pt)),
+            keywords: vec![Keyword::Bloodthirst(BloodthirstValue::X)],
             ..CardFace::default()
         };
         face.card_type.core_types.push(CoreType::Creature);
@@ -7849,6 +8307,17 @@ mod bloodthirst_runtime_tests {
         obj_id
     }
 
+    fn create_damage_source(state: &mut GameState, controller: PlayerId) -> ObjectId {
+        let card_id = CardId(state.next_object_id);
+        create_object(
+            state,
+            card_id,
+            controller,
+            "Damage Source".to_string(),
+            Zone::Battlefield,
+        )
+    }
+
     /// CR 702.54a: with no recorded opponent damage this turn, the
     /// Bloodthirst ETB replacement's condition is false and the permanent
     /// enters with 0 counters. The Moved event still resolves (the
@@ -7897,6 +8366,70 @@ mod bloodthirst_runtime_tests {
         assert_eq!(
             p1p1, 3,
             "Bloodthirst N=3 with opponent damaged earlier this turn → 3 counters"
+        );
+    }
+
+    /// CR 702.54b: Bloodthirst X is unconditional; with no opponent damage,
+    /// X resolves to 0 and the permanent enters without counters.
+    #[test]
+    fn bloodthirst_x_etb_no_damage_dealt_enters_without_counters() {
+        let face = bloodthirst_x_face("Test Bloodthirst X", 3);
+
+        let mut state = setup_state_with_priority(PlayerId(0));
+        assert!(state.damage_dealt_this_turn.is_empty());
+
+        let obj_id = spawn_bloodthirst_via_etb_pipeline(&mut state, &face, PlayerId(0));
+
+        let obj = state.objects.get(&obj_id).expect("object exists");
+        assert_eq!(obj.zone, Zone::Battlefield, "object must reach battlefield");
+        let p1p1 = *obj.counters.get(&CounterType::Plus1Plus1).unwrap_or(&0);
+        assert_eq!(p1p1, 0, "Bloodthirst X with no opponent damage: X = 0");
+    }
+
+    /// CR 702.54b: X is the total damage opponents were dealt this turn,
+    /// not a fixed fallback of 1.
+    #[test]
+    fn bloodthirst_x_etb_counts_total_opponent_damage() {
+        let face = bloodthirst_x_face("Test Bloodthirst X", 3);
+
+        let mut state = setup_state_with_priority(PlayerId(0));
+        let source_id = create_damage_source(&mut state, PlayerId(0));
+        state.damage_dealt_this_turn.extend([
+            DamageRecord {
+                source_id,
+                source_controller: PlayerId(0),
+                target: TargetRef::Player(PlayerId(1)),
+                amount: 2,
+                is_combat: false,
+            },
+            DamageRecord {
+                source_id,
+                source_controller: PlayerId(0),
+                target: TargetRef::Player(PlayerId(1)),
+                amount: 3,
+                is_combat: true,
+            },
+            DamageRecord {
+                source_id,
+                source_controller: PlayerId(0),
+                target: TargetRef::Player(PlayerId(0)),
+                amount: 7,
+                is_combat: false,
+            },
+        ]);
+
+        let obj_id = spawn_bloodthirst_via_etb_pipeline(&mut state, &face, PlayerId(0));
+
+        let p1p1 = *state
+            .objects
+            .get(&obj_id)
+            .unwrap()
+            .counters
+            .get(&CounterType::Plus1Plus1)
+            .unwrap_or(&0);
+        assert_eq!(
+            p1p1, 5,
+            "Bloodthirst X must total opponent damage only: 2 + 3 = 5"
         );
     }
 

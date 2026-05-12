@@ -2029,6 +2029,7 @@ fn effect_details(effect: &Effect) -> Vec<(String, String)> {
         | Effect::Forage
         | Effect::Learn
         | Effect::SwitchPT { .. }
+        | Effect::Myriad
         | Effect::Populate
         | Effect::VentureIntoDungeon
         | Effect::VentureInto { .. }

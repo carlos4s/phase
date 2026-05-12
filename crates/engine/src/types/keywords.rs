@@ -332,6 +332,14 @@ pub enum WardCost {
     Compound(Vec<WardCost>),
 }
 
+/// CR 702.54a + CR 702.54b: Bloodthirst has fixed-N and X-count forms.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data")]
+pub enum BloodthirstValue {
+    Fixed(u32),
+    X,
+}
+
 /// All MTG keywords as typed enum variants.
 /// Simple (unit) variants for keywords with no parameters.
 /// Parameterized variants carry associated data (ManaCost for costs, amounts, etc.).
@@ -589,7 +597,7 @@ pub enum Keyword {
     DoubleTeam,
     LivingMetal,
     Poisonous(u32),
-    Bloodthirst(u32),
+    Bloodthirst(BloodthirstValue),
     Amplify(u32),
     Graft(u32),
     /// RUNTIME: TODO — converter accepts this keyword but engine has no
@@ -1226,6 +1234,14 @@ fn parse_etb_counter(s: &str) -> (CounterType, u32) {
     }
 }
 
+fn parse_bloodthirst_value(s: &str) -> BloodthirstValue {
+    if s.trim().eq_ignore_ascii_case("x") {
+        BloodthirstValue::X
+    } else {
+        BloodthirstValue::Fixed(s.trim().parse().unwrap_or(1))
+    }
+}
+
 impl FromStr for Keyword {
     type Err = Infallible;
 
@@ -1337,7 +1353,7 @@ impl FromStr for Keyword {
                     return Ok(Keyword::Mobilize(QuantityExpr::Fixed { value: n }));
                 }
                 "poisonous" => return Ok(Keyword::Poisonous(p.parse().unwrap_or(1))),
-                "bloodthirst" => return Ok(Keyword::Bloodthirst(p.parse().unwrap_or(1))),
+                "bloodthirst" => return Ok(Keyword::Bloodthirst(parse_bloodthirst_value(p))),
                 "amplify" => return Ok(Keyword::Amplify(p.parse().unwrap_or(1))),
                 "graft" => return Ok(Keyword::Graft(p.parse().unwrap_or(1))),
                 "devour" => return Ok(Keyword::Devour(p.parse().unwrap_or(1))),
@@ -1532,6 +1548,7 @@ impl FromStr for Keyword {
             "doubleteam" => Ok(Keyword::DoubleTeam),
             "livingmetal" => Ok(Keyword::LivingMetal),
             "firebending" => Ok(Keyword::Firebending(1)),
+            "bloodthirst" => Ok(Keyword::Bloodthirst(BloodthirstValue::Fixed(1))),
             "hideaway" => Ok(Keyword::Hideaway(4)),
             "cumulative" => Ok(Keyword::CumulativeUpkeep(String::new())),
             "ripple" => Ok(Keyword::Ripple),
@@ -1646,6 +1663,15 @@ fn keyword_from_tagged(variant: &str, data: &serde_json::Value) -> Result<Keywor
     }
     fn uint(v: &serde_json::Value) -> u32 {
         v.as_u64().unwrap_or(0) as u32
+    }
+    fn bloodthirst(v: &serde_json::Value) -> Result<BloodthirstValue, String> {
+        if let Some(s) = v.as_str() {
+            Ok(parse_bloodthirst_value(s))
+        } else if v.is_number() {
+            Ok(BloodthirstValue::Fixed(uint(v)))
+        } else {
+            serde_json::from_value(v.clone()).map_err(|e| format!("Bloodthirst: {e}"))
+        }
     }
 
     match variant {
@@ -1867,7 +1893,7 @@ fn keyword_from_tagged(variant: &str, data: &serde_json::Value) -> Result<Keywor
         "Rampage" => Ok(Keyword::Rampage(uint(data))),
         "Absorb" => Ok(Keyword::Absorb(uint(data))),
         "Poisonous" => Ok(Keyword::Poisonous(uint(data))),
-        "Bloodthirst" => Ok(Keyword::Bloodthirst(uint(data))),
+        "Bloodthirst" => Ok(Keyword::Bloodthirst(bloodthirst(data)?)),
         "Amplify" => Ok(Keyword::Amplify(uint(data))),
         "Graft" => Ok(Keyword::Graft(uint(data))),
         "Devour" => Ok(Keyword::Devour(uint(data))),
@@ -2064,6 +2090,44 @@ mod tests {
     fn parse_numeric_keywords_unchanged() {
         assert_eq!(Keyword::from_str("Crew:3").unwrap(), Keyword::Crew(3));
         assert_eq!(Keyword::from_str("Rampage:2").unwrap(), Keyword::Rampage(2));
+    }
+
+    #[test]
+    fn parse_bloodthirst_fixed_and_x() {
+        assert_eq!(
+            Keyword::from_str("Bloodthirst:3").unwrap(),
+            Keyword::Bloodthirst(BloodthirstValue::Fixed(3))
+        );
+        assert_eq!(
+            Keyword::from_str("Bloodthirst:X").unwrap(),
+            Keyword::Bloodthirst(BloodthirstValue::X)
+        );
+        assert_eq!(
+            Keyword::from_str("Bloodthirst").unwrap(),
+            Keyword::Bloodthirst(BloodthirstValue::Fixed(1))
+        );
+    }
+
+    #[test]
+    fn bloodthirst_serialization_accepts_legacy_fixed_and_x() {
+        let legacy_fixed: Keyword = serde_json::from_value(serde_json::json!({
+            "Bloodthirst": 2
+        }))
+        .unwrap();
+        assert_eq!(
+            legacy_fixed,
+            Keyword::Bloodthirst(BloodthirstValue::Fixed(2))
+        );
+
+        let legacy_x: Keyword = serde_json::from_value(serde_json::json!({
+            "Bloodthirst": "X"
+        }))
+        .unwrap();
+        assert_eq!(legacy_x, Keyword::Bloodthirst(BloodthirstValue::X));
+
+        let json = serde_json::to_value(Keyword::Bloodthirst(BloodthirstValue::X)).unwrap();
+        let round_trip: Keyword = serde_json::from_value(json).unwrap();
+        assert_eq!(round_trip, Keyword::Bloodthirst(BloodthirstValue::X));
     }
 
     #[test]

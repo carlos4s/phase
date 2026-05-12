@@ -17,7 +17,9 @@ use crate::types::ability::{
     AbilityCost, AdditionalCost, ControllerRef, Effect, QuantityExpr, TargetFilter, TypeFilter,
     TypedFilter,
 };
-use crate::types::keywords::{BuybackCost, CyclingCost, FlashbackCost, Keyword, WardCost};
+use crate::types::keywords::{
+    BloodthirstValue, BuybackCost, CyclingCost, FlashbackCost, Keyword, WardCost,
+};
 
 /// CR 702.16 + CR 702.11f: Expand compound "X from A and from B" keyword lines.
 /// Handles both "protection from X and from Y" and "hexproof from X and from Y"
@@ -160,6 +162,15 @@ pub(crate) fn extract_keyword_line(
 
     if mtgjson_keyword_names.iter().any(|n| n == "mobilize") {
         if let Some(kw) = parse_mobilize_keyword_line(line) {
+            return Some(vec![kw]);
+        }
+    }
+
+    if mtgjson_keyword_names.iter().any(|n| n == "bloodthirst") {
+        if let Some(kw) = parse_bloodthirst_keyword_line(line) {
+            if kw == Keyword::Bloodthirst(BloodthirstValue::Fixed(1)) {
+                return Some(Vec::new());
+            }
             return Some(vec![kw]);
         }
     }
@@ -545,6 +556,25 @@ fn parse_cycling_cost(cost_text: &str) -> Option<CyclingCost> {
     }
 }
 
+fn parse_bloodthirst_keyword_line(line: &str) -> Option<Keyword> {
+    let lower = line.to_ascii_lowercase();
+    let stripped = strip_reminder_text(&lower);
+    let text = stripped.trim().trim_end_matches('.');
+    let (rest, _) = tag::<_, _, OracleError<'_>>("bloodthirst ")
+        .parse(text)
+        .ok()?;
+    let value_text = rest.trim();
+    if value_text == "x" {
+        return Some(Keyword::Bloodthirst(BloodthirstValue::X));
+    }
+    let (rem, n) = nom_primitives::parse_number.parse(value_text).ok()?;
+    if rem.is_empty() {
+        Some(Keyword::Bloodthirst(BloodthirstValue::Fixed(n)))
+    } else {
+        None
+    }
+}
+
 ///
 /// Oracle text uses space-separated format: "protection from red", "ward {2}",
 /// "flashback {2}{U}". Converts to the colon format that `FromStr` expects,
@@ -580,6 +610,10 @@ pub(crate) fn parse_keyword_from_oracle(text: &str) -> Option<Keyword> {
     .parse(text)
     {
         return result;
+    }
+
+    if let Some(kw) = parse_bloodthirst_keyword_line(text) {
+        return Some(kw);
     }
 
     // First try direct parse (handles simple keywords like "flying")
@@ -1571,6 +1605,29 @@ mod tests {
         assert_eq!(
             result,
             vec![Keyword::Mobilize(QuantityExpr::Fixed { value: 2 })]
+        );
+    }
+
+    #[test]
+    fn extract_keyword_line_bloodthirst_x_overrides_mtgjson_fallback() {
+        let result = extract_keyword_line(
+            "Bloodthirst X (This creature enters with X +1/+1 counters on it, where X is the damage dealt to your opponents this turn.)",
+            &["bloodthirst".to_string()],
+        )
+        .expect("bloodthirst X line should be recognized");
+
+        assert_eq!(result, vec![Keyword::Bloodthirst(BloodthirstValue::X)]);
+    }
+
+    #[test]
+    fn parse_keyword_from_oracle_bloodthirst_fixed_and_x() {
+        assert_eq!(
+            parse_keyword_from_oracle("bloodthirst 2").unwrap(),
+            Keyword::Bloodthirst(BloodthirstValue::Fixed(2))
+        );
+        assert_eq!(
+            parse_keyword_from_oracle("bloodthirst x").unwrap(),
+            Keyword::Bloodthirst(BloodthirstValue::X)
         );
     }
 
