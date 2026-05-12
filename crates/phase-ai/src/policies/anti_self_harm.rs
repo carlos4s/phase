@@ -1202,6 +1202,26 @@ mod tests {
         assert_eq!(effect_polarity(&effect), EffectPolarity::Harmful);
     }
 
+    #[test]
+    fn generic_positive_pt_counter_is_beneficial() {
+        let effect = Effect::AddCounter {
+            counter_type: CounterType::Generic("+0/+1".to_string()),
+            count: QuantityExpr::Fixed { value: 1 },
+            target: TargetFilter::Any,
+        };
+        assert_eq!(effect_polarity(&effect), EffectPolarity::Beneficial);
+    }
+
+    #[test]
+    fn generic_negative_pt_counter_is_harmful() {
+        let effect = Effect::AddCounter {
+            counter_type: CounterType::Generic("-0/-1".to_string()),
+            count: QuantityExpr::Fixed { value: 1 },
+            target: TargetFilter::Any,
+        };
+        assert_eq!(effect_polarity(&effect), EffectPolarity::Harmful);
+    }
+
     /// Regression: Katsumasa, the Animator upkeep trigger uses `Effect::PutCounter`
     /// with a `+1/+1` counter. Prior to the classifier fix, `effect_polarity`
     /// fell through to the default `Contextual` arm, flipping the AI's

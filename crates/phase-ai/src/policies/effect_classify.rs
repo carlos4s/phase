@@ -37,6 +37,8 @@ fn counter_sign_polarity(counter_type: &CounterType) -> EffectPolarity {
     match counter_type {
         CounterType::Plus1Plus1 => EffectPolarity::Beneficial,
         CounterType::Minus1Minus1 => EffectPolarity::Harmful,
+        CounterType::Generic(s) if s.starts_with('+') => EffectPolarity::Beneficial,
+        CounterType::Generic(s) if s.starts_with('-') => EffectPolarity::Harmful,
         _ => EffectPolarity::Contextual,
     }
 }
