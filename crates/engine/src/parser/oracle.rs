@@ -4128,6 +4128,31 @@ mod tests {
     }
 
     #[test]
+    fn parser_reaches_static_line_for_attacks_or_blocks_each_combat_if_able() {
+        let r = parse(
+            "This creature attacks or blocks each combat if able.",
+            "Iron Golem",
+            &[],
+            &["Creature"],
+            &["Golem"],
+        );
+        assert_eq!(r.abilities.len(), 0, "{r:#?}");
+        assert_eq!(r.statics.len(), 2, "{r:#?}");
+        assert!(r
+            .statics
+            .iter()
+            .any(|def| def.mode == crate::types::statics::StaticMode::MustAttack));
+        assert!(r
+            .statics
+            .iter()
+            .any(|def| def.mode == crate::types::statics::StaticMode::MustBlock));
+        assert!(r
+            .statics
+            .iter()
+            .all(|def| def.affected == Some(TargetFilter::SelfRef)));
+    }
+
+    #[test]
     fn parser_reaches_static_line_for_other_goblins_attack_each_combat_if_able() {
         let r = parse(
             "Other Goblin creatures you control attack each combat if able.",

@@ -5,7 +5,7 @@ use crate::parser::oracle_nom::error::OracleError;
 use nom::branch::alt;
 use nom::bytes::complete::{tag, tag_no_case, take_until};
 use nom::character::complete::{alpha1, space0, space1};
-use nom::combinator::{all_consuming, eof, opt, rest, value};
+use nom::combinator::{all_consuming, eof, map, opt, rest, value};
 use nom::multi::many0;
 use nom::sequence::{preceded, terminated};
 use nom::Parser;
@@ -8780,25 +8780,66 @@ fn try_parse_scoped_must_attack_block(lower: &str, text: &str) -> Option<Vec<Sta
     let clean_text = text.trim_end_matches('.');
 
     // Try to extract the verb phrase suffix and determine the mode(s).
-    let (subject_lower, modes) =
-        if let Some(subj) = clean.strip_suffix(" attack each combat if able") {
-            (subj, vec![StaticMode::MustAttack])
-        } else if let Some(subj) = clean.strip_suffix(" attacks each combat if able") {
-            (subj, vec![StaticMode::MustAttack])
-        } else if let Some(subj) = clean.strip_suffix(" attack each turn if able") {
-            (subj, vec![StaticMode::MustAttack])
-        } else if let Some(subj) = clean.strip_suffix(" block each combat if able") {
-            (subj, vec![StaticMode::MustBlock])
-        } else if let Some(subj) = clean.strip_suffix(" blocks each combat if able") {
-            (subj, vec![StaticMode::MustBlock])
-        } else if let Some(subj) = clean.strip_suffix(" block each turn if able") {
-            (subj, vec![StaticMode::MustBlock])
-        } else if let Some(subj) = clean.strip_suffix(" attacks or blocks each combat if able") {
-            (subj, vec![StaticMode::MustAttack, StaticMode::MustBlock])
-        } else {
-            let subj = clean.strip_suffix(" attack or block each combat if able")?;
-            (subj, vec![StaticMode::MustAttack, StaticMode::MustBlock])
-        };
+    let (_, (subject_lower, modes)) = all_consuming(alt((
+        map(
+            terminated(
+                take_until(" attacks or blocks each combat if able"),
+                tag::<_, _, OracleError<'_>>(" attacks or blocks each combat if able"),
+            ),
+            |subj| (subj, vec![StaticMode::MustAttack, StaticMode::MustBlock]),
+        ),
+        map(
+            terminated(
+                take_until(" attack or block each combat if able"),
+                tag(" attack or block each combat if able"),
+            ),
+            |subj| (subj, vec![StaticMode::MustAttack, StaticMode::MustBlock]),
+        ),
+        map(
+            terminated(
+                take_until(" attack each combat if able"),
+                tag(" attack each combat if able"),
+            ),
+            |subj| (subj, vec![StaticMode::MustAttack]),
+        ),
+        map(
+            terminated(
+                take_until(" attacks each combat if able"),
+                tag(" attacks each combat if able"),
+            ),
+            |subj| (subj, vec![StaticMode::MustAttack]),
+        ),
+        map(
+            terminated(
+                take_until(" attack each turn if able"),
+                tag(" attack each turn if able"),
+            ),
+            |subj| (subj, vec![StaticMode::MustAttack]),
+        ),
+        map(
+            terminated(
+                take_until(" block each combat if able"),
+                tag(" block each combat if able"),
+            ),
+            |subj| (subj, vec![StaticMode::MustBlock]),
+        ),
+        map(
+            terminated(
+                take_until(" blocks each combat if able"),
+                tag(" blocks each combat if able"),
+            ),
+            |subj| (subj, vec![StaticMode::MustBlock]),
+        ),
+        map(
+            terminated(
+                take_until(" block each turn if able"),
+                tag(" block each turn if able"),
+            ),
+            |subj| (subj, vec![StaticMode::MustBlock]),
+        ),
+    )))
+    .parse(clean)
+    .ok()?;
     let subject = &clean_text[..subject_lower.len()];
 
     // Determine the affected filter from the subject phrase.
@@ -8810,8 +8851,7 @@ fn try_parse_scoped_must_attack_block(lower: &str, text: &str) -> Option<Vec<Sta
         "creatures your opponents control" => {
             TargetFilter::Typed(TypedFilter::creature().controller(ControllerRef::Opponent))
         }
-        // Self-ref: "this creature" / card name — handled by the existing
-        // RuleStaticPredicate path, so we skip here.
+        "~" | "this creature" => TargetFilter::SelfRef,
         _ => parse_creature_subject_filter(subject)
             .or_else(|| parse_continuous_subject_filter(subject))?,
     };
@@ -12934,6 +12974,23 @@ mod tests {
         let def = parse_static_line("This creature must attack each combat if able.").unwrap();
         assert_eq!(def.mode, StaticMode::MustAttack);
         assert_eq!(def.affected, Some(TargetFilter::SelfRef));
+    }
+
+    #[test]
+    fn static_attacks_or_blocks_each_combat_if_able_emits_both_defs() {
+        let direct = try_parse_scoped_must_attack_block(
+            "this creature attacks or blocks each combat if able.",
+            "This creature attacks or blocks each combat if able.",
+        );
+        assert!(direct.is_some(), "direct scoped parser failed");
+        let defs = parse_static_line_multi("This creature attacks or blocks each combat if able.");
+
+        assert_eq!(defs.len(), 2);
+        assert_eq!(defs[0].mode, StaticMode::MustAttack);
+        assert_eq!(defs[1].mode, StaticMode::MustBlock);
+        assert!(defs
+            .iter()
+            .all(|def| def.affected == Some(TargetFilter::SelfRef)));
     }
 
     #[test]
