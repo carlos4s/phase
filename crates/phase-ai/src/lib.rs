@@ -9,6 +9,7 @@ pub mod context;
 pub mod decision_kind;
 pub mod deck_knowledge;
 pub mod deck_profile;
+pub mod draft_eval;
 pub mod duel_suite;
 pub mod eval;
 pub mod features;
@@ -32,9 +33,13 @@ pub use config::{
     PlannerMode, Platform, SearchConfig,
 };
 pub use deck_profile::ArchetypeMultipliers;
+pub use draft_eval::{
+    evaluate_draft_card, evaluate_draft_card_default, rarity_prior, DraftWeights,
+};
 pub use eval::{
-    evaluate_creature, evaluate_creature_with_bonuses, evaluate_for_planner, evaluate_state,
-    evaluate_state_breakdown, strategic_intent, threat_level, threat_level_projected,
-    EvalWeightSet, EvalWeights, EvaluationBreakdown, KeywordBonuses, StrategicIntent,
+    creature_combat_value, evaluate_creature, evaluate_creature_with_bonuses, evaluate_for_planner,
+    evaluate_state, evaluate_state_breakdown, strategic_intent, threat_level,
+    threat_level_projected, EvalWeightSet, EvalWeights, EvaluationBreakdown, KeywordBonuses,
+    StrategicIntent,
 };
 pub use search::{choose_action, score_candidates, softmax_select_pairs};

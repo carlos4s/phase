@@ -83,6 +83,14 @@ local_resource('test-engine',
     labels = ['test'],
 )
 
+local_resource('test-ai',
+    cmd = 'cargo test -p phase-ai',
+    deps = ENGINE_SRC + AI_SRC,
+    allow_parallel = True,
+    auto_init = 'test' in enabled,
+    labels = ['test'],
+)
+
 local_resource('test-frontend',
     cmd = 'pnpm test -- --run',
     dir = 'client',

@@ -66,6 +66,7 @@ When creating or participating in an agent team (whether triggered by `/batch-me
 |----------|-------------|-------------|
 | `clippy` | `cargo clippy --all-targets -- -D warnings` | `crates/` changes |
 | `test-engine` | `cargo test -p engine` | `crates/engine/src/` changes |
+| `test-ai` | `cargo test -p phase-ai` | `crates/engine/src/` or `crates/phase-ai/src/` changes |
 | `wasm` | WASM build (depends on clippy) | engine/AI/WASM src changes |
 | `card-data` | `./scripts/gen-card-data.sh` | `crates/engine/src/` changes |
 | `check-frontend` | `pnpm run type-check && pnpm lint` | `client/src/` changes |

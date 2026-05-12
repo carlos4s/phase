@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use draft_core::types::DraftCardInstance;
 use engine::database::CardDatabase;
-use engine::types::keywords::Keyword;
 use phase_ai::config::AiDifficulty;
+use phase_ai::draft_eval;
 use rand::Rng;
 
 /// Select a card index from the pack for a bot to pick.
@@ -12,7 +12,7 @@ use rand::Rng;
 /// - VeryEasy: pure random
 /// - Easy: rarity-weighted
 /// - Medium: color preference + rarity + curve awareness (from enriched DraftCardInstance)
-/// - Hard/VeryHard: CardDatabase evaluation + color discipline + curve
+/// - Hard/VeryHard: `phase_ai::draft_eval` card quality + color discipline + curve
 ///
 /// Returns the index into the `pack` slice.
 pub fn bot_pick(
@@ -74,7 +74,7 @@ fn pick_by_color_and_rarity(
         .unwrap_or(0)
 }
 
-/// Hard/VeryHard strategy: CardDatabase evaluation + color discipline + curve.
+/// Hard/VeryHard strategy: `phase_ai::draft_eval` card quality + color discipline + curve.
 /// Falls back to Medium strategy if CardDatabase is not loaded.
 fn pick_by_evaluation(
     pack: &[DraftCardInstance],
@@ -91,8 +91,8 @@ fn pick_by_evaluation(
     let pick_number = prior_picks.len() as u8;
 
     // Color bonus multiplier: stricter for VeryHard
-    let on_color_bonus: f32 = if strict { 6.0 } else { 4.0 };
-    let off_color_penalty: f32 = if strict { -2.0 } else { 0.0 };
+    let on_color_bonus: f64 = if strict { 6.0 } else { 4.0 };
+    let off_color_penalty: f64 = if strict { -2.0 } else { 0.0 };
 
     pack.iter()
         .enumerate()
@@ -121,16 +121,17 @@ fn pick_by_evaluation(
         .unwrap_or(0)
 }
 
-/// Compute a draft evaluation score for a card using CardDatabase data.
+/// Pick-context score for a card: intrinsic card quality (`phase_ai::draft_eval`)
+/// plus a rarity prior, color discipline relative to prior picks, and a curve bonus.
 fn eval_score(
     card: &DraftCardInstance,
     card_db: &CardDatabase,
     preferred_colors: &[String],
     pick_number: u8,
-    on_color_bonus: f32,
-    off_color_penalty: f32,
-) -> f32 {
-    let base = eval_card_for_draft(card, Some(card_db));
+    on_color_bonus: f64,
+    off_color_penalty: f64,
+) -> f64 {
+    let base = card_quality(card, Some(card_db));
 
     let color_bonus = if card.colors.is_empty() {
         1.0 // Colorless — always fine
@@ -142,64 +143,20 @@ fn eval_score(
         off_color_penalty
     };
 
-    let curve = curve_bonus(card.cmc, pick_number) as f32;
+    let curve = curve_bonus(card.cmc, pick_number) as f64;
 
     base + color_bonus + curve
 }
 
-/// Evaluate a card for draft pick quality using CardDatabase.
-///
-/// Looks up the card in the engine's CardDatabase for keyword/stat analysis.
-/// Falls back to rarity score if the card is not found.
-fn eval_card_for_draft(card: &DraftCardInstance, card_db: Option<&CardDatabase>) -> f32 {
-    let base_rarity = rarity_score(&card.rarity) as f32;
-
-    let Some(db) = card_db else {
-        return base_rarity;
-    };
-
-    let Some(face) = db.get_face_by_name(&card.name) else {
-        return base_rarity;
-    };
-
-    let mut score = base_rarity;
-
-    // Power + toughness sum for creatures
-    let power = face.power.as_ref().map_or(0, |p| match p {
-        engine::types::ability::PtValue::Fixed(v) => *v,
-        _ => 0,
-    });
-    let toughness = face.toughness.as_ref().map_or(0, |t| match t {
-        engine::types::ability::PtValue::Fixed(v) => *v,
-        _ => 0,
-    });
-    if power > 0 || toughness > 0 {
-        score += (power + toughness) as f32 * 0.3;
-    }
-
-    // Keyword bonuses — evasion and removal-relevant keywords valued highly in Limited
-    for keyword in &face.keywords {
-        score += match keyword {
-            Keyword::Flying => 3.0,
-            Keyword::Trample => 1.5,
-            Keyword::Deathtouch => 3.0,
-            Keyword::Lifelink => 2.0,
-            Keyword::Hexproof => 2.5,
-            Keyword::Menace => 2.0,
-            Keyword::FirstStrike | Keyword::DoubleStrike => 2.0,
-            Keyword::Vigilance => 1.0,
-            Keyword::Haste => 1.0,
-            Keyword::Reach => 1.0,
-            Keyword::Indestructible => 3.0,
-            Keyword::Flash => 1.5,
-            _ => 0.0,
-        };
-    }
-
-    // Abilities count as a rough proxy for card complexity/power
-    score += face.abilities.len().min(3) as f32 * 0.5;
-
-    score
+/// Intrinsic card quality: the engine-data evaluator ([`draft_eval::evaluate_draft_card`])
+/// plus a small rarity prior. Falls back to just the rarity prior when no
+/// CardDatabase is loaded or the card face isn't found.
+fn card_quality(card: &DraftCardInstance, card_db: Option<&CardDatabase>) -> f64 {
+    let quality = card_db
+        .and_then(|db| db.get_face_by_name(&card.name))
+        .map(draft_eval::evaluate_draft_card_default)
+        .unwrap_or(0.0);
+    quality + draft_eval::rarity_prior(&card.rarity)
 }
 
 fn rarity_score(rarity: &str) -> u8 {

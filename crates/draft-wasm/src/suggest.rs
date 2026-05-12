@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use draft_core::types::DraftCardInstance;
 use engine::database::CardDatabase;
-use engine::types::keywords::Keyword;
 use phase_ai::config::AiDifficulty;
+use phase_ai::draft_eval;
 
 /// A suggested Limited deck: spell names + land distribution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +33,9 @@ pub fn suggest_deck(
     _difficulty: AiDifficulty,
     card_db: Option<&CardDatabase>,
 ) -> SuggestedDeck {
+    // `_difficulty` is intentionally unused: deck suggestion always builds the
+    // strongest legal deck. Difficulty governs the *opponents*, not the player's
+    // own deck.
     if pool.is_empty() {
         return SuggestedDeck {
             main_deck: Vec::new(),
@@ -45,7 +48,7 @@ pub fn suggest_deck(
     // Spell candidates: every pool card that isn't a land. Lands are added
     // separately as basics in step 4 (a drafted nonbasic land counted here
     // would inflate the deck past 40 once basics are layered on top).
-    let mut scored: Vec<(&DraftCardInstance, f32)> = pool
+    let mut scored: Vec<(&DraftCardInstance, f64)> = pool
         .iter()
         .filter(|c| !is_land(c))
         .map(|c| (c, score_card(c, card_db)))
@@ -53,7 +56,7 @@ pub fn suggest_deck(
     scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
     // On-color (or colorless) cards, preserving the global score order.
-    let on_color: Vec<(&DraftCardInstance, f32)> = scored
+    let on_color: Vec<(&DraftCardInstance, f64)> = scored
         .iter()
         .filter(|(c, _)| {
             c.colors.is_empty()
@@ -96,6 +99,10 @@ pub fn suggest_deck(
 }
 
 /// Whether a drafted card is a land (so it isn't counted as a spell).
+///
+/// The engine-truth check is `CardFace.card_type` containing `CoreType::Land`,
+/// but this filter runs over the raw `DraftCardInstance` pool before any
+/// `CardDatabase` lookup, so the printed type line is the right tool here.
 fn is_land(card: &DraftCardInstance) -> bool {
     card.type_line.to_ascii_lowercase().contains("land")
 }
@@ -105,7 +112,7 @@ fn find_best_colors<'a>(
     pool: &[DraftCardInstance],
     card_db: Option<&CardDatabase>,
 ) -> Vec<&'a str> {
-    let mut color_scores: HashMap<&str, f32> = HashMap::new();
+    let mut color_scores: HashMap<&str, f64> = HashMap::new();
 
     for card in pool {
         let card_score = score_card(card, card_db);
@@ -122,67 +129,21 @@ fn find_best_colors<'a>(
         }
     }
 
-    let mut sorted: Vec<(&&str, &f32)> = color_scores.iter().collect();
+    let mut sorted: Vec<(&&str, &f64)> = color_scores.iter().collect();
     sorted.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
 
     sorted.iter().take(2).map(|(color, _)| **color).collect()
 }
 
-/// Score a card for deck inclusion quality.
-fn score_card(card: &DraftCardInstance, card_db: Option<&CardDatabase>) -> f32 {
-    let base_rarity = match card.rarity.as_str() {
-        "mythic" => 4.0,
-        "rare" => 3.0,
-        "uncommon" => 2.0,
-        "common" => 1.0,
-        _ => 0.5,
-    };
-
-    let Some(db) = card_db else {
-        return base_rarity;
-    };
-
-    let Some(face) = db.get_face_by_name(&card.name) else {
-        return base_rarity;
-    };
-
-    let mut score = base_rarity;
-
-    // Creature stats
-    let power = face.power.as_ref().map_or(0, |p| match p {
-        engine::types::ability::PtValue::Fixed(v) => *v,
-        _ => 0,
-    });
-    let toughness = face.toughness.as_ref().map_or(0, |t| match t {
-        engine::types::ability::PtValue::Fixed(v) => *v,
-        _ => 0,
-    });
-    if power > 0 || toughness > 0 {
-        score += (power + toughness) as f32 * 0.3;
-    }
-
-    // Keyword bonuses
-    for keyword in &face.keywords {
-        score += match keyword {
-            Keyword::Flying => 3.0,
-            Keyword::Trample => 1.5,
-            Keyword::Deathtouch => 3.0,
-            Keyword::Lifelink => 2.0,
-            Keyword::Hexproof => 2.5,
-            Keyword::Menace => 2.0,
-            Keyword::FirstStrike | Keyword::DoubleStrike => 2.0,
-            Keyword::Vigilance => 1.0,
-            Keyword::Haste => 1.0,
-            Keyword::Reach => 1.0,
-            Keyword::Indestructible => 3.0,
-            Keyword::Flash => 1.5,
-            _ => 0.0,
-        };
-    }
-
-    score += face.abilities.len().min(3) as f32 * 0.5;
-
-    score
+/// Score a card for deck inclusion: the shared engine-data evaluator
+/// ([`draft_eval::evaluate_draft_card`]) plus a small rarity prior, falling back
+/// to just the rarity prior when no `CardDatabase` is loaded.
+fn score_card(card: &DraftCardInstance, card_db: Option<&CardDatabase>) -> f64 {
+    let quality = card_db
+        .and_then(|db| db.get_face_by_name(&card.name))
+        .map(draft_eval::evaluate_draft_card_default)
+        .unwrap_or(0.0);
+    quality + draft_eval::rarity_prior(&card.rarity)
 }
 
 /// Select spells respecting a good mana curve for Limited.
@@ -195,7 +156,7 @@ fn score_card(card: &DraftCardInstance, card_db: Option<&CardDatabase>) -> f32 {
 /// - CMC 5: 2-3
 /// - CMC 6+: 1-2
 fn select_spells_with_curve<'a>(
-    scored: &[(&'a DraftCardInstance, f32)],
+    scored: &[(&'a DraftCardInstance, f64)],
     target: usize,
 ) -> Vec<&'a DraftCardInstance> {
     // Curve slot targets

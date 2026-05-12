@@ -3,6 +3,7 @@ use engine::types::ability::{
     AbilityDefinition, AbilityKind, Effect, ReplacementDefinition, TargetFilter, TriggerDefinition,
 };
 use engine::types::actions::GameAction;
+use engine::types::card::CardFace;
 use engine::types::card_type::CoreType;
 use engine::types::game_state::GameState;
 use engine::types::player::PlayerId;
@@ -42,6 +43,33 @@ impl EffectProfile {
                 .any(|e| is_mass_damage_or_shrink(e)),
         }
     }
+
+    /// Build an EffectProfile from every effect a card face can produce — its
+    /// abilities (spell and activated alike) and the `execute` chains of all its
+    /// triggered abilities. Unlike [`cast_facts_for_object`], which keeps only
+    /// immediate-ETB trigger effects, this includes attack/dies/upkeep/etc. triggers
+    /// too, since draft-pick evaluation cares about a card's whole effect surface.
+    pub fn from_face(face: &CardFace) -> Self {
+        Self::from_effects(&collect_face_effects(face))
+    }
+}
+
+/// Collect every effect reachable from a card face's abilities and triggered
+/// abilities (recursing into modal/sub/else branches via [`collect_definition_effects`]).
+/// Replacement effects are intentionally excluded — most face-level replacements are
+/// ETB-tapped / enters-with-counters plumbing that the [`EffectProfile`] flags would
+/// not classify anyway.
+pub fn collect_face_effects(face: &CardFace) -> Vec<&Effect> {
+    face.abilities
+        .iter()
+        .flat_map(collect_definition_effects)
+        .chain(
+            face.triggers
+                .iter()
+                .filter_map(|trigger| trigger.execute.as_deref())
+                .flat_map(collect_definition_effects),
+        )
+        .collect()
 }
 
 /// Card-level facts for spells: wraps EffectProfile with card-specific data

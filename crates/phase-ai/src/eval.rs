@@ -495,44 +495,65 @@ pub fn evaluate_creature_with_bonuses(
         None => return 0.0,
     };
 
-    let power = obj.power.unwrap_or(0) as f64;
-    let toughness = obj.toughness.unwrap_or(0) as f64;
+    let mut value = creature_combat_value(
+        obj.power.unwrap_or(0),
+        obj.toughness.unwrap_or(0),
+        |kw| obj.has_keyword(kw),
+        bonuses,
+    );
+
+    // Tapped creatures are less valuable (board state, not an intrinsic trait).
+    if obj.tapped {
+        value -= bonuses.tapped_penalty;
+    }
+
+    value
+}
+
+/// Combat value of a creature from its raw stats and keyword set, independent of
+/// board state. Power is weighted 1.5× toughness; keyword bonuses come from
+/// `bonuses`. Shared by board evaluation ([`evaluate_creature_with_bonuses`]) and
+/// draft-pick evaluation ([`crate::draft_eval`]). Does *not* apply the tapped
+/// penalty — that is a board-state concern handled by the caller.
+pub fn creature_combat_value(
+    power: i32,
+    toughness: i32,
+    has_keyword: impl Fn(&Keyword) -> bool,
+    bonuses: &KeywordBonuses,
+) -> f64 {
+    let power = power as f64;
+    let toughness = toughness as f64;
 
     // Base value: power matters more for combat
     let mut value = power * 1.5 + toughness;
 
     // Keyword bonuses
-    if obj.has_keyword(&Keyword::Flying) {
+    if has_keyword(&Keyword::Flying) {
         value += power * bonuses.flying_mult;
     }
-    if obj.has_keyword(&Keyword::Trample) {
+    if has_keyword(&Keyword::Trample) {
         value += power * bonuses.trample_mult;
     }
-    if obj.has_keyword(&Keyword::Deathtouch) {
+    if has_keyword(&Keyword::Deathtouch) {
         value += bonuses.deathtouch_flat;
     }
-    if obj.has_keyword(&Keyword::Lifelink) {
+    if has_keyword(&Keyword::Lifelink) {
         value += power * bonuses.lifelink_mult;
     }
-    if obj.has_keyword(&Keyword::Hexproof) {
+    if has_keyword(&Keyword::Hexproof) {
         value += bonuses.hexproof_flat;
     }
-    if obj.has_keyword(&Keyword::Indestructible) {
+    if has_keyword(&Keyword::Indestructible) {
         value += bonuses.indestructible_flat;
     }
-    if obj.has_keyword(&Keyword::FirstStrike) || obj.has_keyword(&Keyword::DoubleStrike) {
+    if has_keyword(&Keyword::FirstStrike) || has_keyword(&Keyword::DoubleStrike) {
         value += power * bonuses.first_strike_mult;
     }
-    if obj.has_keyword(&Keyword::Vigilance) {
+    if has_keyword(&Keyword::Vigilance) {
         value += bonuses.vigilance_flat;
     }
-    if obj.has_keyword(&Keyword::Menace) {
+    if has_keyword(&Keyword::Menace) {
         value += power * bonuses.menace_mult;
-    }
-
-    // Tapped creatures are less valuable
-    if obj.tapped {
-        value -= bonuses.tapped_penalty;
     }
 
     value
