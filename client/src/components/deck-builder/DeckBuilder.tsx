@@ -5,7 +5,7 @@ import { hasAlternatePrintingsSync, resolveOracleIdSync } from "../../services/s
 import { usePreferencesStore } from "../../stores/preferencesStore";
 import { DeckCardContextMenu } from "./DeckCardContextMenu";
 import { PrintingPickerModal } from "./PrintingPickerModal";
-import type { ParsedDeck } from "../../services/deckParser";
+import type { ParsedDeck, DeckEntry } from "../../services/deckParser";
 import { deduplicateEntries, resolveCommander } from "../../services/deckParser";
 import { evaluateDeckCompatibility, type DeckCompatibilityResult } from "../../services/deckCompatibility";
 import { STORAGE_KEY_PREFIX, loadSavedDeck, loadSavedDeckBracket, stampDeckMeta } from "../../constants/storage";
@@ -279,9 +279,23 @@ export function DeckBuilder({
     applyDeckToEditor(imported);
   }, [applyDeckToEditor]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!deckName.trim()) return;
-    const payload: Record<string, unknown> = { ...currentDeck, format };
+    // Save-time commander inference: when a Commander-format deck is shaped
+    // like a 100-singleton list with no explicit commander, ask the engine
+    // (via resolveCommander → WASM isCardCommanderEligible) to pick one. This
+    // is the architectural successor to the deleted reactive auto-resolve
+    // effect — running here means the user is never surprised mid-edit, and
+    // every persisted record has a commander when one is derivable.
+    const resolved = isCommander ? await resolveCommander(currentDeck) : currentDeck;
+    const inferred =
+      (resolved.commander?.length ?? 0) > (currentDeck.commander?.length ?? 0);
+    if (inferred) {
+      // Reflect the engine's choice in the editor so the displayed state
+      // matches what we're about to persist.
+      applyDeckToEditor(resolved);
+    }
+    const payload: Record<string, unknown> = { ...resolved, format };
     if (bracket !== null) payload.bracket = bracket;
     const data = JSON.stringify(payload);
     localStorage.setItem(STORAGE_KEY_PREFIX + deckName.trim(), data);
@@ -336,36 +350,53 @@ export function DeckBuilder({
     void handleLoadRef.current(initialDeckName);
   }, [initialDeckName]);
 
-  useEffect(() => {
-    if (!isCommander || commanders.length > 0) return;
-    let cancelled = false;
-    resolveCommander(deck)
-      .then((resolved) => {
-        if (cancelled || !resolved.commander?.length) return;
-        applyDeckToEditor(resolved);
-      })
-      .catch(() => {
-        // WASM may not be loaded yet; leave the deck unchanged.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [applyDeckToEditor, commanders.length, deck, isCommander]);
-
+  // Set a card as commander with three-tier resolution:
+  //   1. No commanders yet → add it.
+  //   2. One commander and both have partner-family keywords → add as partner
+  //      (CR 702.124 / 702.135 — pair stays together).
+  //   3. Otherwise → swap: move existing commander(s) back to main and install
+  //      the new card as sole commander. This is the swap UX users need when
+  //      cycling through legendary creatures to pick the right commander.
   const handleSetCommander = useCallback(
     (cardName: string) => {
-      setCommanders((prev) => {
-        if (prev.includes(cardName)) return prev;
-        const card = cardDataCache.get(cardName);
-        if (!card || !canBeCommander(card)) return prev;
-        if (!canAddPartner(prev, card, cardDataCache)) return prev;
-        return [...prev, cardName];
+      const card = cardDataCache.get(cardName);
+      if (!card || !canBeCommander(card)) return;
+
+      const isPartnerAdd =
+        commanders.length === 1 &&
+        canAddPartner(commanders, card, cardDataCache);
+      const displaced =
+        isPartnerAdd || commanders.length === 0 ? [] : commanders;
+      const nextCommanders = isPartnerAdd
+        ? [...commanders, cardName]
+        : [cardName];
+
+      setCommanders(nextCommanders);
+      setDeck((prev) => {
+        // Remove the new commander from main, then re-introduce any displaced
+        // commanders so they remain in the deck for the user to re-pick.
+        const filtered = prev.main.filter((e) => e.name !== cardName);
+        const restored = displaced.reduce<DeckEntry[]>((acc, name) => {
+          const existing = acc.find((e) => e.name === name);
+          if (existing) {
+            return acc.map((e) =>
+              e.name === name ? { ...e, count: e.count + 1 } : e,
+            );
+          }
+          return [...acc, { count: 1, name }];
+        }, filtered);
+        return { ...prev, main: restored };
       });
-      // Remove from main deck
-      setDeck((prev) => ({
-        ...prev,
-        main: prev.main.filter((e) => e.name !== cardName),
-      }));
+    },
+    [cardDataCache, commanders],
+  );
+
+  // Eligibility predicate consulted by each main-deck row. Pure card-data
+  // lookup — partner/swap logic lives in handleSetCommander.
+  const isCommanderEligible = useCallback(
+    (name: string) => {
+      const card = cardDataCache.get(name);
+      return !!card && canBeCommander(card);
     },
     [cardDataCache],
   );
@@ -562,6 +593,8 @@ export function DeckBuilder({
               format={format}
               compatibility={compatibility}
               onChooseArt={handleListContextMenu}
+              onSetAsCommander={isCommander ? handleSetCommander : undefined}
+              isCommanderEligible={isCommander ? isCommanderEligible : undefined}
             />
           </div>
 
