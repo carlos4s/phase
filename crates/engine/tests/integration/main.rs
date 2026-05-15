@@ -4,6 +4,7 @@ mod advanced_reconstruction_regression;
 mod aura_on_player;
 mod betor_lifelink_counters_repro;
 mod coalition_relic_integration;
+mod council_of_four_nth_per_turn;
 mod cr_annotations;
 mod elemental_spectacle_regression;
 mod elusive_otter_repro;

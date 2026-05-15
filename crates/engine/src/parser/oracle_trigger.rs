@@ -1,7 +1,7 @@
 use crate::parser::oracle_nom::error::OracleError;
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_until};
-use nom::combinator::{opt, recognize, value};
+use nom::combinator::{all_consuming, opt, recognize, value};
 use nom::multi::many1;
 use nom::sequence::{delimited, pair, preceded, terminated};
 use nom::Parser;
@@ -5636,33 +5636,92 @@ fn try_parse_nth_spell_trigger(lower: &str) -> Option<(TriggerMode, TriggerDefin
     None
 }
 
-/// Timing-clause kind for nth-spell triggers.
+/// Timing-clause kind for nth-spell/nth-draw triggers.
 /// CR 601.2 + CR 603.4: The trailing "each turn" / "in a turn" (unrestricted
-/// timing) vs "during each opponent's turn" (restricted to opponent's turn).
+/// timing), "during each opponent's turn" (restricted to opponent's turn), or
+/// "during their turn" (restricted to the acting player's own turn — the
+/// triggering player must be the active player; e.g. The Council of Four).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NthSpellTimingKind {
-    EachTurn,
-    DuringOpponentsTurn,
+enum NthEventTimingKind {
+    /// "each turn" / "in a turn" — no turn-ownership restriction.
+    Unrestricted,
+    /// "during each opponent's turn" — restricted to an opponent's turn.
+    OpponentsTurnOnly,
+    /// "during their turn" — restricted to the acting player's own turn.
+    ActorsTurnOnly,
 }
 
-/// Inspect the text after the ordinal to determine the timing clause kind.
-/// Returns `None` when the text does not end with a recognized timing tail
-/// (so the caller can reject the pattern). Uses `str::strip_suffix` —
-/// structural suffix removal of fixed literals, not parser dispatch.
-fn classify_nth_spell_timing(rest: &str) -> Option<NthSpellTimingKind> {
-    let trimmed = rest.trim();
-    if trimmed.strip_suffix(" each turn").is_some() || trimmed.strip_suffix(" in a turn").is_some()
-    {
-        Some(NthSpellTimingKind::EachTurn)
-    } else if trimmed
-        .strip_suffix(" during each opponent's turn")
-        .or_else(|| trimmed.strip_suffix(" during each opponent\u{2019}s turn"))
-        .is_some()
-    {
-        Some(NthSpellTimingKind::DuringOpponentsTurn)
-    } else {
-        None
+/// Map a timing kind to the intervening-if condition it implies, if any.
+/// `Unrestricted` implies no condition. The restricted kinds gate on
+/// the active player via `TriggerCondition::DuringPlayersTurn`.
+fn timing_condition(timing: NthEventTimingKind) -> Option<TriggerCondition> {
+    match timing {
+        NthEventTimingKind::Unrestricted => None,
+        // CR 603.4 + CR 102.1: opponent's-turn restriction.
+        NthEventTimingKind::OpponentsTurnOnly => Some(TriggerCondition::DuringPlayersTurn {
+            player: PlayerFilter::Opponent,
+        }),
+        // CR 603.4 + CR 102.1: "during their turn" — the triggering player
+        // (drawer/caster) must be the active player.
+        NthEventTimingKind::ActorsTurnOnly => Some(TriggerCondition::DuringPlayersTurn {
+            player: PlayerFilter::TriggeringPlayer,
+        }),
     }
+}
+
+/// Nom combinator for a complete timing-tail clause: matches "each turn",
+/// "in a turn", "during each opponent's turn" (apostrophe-normalized), or
+/// "during their turn". Wrapped in `all_consuming` so it succeeds only when
+/// the clause consumes the entire (already-trimmed) input. Shared by the
+/// nth-spell and nth-draw timing classifiers.
+fn parse_timing_tail(i: &str) -> OracleResult<'_, NthEventTimingKind> {
+    all_consuming(alt((
+        value(NthEventTimingKind::Unrestricted, tag("each turn")),
+        value(NthEventTimingKind::Unrestricted, tag("in a turn")),
+        value(
+            NthEventTimingKind::OpponentsTurnOnly,
+            alt((
+                tag("during each opponent's turn"),
+                tag("during each opponent\u{2019}s turn"),
+            )),
+        ),
+        value(NthEventTimingKind::ActorsTurnOnly, tag("during their turn")),
+    )))
+    .parse(i)
+}
+
+/// Inspect the text after the nth-spell ordinal+qualifier payload to determine
+/// the timing clause kind. The timing clause terminates the string; the
+/// preceding qualifier text ("spell …") is skipped by scanning word boundaries
+/// for the first position where `parse_timing_tail` matches to end-of-input.
+/// Returns `None` when no recognized timing tail terminates the text.
+fn classify_nth_event_timing(rest: &str) -> Option<NthEventTimingKind> {
+    let mut remaining = rest.trim();
+    loop {
+        if let Ok((_, kind)) = parse_timing_tail(remaining) {
+            return Some(kind);
+        }
+        // allow-noncombinator: word-boundary scan to advance to the next
+        // candidate position — the timing tail is matched by parse_timing_tail.
+        let idx = remaining.find(' ')?;
+        remaining = remaining[idx + 1..].trim_start();
+    }
+}
+
+/// Parse the draw-trigger payload "card <timing>" into a timing kind.
+/// The literal "card" is consumed by a nom `tag()`, then the timing tail is
+/// dispatched via the shared `parse_timing_tail` combinator. Rejects the
+/// "during each opponent's turn" form, which has no coherent meaning on a
+/// per-draw subject. Returns `None` on any other (or absent) tail so the
+/// caller falls through to other trigger patterns.
+fn classify_nth_draw_timing(rest: &str) -> Option<NthEventTimingKind> {
+    let (tail, ()) = value((), tag::<_, _, OracleError<'_>>("card"))
+        .parse(rest.trim())
+        .ok()?;
+    parse_timing_tail(tail.trim())
+        .ok()
+        .map(|(_, kind)| kind)
+        .filter(|kind| *kind != NthEventTimingKind::OpponentsTurnOnly)
 }
 
 /// "you cast your <ordinal> [qualifier] spell [post-spell modifier] each turn"
@@ -5671,7 +5730,7 @@ fn try_parse_nth_spell_you(lower: &str) -> Option<(TriggerMode, TriggerDefinitio
     let prefix = "you cast your ";
     let after = strip_after(lower, prefix)?;
     let (n, rest) = parse_ordinal(after)?;
-    let timing = classify_nth_spell_timing(rest)?;
+    let timing = classify_nth_event_timing(rest)?;
     let filter = extract_spell_type_filter(rest);
     let mut def = make_base();
     def.mode = TriggerMode::SpellCast;
@@ -5682,11 +5741,7 @@ fn try_parse_nth_spell_you(lower: &str) -> Option<(TriggerMode, TriggerDefinitio
         TypedFilter::default().controller(ControllerRef::You),
     ));
     def.constraint = Some(TriggerConstraint::NthSpellThisTurn { n, filter });
-    if timing == NthSpellTimingKind::DuringOpponentsTurn {
-        def.condition = Some(TriggerCondition::DuringPlayersTurn {
-            player: PlayerFilter::Opponent,
-        });
-    }
+    def.condition = timing_condition(timing);
     Some((TriggerMode::SpellCast, def))
 }
 
@@ -5695,11 +5750,11 @@ fn try_parse_nth_spell_opponent(lower: &str) -> Option<(TriggerMode, TriggerDefi
     let prefix = "an opponent casts their ";
     let after = strip_after(lower, prefix)?;
     let (n, rest) = parse_ordinal(after)?;
-    // Opponents-path does not support "during each opponent's turn" (redundant wording).
-    if !matches!(
-        classify_nth_spell_timing(rest),
-        Some(NthSpellTimingKind::EachTurn)
-    ) {
+    // Opponents-path supports unrestricted timing and "during their turn" (the
+    // opponent's own turn). "during each opponent's turn" is redundant wording
+    // for an opponent-scoped trigger and is rejected.
+    let timing = classify_nth_event_timing(rest)?;
+    if timing == NthEventTimingKind::OpponentsTurnOnly {
         return None;
     }
     let filter = extract_spell_type_filter(rest);
@@ -5709,6 +5764,7 @@ fn try_parse_nth_spell_opponent(lower: &str) -> Option<(TriggerMode, TriggerDefi
         TypedFilter::default().controller(ControllerRef::Opponent),
     ));
     def.constraint = Some(TriggerConstraint::NthSpellThisTurn { n, filter });
+    def.condition = timing_condition(timing);
     Some((TriggerMode::SpellCast, def))
 }
 
@@ -5720,16 +5776,18 @@ fn try_parse_nth_spell_any_player(lower: &str) -> Option<(TriggerMode, TriggerDe
     let prefix = "a player casts their ";
     let after = strip_after(lower, prefix)?;
     let (n, rest) = parse_ordinal(after)?;
-    if !matches!(
-        classify_nth_spell_timing(rest),
-        Some(NthSpellTimingKind::EachTurn)
-    ) {
+    // "a player" can act on any turn — accept unrestricted timing and the
+    // "during their turn" restriction (The Council of Four). "during each
+    // opponent's turn" has no coherent meaning for an any-player subject.
+    let timing = classify_nth_event_timing(rest)?;
+    if timing == NthEventTimingKind::OpponentsTurnOnly {
         return None;
     }
     let filter = extract_spell_type_filter(rest);
     let mut def = make_base();
     def.mode = TriggerMode::SpellCast;
     def.constraint = Some(TriggerConstraint::NthSpellThisTurn { n, filter });
+    def.condition = timing_condition(timing);
     Some((TriggerMode::SpellCast, def))
 }
 
@@ -5746,15 +5804,27 @@ fn try_parse_nth_spell_any_player(lower: &str) -> Option<(TriggerMode, TriggerDe
 /// that as an unrestricted spell filter.
 fn extract_spell_type_filter(after_ordinal: &str) -> Option<TargetFilter> {
     let trimmed = after_ordinal.trim();
-    // Strip the trailing timing clause to isolate the qualifier payload (the words
-    // between the ordinal and the timing tail). Uses `str::strip_suffix` on literal
-    // timing tails — not parser dispatch, structural suffix removal.
-    let qualifier = trimmed
-        .strip_suffix(" each turn")
-        .or_else(|| trimmed.strip_suffix(" in a turn"))
-        .or_else(|| trimmed.strip_suffix(" during each opponent's turn"))
-        .or_else(|| trimmed.strip_suffix(" during each opponent\u{2019}s turn"))?;
+    // Isolate the qualifier payload by word-boundary scanning for the position
+    // where `parse_timing_tail` matches to end-of-input; everything before that
+    // position is the qualifier. Returns `None` if no timing tail is present.
+    let qualifier = split_off_timing_tail(trimmed)?;
     parse_spell_qualifier_payload(qualifier.trim())
+}
+
+/// Word-boundary scan: return the text preceding the trailing timing clause,
+/// or `None` if `text` does not end with a `parse_timing_tail`-recognized
+/// clause. Used to isolate the qualifier payload from the timing tail.
+fn split_off_timing_tail(text: &str) -> Option<&str> {
+    let mut idx = 0;
+    loop {
+        if parse_timing_tail(text[idx..].trim_start()).is_ok() {
+            return Some(text[..idx].trim_end());
+        }
+        // allow-noncombinator: word-boundary scan to advance to the next
+        // candidate position — the timing tail is matched by parse_timing_tail.
+        let next = text[idx..].find(' ')?;
+        idx += next + 1;
+    }
 }
 
 /// Parse the qualifier payload between the ordinal and the timing clause.
@@ -5894,22 +5964,15 @@ fn try_parse_nth_draw_you(lower: &str) -> Option<(TriggerMode, TriggerDefinition
     let prefix = "you draw your ";
     let after = strip_after(lower, prefix)?;
     let (n, rest) = parse_ordinal(after)?;
-    if alt((
-        value((), tag::<_, _, OracleError<'_>>("card each turn")),
-        value((), tag("card in a turn")),
-    ))
-    .parse(rest)
-    .is_ok()
-    {
-        let mut def = make_base();
-        def.mode = TriggerMode::Drawn;
-        def.valid_target = Some(TargetFilter::Typed(
-            TypedFilter::default().controller(ControllerRef::You),
-        ));
-        def.constraint = Some(TriggerConstraint::NthDrawThisTurn { n });
-        return Some((TriggerMode::Drawn, def));
-    }
-    None
+    let timing = classify_nth_draw_timing(rest)?;
+    let mut def = make_base();
+    def.mode = TriggerMode::Drawn;
+    def.valid_target = Some(TargetFilter::Typed(
+        TypedFilter::default().controller(ControllerRef::You),
+    ));
+    def.constraint = Some(TriggerConstraint::NthDrawThisTurn { n });
+    def.condition = timing_condition(timing);
+    Some((TriggerMode::Drawn, def))
 }
 
 /// "an opponent draws their <ordinal> card each turn"
@@ -5917,22 +5980,15 @@ fn try_parse_nth_draw_opponent(lower: &str) -> Option<(TriggerMode, TriggerDefin
     let prefix = "an opponent draws their ";
     let after = strip_after(lower, prefix)?;
     let (n, rest) = parse_ordinal(after)?;
-    if alt((
-        value((), tag::<_, _, OracleError<'_>>("card each turn")),
-        value((), tag("card in a turn")),
-    ))
-    .parse(rest)
-    .is_ok()
-    {
-        let mut def = make_base();
-        def.mode = TriggerMode::Drawn;
-        def.valid_target = Some(TargetFilter::Typed(
-            TypedFilter::default().controller(ControllerRef::Opponent),
-        ));
-        def.constraint = Some(TriggerConstraint::NthDrawThisTurn { n });
-        return Some((TriggerMode::Drawn, def));
-    }
-    None
+    let timing = classify_nth_draw_timing(rest)?;
+    let mut def = make_base();
+    def.mode = TriggerMode::Drawn;
+    def.valid_target = Some(TargetFilter::Typed(
+        TypedFilter::default().controller(ControllerRef::Opponent),
+    ));
+    def.constraint = Some(TriggerConstraint::NthDrawThisTurn { n });
+    def.condition = timing_condition(timing);
+    Some((TriggerMode::Drawn, def))
 }
 
 /// "a player draws their <ordinal> card each turn"
@@ -5941,19 +5997,12 @@ fn try_parse_nth_draw_any_player(lower: &str) -> Option<(TriggerMode, TriggerDef
     let prefix = "a player draws their ";
     let after = strip_after(lower, prefix)?;
     let (n, rest) = parse_ordinal(after)?;
-    if alt((
-        value((), tag::<_, _, OracleError<'_>>("card each turn")),
-        value((), tag("card in a turn")),
-    ))
-    .parse(rest)
-    .is_ok()
-    {
-        let mut def = make_base();
-        def.mode = TriggerMode::Drawn;
-        def.constraint = Some(TriggerConstraint::NthDrawThisTurn { n });
-        return Some((TriggerMode::Drawn, def));
-    }
-    None
+    let timing = classify_nth_draw_timing(rest)?;
+    let mut def = make_base();
+    def.mode = TriggerMode::Drawn;
+    def.constraint = Some(TriggerConstraint::NthDrawThisTurn { n });
+    def.condition = timing_condition(timing);
+    Some((TriggerMode::Drawn, def))
 }
 
 /// Parse counter-placement triggers from Oracle text.
@@ -10166,6 +10215,72 @@ mod tests {
             def.constraint,
             Some(TriggerConstraint::NthDrawThisTurn { n: 3 })
         );
+    }
+
+    /// SHAPE test (#413): The Council of Four's draw trigger. "during their
+    /// turn" restricts the trigger to draws on the drawer's own turn, mapped
+    /// to a `DuringPlayersTurn { TriggeringPlayer }` intervening-if. Does not
+    /// substitute for the runtime test in `triggers.rs`.
+    #[test]
+    fn trigger_nth_draw_any_player_during_their_turn() {
+        let def = parse_trigger_line(
+            "Whenever a player draws their second card during their turn, you draw a card.",
+            "The Council of Four",
+        );
+        assert_eq!(def.mode, TriggerMode::Drawn);
+        assert_eq!(def.valid_target, None);
+        assert_eq!(
+            def.constraint,
+            Some(TriggerConstraint::NthDrawThisTurn { n: 2 })
+        );
+        assert_eq!(
+            def.condition,
+            Some(TriggerCondition::DuringPlayersTurn {
+                player: PlayerFilter::TriggeringPlayer,
+            })
+        );
+        assert!(def.execute.is_some());
+    }
+
+    /// SHAPE test (#413): The Council of Four's spell trigger. "casts their
+    /// second spell during their turn" → `NthSpellThisTurn { n: 2 }` constraint
+    /// plus a `DuringPlayersTurn { TriggeringPlayer }` intervening-if.
+    #[test]
+    fn trigger_nth_spell_any_player_during_their_turn() {
+        let def = parse_trigger_line(
+            "Whenever a player casts their second spell during their turn, you create a 2/2 white Knight creature token.",
+            "The Council of Four",
+        );
+        assert_eq!(def.mode, TriggerMode::SpellCast);
+        assert_eq!(def.valid_target, None);
+        assert_eq!(
+            def.constraint,
+            Some(TriggerConstraint::NthSpellThisTurn { n: 2, filter: None })
+        );
+        assert_eq!(
+            def.condition,
+            Some(TriggerCondition::DuringPlayersTurn {
+                player: PlayerFilter::TriggeringPlayer,
+            })
+        );
+        assert!(def.execute.is_some());
+    }
+
+    /// SHAPE test (#413): Ledger Shredder — cluster spot-check. "casts their
+    /// second spell each turn" (no turn restriction) must still parse to the
+    /// unrestricted form with no condition.
+    #[test]
+    fn trigger_nth_spell_any_player_each_turn_no_condition() {
+        let def = parse_trigger_line(
+            "Whenever a player casts their second spell each turn, ~ explores.",
+            "Ledger Shredder",
+        );
+        assert_eq!(def.mode, TriggerMode::SpellCast);
+        assert_eq!(
+            def.constraint,
+            Some(TriggerConstraint::NthSpellThisTurn { n: 2, filter: None })
+        );
+        assert_eq!(def.condition, None);
     }
 
     #[test]
