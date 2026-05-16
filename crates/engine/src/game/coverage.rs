@@ -6175,6 +6175,10 @@ fn audit_card_lines(oracle_text: &str, face: &CardFace) -> Vec<SemanticFinding> 
             StaticMode::CanAttackWithDefender => {
                 effective_lower.contains("as though it didn't have defender")
             }
+            StaticMode::CanActivateAbilitiesAsThoughHaste => {
+                effective_lower.contains("as though those creatures had haste")
+                    || effective_lower.contains("as though that creature had haste")
+            }
             _ => false,
         });
 

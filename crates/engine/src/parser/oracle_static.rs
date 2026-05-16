@@ -1002,6 +1002,14 @@ fn parse_static_line_inner(text: &str, inverted: InvertedAsLongAs) -> Option<Sta
         return Some(def);
     }
 
+    // CR 602.5a: "[You may ]activate abilities of <subject> as though those
+    // creatures had haste" — lifts the summoning-sickness gate on {T}/{Q}
+    // activated abilities for a subject class (Tyvar, Jubilant Brawler).
+    // Returns None when the phrase is absent or the subject is unresolved.
+    if let Some(def) = parse_activate_abilities_as_though_haste(&tp, &text) {
+        return Some(def);
+    }
+
     // --- "Each creature you control [with condition] assigns combat damage equal to its toughness" ---
     // CR 510.1c: Doran-class effects that cause creatures to use toughness for combat damage.
     if let Some(def) = parse_assigns_damage_from_toughness(&lower, &text) {
@@ -6799,6 +6807,64 @@ fn parse_can_attack_despite_defender(
     Some(def)
 }
 
+/// CR 602.5a: parse "[You may ]activate abilities of <subject> as though
+/// those creatures had haste" (or "as though that creature had haste") into a
+/// `StaticMode::CanActivateAbilitiesAsThoughHaste` on `affected`.
+///
+/// This bypasses ONLY the summoning-sickness gate on `{T}`/`{Q}` activated
+/// abilities — it is NOT `AddKeyword(Haste)` (combat attacker validation
+/// CR 508.1a is untouched). Canonical card: Tyvar, Jubilant Brawler.
+///
+/// Uses `scan_split_at_phrase(tag("activate abilities of "))` to locate the
+/// phrase at a word boundary, verifies the tail matches one of the haste
+/// forms, and resolves the subject via `parse_continuous_subject_filter`.
+/// Returns `None` (graceful fall-through) when the phrase is absent, the tail
+/// doesn't match, or the subject cannot be resolved — so unrelated lines like
+/// "can attack as though it had haste" never match here.
+fn parse_activate_abilities_as_though_haste(
+    tp: &TextPair<'_>,
+    description: &str,
+) -> Option<StaticDefinition> {
+    type VE<'a> = OracleError<'a>;
+
+    // Consume an optional leading "you may " so the subject extraction sees
+    // only the "activate abilities of <subject> as though ..." body.
+    let body_tp = nom_tag_tp(tp, "you may ").unwrap_or(*tp);
+
+    let (_prefix, rest) = nom_primitives::scan_split_at_phrase(body_tp.lower, |i| {
+        tag::<_, _, VE>("activate abilities of ").parse(i)
+    })?;
+
+    // `rest` begins at "activate abilities of "; the subject is everything
+    // between that phrase and the trailing haste clause.
+    let after_phrase_offset = body_tp.lower.len() - rest.len() + "activate abilities of ".len();
+    let subject_and_tail_lower = &body_tp.lower[after_phrase_offset..];
+
+    // Locate the haste tail at a word boundary. Either plural ("those
+    // creatures") or singular ("that creature") form is accepted.
+    let (subject_lower, _tail) =
+        nom_primitives::scan_split_at_phrase(subject_and_tail_lower, |i| {
+            alt((
+                tag::<_, _, VE>("as though those creatures had haste"),
+                tag::<_, _, VE>("as though that creature had haste"),
+            ))
+            .parse(i)
+        })?;
+
+    // Subject text = original slice for correct case preservation.
+    let subject_start = after_phrase_offset;
+    let subject_end = after_phrase_offset + subject_lower.len();
+    let subject_original = body_tp.original[subject_start..subject_end].trim();
+
+    let affected = parse_continuous_subject_filter(subject_original)?;
+
+    Some(
+        StaticDefinition::new(StaticMode::CanActivateAbilitiesAsThoughHaste)
+            .affected(affected)
+            .description(description.to_string()),
+    )
+}
+
 /// Parse the predicate of an enchanted/equipped grant, handling:
 /// - Non-standard keyword phrasings: "can attack as though it had haste", "can't be blocked"
 /// - Conditional grants: "gets +1/+1 as long as you control a Wizard"
@@ -10990,6 +11056,51 @@ mod tests {
             parse_static_line("Enchanted creature can attack as though it didn't have defender.")
                 .unwrap();
         assert_eq!(def.mode, StaticMode::CanAttackWithDefender);
+    }
+
+    #[test]
+    fn static_activate_abilities_as_though_haste_tyvar() {
+        // CR 602.5a: Tyvar, Jubilant Brawler's exact Oracle text — plural form.
+        let def = parse_static_line(
+            "You may activate abilities of creatures you control as though those creatures had haste.",
+        )
+        .expect("Tyvar static must parse to a typed static");
+        assert_eq!(def.mode, StaticMode::CanActivateAbilitiesAsThoughHaste);
+        match def.affected {
+            Some(TargetFilter::Typed(ref tf)) => {
+                assert_eq!(tf.controller, Some(ControllerRef::You));
+            }
+            other => panic!("expected Typed(creatures you control), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn static_activate_abilities_as_though_haste_singular() {
+        // CR 602.5a: singular "that creature had haste" form must also match.
+        let def = parse_static_line(
+            "You may activate abilities of artifacts you control as though that creature had haste.",
+        )
+        .expect("singular-form static must parse");
+        assert_eq!(def.mode, StaticMode::CanActivateAbilitiesAsThoughHaste);
+    }
+
+    #[test]
+    fn static_activate_abilities_as_though_haste_no_you_may() {
+        // The leading "you may " is optional — bare phrasing still matches.
+        let def = parse_static_line(
+            "Activate abilities of creatures you control as though those creatures had haste.",
+        )
+        .expect("bare-phrasing static must parse");
+        assert_eq!(def.mode, StaticMode::CanActivateAbilitiesAsThoughHaste);
+    }
+
+    #[test]
+    fn static_activate_abilities_as_though_haste_negative_attack_form() {
+        // CR 702.3b vs CR 602.5a: the combat "can attack as though it had haste"
+        // form must NOT match the activation-haste branch.
+        let def =
+            parse_static_line("Enchanted creature can attack as though it had haste.").unwrap();
+        assert_ne!(def.mode, StaticMode::CanActivateAbilitiesAsThoughHaste);
     }
 
     #[test]

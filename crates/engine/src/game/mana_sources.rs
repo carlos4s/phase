@@ -24,7 +24,6 @@ use crate::types::player::PlayerId;
 use crate::types::zones::Zone;
 use crate::types::TriggerMode;
 
-use super::combat;
 use super::mana_abilities;
 use super::mana_payment;
 use super::restrictions;
@@ -622,8 +621,9 @@ pub fn activatable_mana_options(
     if obj.zone != Zone::Battlefield || obj.controller != controller || obj.tapped {
         return Vec::new();
     }
-    // CR 602.5a + CR 302.6: Creatures with summoning sickness cannot activate tap abilities.
-    if combat::has_summoning_sickness(obj) {
+    // CR 602.5a + CR 302.6: Creatures with summoning sickness cannot activate tap abilities,
+    // unless a CanActivateAbilitiesAsThoughHaste static (Tyvar) lifts the gate.
+    if restrictions::summoning_sick_for_tap_ability(state, obj) {
         return Vec::new();
     }
     scan_mana_abilities(state, obj, object_id, controller, true)
@@ -640,7 +640,7 @@ pub(crate) fn auto_tap_mana_options(
     if obj.zone != Zone::Battlefield || obj.controller != controller || obj.tapped {
         return Vec::new();
     }
-    if combat::has_summoning_sickness(obj) {
+    if restrictions::summoning_sick_for_tap_ability(state, obj) {
         return Vec::new();
     }
     scan_mana_abilities(state, obj, object_id, controller, false)
@@ -663,8 +663,9 @@ pub fn max_mana_yield(state: &GameState, object_id: ObjectId, controller: Player
     if obj.zone != Zone::Battlefield || obj.controller != controller || obj.tapped {
         return 0;
     }
-    // CR 602.5a + CR 302.6: Summoning-sick mana-creatures cannot tap for mana.
-    if combat::has_summoning_sickness(obj) {
+    // CR 602.5a + CR 302.6: Summoning-sick mana-creatures cannot tap for mana,
+    // unless a CanActivateAbilitiesAsThoughHaste static (Tyvar) lifts the gate.
+    if restrictions::summoning_sick_for_tap_ability(state, obj) {
         return 0;
     }
 
@@ -722,8 +723,9 @@ fn land_mana_options(
         return Vec::new();
     }
     // CR 602.5a + CR 302.6: Land-creatures (e.g., Dryad Arbor) have summoning sickness and
-    // cannot activate tap abilities the turn they enter the battlefield.
-    if require_untapped && combat::has_summoning_sickness(obj) {
+    // cannot activate tap abilities the turn they enter the battlefield, unless a
+    // CanActivateAbilitiesAsThoughHaste static (Tyvar) lifts the gate.
+    if require_untapped && restrictions::summoning_sick_for_tap_ability(state, obj) {
         return Vec::new();
     }
 

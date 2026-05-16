@@ -433,7 +433,9 @@ pub fn check_activation_restrictions(
 /// This is a universal rule applied to every activated ability whose cost contains Tap
 /// or Untap, regardless of Oracle text — it is not an `ActivationRestriction` variant
 /// because it is not derivable from printed text. Delegates the summoning-sickness
-/// determination to the canonical `combat::has_summoning_sickness` helper.
+/// determination to `summoning_sick_for_tap_ability`, which consults both the
+/// `combat::has_summoning_sickness` base rule and the
+/// `StaticMode::CanActivateAbilitiesAsThoughHaste` bypass (Tyvar, Jubilant Brawler).
 ///
 /// Non-creature permanents with tap costs (e.g., Sensei's Divining Top) are unaffected:
 /// `combat::has_summoning_sickness` returns false for non-creatures, matching the
@@ -441,14 +443,14 @@ pub fn check_activation_restrictions(
 /// creatures are correctly subject to the rule because the check reads the current
 /// `GameObject::card_types` after layer evaluation.
 pub(crate) fn check_summoning_sickness_for_cost(
-    _state: &crate::types::game_state::GameState,
+    state: &crate::types::game_state::GameState,
     source: &GameObject,
     cost: &AbilityCost,
 ) -> Result<(), EngineError> {
     if !cost_contains_tap_or_untap(cost) {
         return Ok(());
     }
-    if super::combat::has_summoning_sickness(source) {
+    if summoning_sick_for_tap_ability(state, source) {
         return Err(EngineError::ActionNotAllowed(
             "Creature has summoning sickness: activated abilities with {T} or {Q} \
              can't be activated this turn (CR 302.6)"
@@ -456,6 +458,33 @@ pub(crate) fn check_summoning_sickness_for_cost(
         ));
     }
     Ok(())
+}
+
+/// CR 602.5a + CR 702.10c: Does `obj` count as summoning-sick for the purpose of
+/// activating a `{T}`/`{Q}` ability?
+///
+/// Returns `false` when `obj` is not summoning-sick at all. Otherwise it is
+/// summoning-sick under the base rule, and we return `false` only when a
+/// `StaticMode::CanActivateAbilitiesAsThoughHaste` static (Tyvar, Jubilant
+/// Brawler) applies to `obj` — that static lifts the CR 602.5a activation gate
+/// "as though those creatures had haste". This is the single shared predicate
+/// used by both the activation-time check and the mana-source candidate
+/// generation, so the bypass is honored uniformly across both paths.
+pub(crate) fn summoning_sick_for_tap_ability(
+    state: &crate::types::game_state::GameState,
+    obj: &GameObject,
+) -> bool {
+    if !super::combat::has_summoning_sickness(obj) {
+        return false;
+    }
+    !super::static_abilities::check_static_ability(
+        state,
+        StaticMode::CanActivateAbilitiesAsThoughHaste,
+        &super::static_abilities::StaticCheckContext {
+            target_id: Some(obj.id),
+            ..Default::default()
+        },
+    )
 }
 
 /// Recursively inspects an `AbilityCost` for a `Tap` or `Untap` component, descending
