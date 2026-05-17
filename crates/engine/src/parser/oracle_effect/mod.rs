@@ -230,10 +230,9 @@ fn rewrite_cost_paid_object_quantities(effect: &mut Effect) {
         if matches!(
             count,
             QuantityExpr::Ref {
-                qty: QuantityRef::EventContextSourceToughness
-                    | QuantityRef::Toughness {
-                        scope: ObjectScope::Source
-                    }
+                qty: QuantityRef::Toughness {
+                    scope: ObjectScope::Source
+                }
             }
         ) {
             *count = QuantityExpr::Ref {
@@ -7655,10 +7654,17 @@ fn rewrite_quantity_controller(expr: &mut QuantityExpr, from: ControllerRef, to:
     }
 }
 
+/// Recoerce a "its power" reference (parsed by default as
+/// `Power { scope: CostPaidObject }` per CR 608.2k) to a different
+/// `ObjectScope` when surrounding context establishes the binding — e.g. a
+/// damage clause whose subject is the source or first target object.
 fn rewrite_event_source_power_to_object_power(expr: &mut QuantityExpr, scope: ObjectScope) {
     match expr {
         QuantityExpr::Ref {
-            qty: QuantityRef::EventContextSourcePower,
+            qty:
+                QuantityRef::Power {
+                    scope: ObjectScope::CostPaidObject,
+                },
         } => {
             *expr = QuantityExpr::Ref {
                 qty: QuantityRef::Power { scope },
@@ -8338,7 +8344,8 @@ fn try_parse_cast_effect(lower: &str) -> Option<Effect> {
         // the resulting `CmcLE`/`CmcGE`/`CmcEQ` prop onto the typed filter.
         // `parse_mana_value_suffix` is a pure-nom combinator that emits the
         // right `QuantityRef` (EventContextAmount for "that damage",
-        // EventContextSourceManaValue for "that <type>", literal/X otherwise).
+        // ObjectManaValue { CostPaidObject } for "that <type>", literal/X
+        // otherwise).
         // The scan is needed because `parse_type_phrase` runs its internal
         // `parse_mana_value_suffix` call before `parse_zone_suffix`, so for
         // inputs of the form "spell from <zone> with mana value ..." the
@@ -13700,10 +13707,14 @@ fn try_parse_damage_with_remainder<'a>(
                 // Route based on target phrase
                 if target_phrase == "itself" {
                     // When target is "itself", "its power" means the target's power,
-                    // not a triggering event's power. Remap EventContext refs to Target refs.
+                    // not a cost-paid / trigger-referenced object's power. Remap the
+                    // CostPaidObject-scoped power ref to a Target ref.
                     let qty = match &qty {
                         QuantityExpr::Ref {
-                            qty: QuantityRef::EventContextSourcePower,
+                            qty:
+                                QuantityRef::Power {
+                                    scope: crate::types::ability::ObjectScope::CostPaidObject,
+                                },
                         } => QuantityExpr::Ref {
                             qty: QuantityRef::Power {
                                 scope: crate::types::ability::ObjectScope::Target,
@@ -19624,11 +19635,13 @@ mod tests {
                             FilterProp::Cmc {
                                 comparator: Comparator::LE,
                                 value: QuantityExpr::Ref {
-                                    qty: QuantityRef::EventContextSourceManaValue
+                                    qty: QuantityRef::ObjectManaValue {
+                                        scope: crate::types::ability::ObjectScope::CostPaidObject
+                                    }
                                 }
                             }
                         )),
-                        "Should have CmcLE with EventContextSourceManaValue, got {:?}",
+                        "Should have CmcLE with ObjectManaValue {{ CostPaidObject }}, got {:?}",
                         properties
                     );
                     assert!(
@@ -20886,13 +20899,15 @@ mod tests {
                 Effect::PayCost {
                     cost: PaymentCost::Life {
                         amount: crate::types::ability::QuantityExpr::Ref {
-                            qty: crate::types::ability::QuantityRef::EventContextSourcePower,
+                            qty: crate::types::ability::QuantityRef::Power {
+                                scope: crate::types::ability::ObjectScope::CostPaidObject,
+                            },
                         },
                     },
                     ..
                 }
             ),
-            "expected PayCost(Life = EventContextSourcePower), got {e:?}"
+            "expected PayCost(Life = Power {{ CostPaidObject }}), got {e:?}"
         );
     }
 
@@ -24080,7 +24095,9 @@ mod tests {
             FilterProp::Cmc {
                 comparator: Comparator::LE,
                 value: QuantityExpr::Ref {
-                    qty: QuantityRef::EventContextSourceManaValue
+                    qty: QuantityRef::ObjectManaValue {
+                        scope: crate::types::ability::ObjectScope::CostPaidObject
+                    }
                 }
             }
         )));
@@ -31593,11 +31610,11 @@ mod tests {
         }
     }
 
-    /// CR 202.3: "with mana value less than or equal to that creature" —
-    /// preserves the legacy `EventContextSourceManaValue` semantic for the
-    /// type-word arm; only "that damage" routes to `EventContextAmount`.
-    /// Regression test for the `try_dynamic` factoring in
-    /// `parse_mana_value_suffix`.
+    /// CR 202.3 + CR 608.2k: "with mana value less than or equal to that
+    /// creature" — preserves the `ObjectManaValue { CostPaidObject }`
+    /// semantic for the type-word arm; only "that damage" routes to
+    /// `EventContextAmount`. Regression test for the `try_dynamic` factoring
+    /// in `parse_mana_value_suffix`.
     #[test]
     fn cast_from_zone_mana_value_that_creature_keeps_source_mv() {
         let effect = super::parse_effect(
@@ -31616,14 +31633,16 @@ mod tests {
                 FilterProp::Cmc {
                     comparator: Comparator::LE,
                     value: crate::types::ability::QuantityExpr::Ref {
-                        qty: crate::types::ability::QuantityRef::EventContextSourceManaValue,
+                        qty: crate::types::ability::QuantityRef::ObjectManaValue {
+                            scope: crate::types::ability::ObjectScope::CostPaidObject,
+                        },
                     },
                 }
             )
         });
         assert!(
             has_source_mv,
-            "expected EventContextSourceManaValue for type-word arm, got {:?}",
+            "expected ObjectManaValue {{ CostPaidObject }} for type-word arm, got {:?}",
             target.properties
         );
     }

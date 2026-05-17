@@ -1463,8 +1463,8 @@ pub(super) fn check_additional_cost_or_pay_with_distribute(
     // mana cost"). The mana cost was already overridden to zero in
     // `casting::cast_spell` via `alt_cost_from_exile`; here we route the stored
     // `AbilityCost` through `pay_additional_cost` so dynamic-quantity refs
-    // (`EventContextSourceManaValue`, etc.) resolve at cast time against the
-    // spell's mana value. Single-authority — `AbilityCost::PayLife` and friends
+    // (`ObjectManaValue { CostPaidObject }`, etc.) resolve at cast time
+    // against the spell's mana value. Single-authority — `AbilityCost::PayLife` and friends
     // are paid through the same pipeline as flashback's non-mana cost.
     let alt_ability_cost = state.objects.get(&object_id).and_then(|obj| {
         if obj.zone == Zone::Exile {

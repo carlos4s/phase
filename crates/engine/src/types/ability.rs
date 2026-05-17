@@ -2377,8 +2377,12 @@ pub enum ObjectScope {
     Recipient,
     /// CR 603.2: The object referenced by the current trigger event.
     EventSource,
-    /// CR 117.1 + CR 400.7j + CR 608.2k: The object paid as a cost for the
-    /// resolving spell or ability, read from `ResolvedAbility.cost_paid_object`.
+    /// CR 608.2k: The specific untargeted object previously referred to by
+    /// this ability's cost OR trigger condition. Resolved (first match wins)
+    /// via `ResolvedAbility.cost_paid_object` → trigger-event source →
+    /// `effect_context_object`. Subsumes the former `EventContextSource*`
+    /// trio (CR 117.1 + CR 400.7j cost referent and CR 603.2 trigger
+    /// referent are the two enumerated members of CR 608.2k's single clause).
     CostPaidObject,
 }
 
@@ -2521,16 +2525,20 @@ pub enum QuantityRef {
     /// CR 208.1 + CR 113.6: Current power of an object, scoped via ObjectScope
     /// (Round Π-6). Replaces the `SelfPower` / `TargetPower` sibling pair.
     /// `Source` reads the source object's power (post-layer); `Target` reads
-    /// the first object target's power.
+    /// the first object target's power. `CostPaidObject` subsumes the former
+    /// `EventContextSourcePower` (CR 608.2k: cost OR trigger-condition
+    /// referent).
     Power { scope: ObjectScope },
     /// CR 208.1 + CR 113.6: Current toughness of an object, scoped via
     /// ObjectScope (Round Π-6). Mirrors `Power`. Replaces the `SelfToughness`
-    /// variant.
+    /// variant. `CostPaidObject` subsumes the former
+    /// `EventContextSourceToughness` (CR 608.2k).
     Toughness { scope: ObjectScope },
     /// CR 202.3: Mana value of an object, scoped via ObjectScope.
     /// `Source` is the resolving ability's source; `Target` is the first object
     /// target. Used by source/target-relative mana-value filters such as
-    /// "with the same mana value as that spell".
+    /// "with the same mana value as that spell". `CostPaidObject` subsumes the
+    /// former `EventContextSourceManaValue` (CR 608.2k).
     ObjectManaValue { scope: ObjectScope },
     /// CR 105.1 + CR 105.2: Number of colors of an object, scoped via
     /// ObjectScope. Counts the object's current W/U/B/R/G color set; colorless
@@ -2557,10 +2565,10 @@ pub enum QuantityRef {
     /// as `source` to `resolve_quantity`. For an alt-cost cast (CR 118.9) this
     /// is the spell-being-cast, so "pay life equal to its mana value" reads
     /// the right value at cost-payment time. Distinct from
-    /// `EventContextSourceManaValue` (which reads the triggering source via
-    /// `current_trigger_event`); that ref returns 0 outside trigger
-    /// resolution, whereas this one is correct any time the resolver has a
-    /// `source_id` (cost payment, ability resolution, etc.).
+    /// `ObjectManaValue { scope: CostPaidObject }` (which reads the
+    /// cost-paid / trigger-referenced object per CR 608.2k); that ref returns
+    /// 0 outside cost/trigger resolution, whereas this one is correct any time
+    /// the resolver has a `source_id` (cost payment, ability resolution, etc.).
     SelfManaValue,
     /// CR 107.3e: Aggregate query (max/min/sum) over a property of battlefield objects.
     Aggregate {
@@ -2637,14 +2645,6 @@ pub enum QuantityRef {
     /// CR 603.7c: Numeric value from the triggering event.
     /// Extracts amount/count from DamageDealt, LifeChanged, CardsDrawn, CounterAdded, etc.
     EventContextAmount,
-    /// CR 603.7c: Power of the source object from the triggering event.
-    /// Falls back to LKI cache for dies/leaves-battlefield triggers.
-    EventContextSourcePower,
-    /// CR 603.7c: Toughness of the source object from the triggering event.
-    /// Falls back to LKI cache for dies/leaves-battlefield triggers.
-    EventContextSourceToughness,
-    /// CR 603.7c: Mana value of the source object from the triggering event.
-    EventContextSourceManaValue,
     /// CR 603.10a + CR 603.6e: Count of attachments of a given kind that were attached
     /// to the leaving-battlefield object at the moment it left, optionally filtered by
     /// attachment controller. Resolved via the triggering `ZoneChangeRecord`'s

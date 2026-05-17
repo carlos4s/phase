@@ -41,7 +41,10 @@ expression: "&ir"
                 "amount": {
                   "type": "Ref",
                   "qty": {
-                    "type": "EventContextSourceManaValue"
+                    "type": "ObjectManaValue",
+                    "scope": {
+                      "type": "CostPaidObject"
+                    }
                   }
                 },
                 "target": {

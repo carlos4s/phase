@@ -703,8 +703,18 @@ pub(super) fn strip_property_conditional(text: &str) -> (Option<AbilityCondition
     let tp = TextPair::new(text, &lower);
 
     for (property, qty_ref) in &[
-        ("power", QuantityRef::EventContextSourcePower),
-        ("toughness", QuantityRef::EventContextSourceToughness),
+        (
+            "power",
+            QuantityRef::Power {
+                scope: ObjectScope::CostPaidObject,
+            },
+        ),
+        (
+            "toughness",
+            QuantityRef::Toughness {
+                scope: ObjectScope::CostPaidObject,
+            },
+        ),
     ] {
         let pattern = format!(" if its {property} is ");
         if let Some((before, after)) = tp.rsplit_around(&pattern) {

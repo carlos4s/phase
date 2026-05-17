@@ -810,21 +810,21 @@ fn fmt_quantity_ref(qty: &QuantityRef) -> String {
             ObjectScope::Target => "target's power".into(),
             ObjectScope::Recipient => "recipient's power".into(),
             ObjectScope::EventSource => "event source's power".into(),
-            ObjectScope::CostPaidObject => "cost-paid object's power".into(),
+            ObjectScope::CostPaidObject => "referenced object's power".into(),
         },
         QuantityRef::Toughness { scope } => match scope {
             ObjectScope::Source => "self toughness".into(),
             ObjectScope::Target => "target's toughness".into(),
             ObjectScope::Recipient => "recipient's toughness".into(),
             ObjectScope::EventSource => "event source's toughness".into(),
-            ObjectScope::CostPaidObject => "cost-paid object's toughness".into(),
+            ObjectScope::CostPaidObject => "referenced object's toughness".into(),
         },
         QuantityRef::ObjectManaValue { scope } => match scope {
             ObjectScope::Source => "self mana value".into(),
             ObjectScope::Target => "target's mana value".into(),
             ObjectScope::Recipient => "recipient's mana value".into(),
             ObjectScope::EventSource => "event source's mana value".into(),
-            ObjectScope::CostPaidObject => "cost-paid object's mana value".into(),
+            ObjectScope::CostPaidObject => "referenced object's mana value".into(),
         },
         QuantityRef::ObjectColorCount { scope } => match scope {
             ObjectScope::Source => "self colors".into(),
@@ -926,9 +926,6 @@ fn fmt_quantity_ref(qty: &QuantityRef) -> String {
             format!("life lost this turn ({})", fmt_player_scope(*player))
         }
         QuantityRef::EventContextAmount => "event amount".into(),
-        QuantityRef::EventContextSourcePower => "source's power".into(),
-        QuantityRef::EventContextSourceToughness => "source's toughness".into(),
-        QuantityRef::EventContextSourceManaValue => "source's mana value".into(),
         QuantityRef::SpellsCastThisTurn { scope, filter } => match filter {
             Some(filter) => format!(
                 "{} spells cast this turn ({})",
@@ -4248,7 +4245,7 @@ fn collect_ability_cost_missing_parts(cost: &AbilityCost, missing: &mut Vec<Stri
 pub struct ResolverFeature {
     /// Broad category: "structural", "condition", "quantity_ref"
     pub category: String,
-    /// Specific feature tag, e.g. "else_ability", "QuantityCheck", "EventContextSourcePower"
+    /// Specific feature tag, e.g. "else_ability", "QuantityCheck", "CostPaidObjectPower"
     pub feature: String,
 }
 
@@ -4907,9 +4904,6 @@ fn quantity_ref_feature(qref: &QuantityRef) -> (&'static str, FeatureSupport) {
         QuantityRef::ExiledFromHandThisResolution => ("ExiledFromHandThisResolution", Handled),
         QuantityRef::LifeLostThisTurn { .. } => ("LifeLostThisTurn", Handled),
         QuantityRef::EventContextAmount => ("EventContextAmount", Handled),
-        QuantityRef::EventContextSourcePower => ("EventContextSourcePower", Handled),
-        QuantityRef::EventContextSourceToughness => ("EventContextSourceToughness", Handled),
-        QuantityRef::EventContextSourceManaValue => ("EventContextSourceManaValue", Handled),
         QuantityRef::SpellsCastThisTurn { .. } => ("SpellsCastThisTurn", Handled),
         QuantityRef::EnteredThisTurn { .. } => ("EnteredThisTurn", Handled),
         QuantityRef::SacrificedThisTurn { .. } => ("SacrificedThisTurn", Handled),

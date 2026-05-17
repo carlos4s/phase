@@ -7163,10 +7163,12 @@ mod tests {
                     matches!(
                         amount,
                         QuantityExpr::Ref {
-                            qty: QuantityRef::EventContextSourceManaValue
+                            qty: QuantityRef::ObjectManaValue {
+                                scope: crate::types::ability::ObjectScope::CostPaidObject
+                            }
                         }
                     ),
-                    "Expected EventContextSourceManaValue, got {amount:?}"
+                    "Expected ObjectManaValue {{ CostPaidObject }}, got {amount:?}"
                 );
             }
             other => panic!("Expected LoseLife, got {other:?}"),
@@ -7208,10 +7210,12 @@ mod tests {
                     matches!(
                         amount,
                         QuantityExpr::Ref {
-                            qty: QuantityRef::EventContextSourcePower
+                            qty: QuantityRef::Power {
+                                scope: crate::types::ability::ObjectScope::CostPaidObject
+                            }
                         }
                     ),
-                    "Expected EventContextSourcePower, got {amount:?}"
+                    "Expected Power {{ CostPaidObject }}, got {amount:?}"
                 );
             }
             other => panic!("Expected GainLife, got {other:?}"),

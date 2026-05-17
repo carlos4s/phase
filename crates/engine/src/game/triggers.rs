@@ -4302,8 +4302,9 @@ pub mod tests {
     /// The ETB trigger (CR 603.6a) fires for the entering creature; the trigger
     /// body's X is defined by the ability text (CR 107.3) as the entering
     /// creature's power, which the parser lowers to
-    /// `QuantityRef::EventContextSourcePower`. At resolution the event's source
-    /// is the entering creature, so that variant must read THAT creature's
+    /// `QuantityRef::Power { scope: ObjectScope::CostPaidObject }`. At
+    /// resolution the event's source is the entering creature; the resolver's
+    /// slot-2 (trigger-event source) fallback must read THAT creature's
     /// power, not default to 0. Covers the class of ETB triggers that scale
     /// a self-counter by the entering object's power/toughness (~20 cards:
     /// Hamletback Goliath, Kresh the Bloodbraided, Nantuko Mentor, ...).
@@ -4333,7 +4334,9 @@ pub mod tests {
                         Effect::PutCounter {
                             counter_type: crate::types::counter::CounterType::Plus1Plus1,
                             count: QuantityExpr::Ref {
-                                qty: QuantityRef::EventContextSourcePower,
+                                qty: QuantityRef::Power {
+                                    scope: crate::types::ability::ObjectScope::CostPaidObject,
+                                },
                             },
                             target: TargetFilter::SelfRef,
                         },
@@ -4384,7 +4387,8 @@ pub mod tests {
             .unwrap_or(0);
         assert_eq!(
             p1p1, 4,
-            "EventContextSourcePower must resolve to the entering creature's power (4), \
+            "Power {{ CostPaidObject }} must resolve via the trigger-event-source \
+             fallback to the entering creature's power (4), \
              yielding 4 +1/+1 counters on the source (got {p1p1})"
         );
     }

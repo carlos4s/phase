@@ -4380,7 +4380,9 @@ mod tests {
         let draw = ResolvedAbility::new(
             Effect::Draw {
                 count: QuantityExpr::Ref {
-                    qty: QuantityRef::EventContextSourcePower,
+                    qty: QuantityRef::Power {
+                        scope: crate::types::ability::ObjectScope::CostPaidObject,
+                    },
                 },
                 target: TargetFilter::Controller,
             },
@@ -4391,7 +4393,9 @@ mod tests {
         let gain_life = ResolvedAbility::new(
             Effect::GainLife {
                 amount: QuantityExpr::Ref {
-                    qty: QuantityRef::EventContextSourcePower,
+                    qty: QuantityRef::Power {
+                        scope: crate::types::ability::ObjectScope::CostPaidObject,
+                    },
                 },
                 player: GainLifePlayer::Controller,
             },
@@ -4497,7 +4501,9 @@ mod tests {
         let lose_life = ResolvedAbility::new(
             Effect::LoseLife {
                 amount: QuantityExpr::Ref {
-                    qty: QuantityRef::EventContextSourceManaValue,
+                    qty: QuantityRef::ObjectManaValue {
+                        scope: crate::types::ability::ObjectScope::CostPaidObject,
+                    },
                 },
                 target: Some(TargetFilter::Controller),
             },
@@ -4541,7 +4547,8 @@ mod tests {
     /// eligible objects raises `WaitingFor::EffectZoneChoice`. After the player
     /// picks a card, the `EffectZoneChoice` handler stamps parent-referent
     /// context onto the pending continuation so a later instruction (here a
-    /// `LoseLife` rider reading `QuantityRef::EventContextSourceManaValue`) sees
+    /// `LoseLife` rider reading
+    /// `QuantityRef::ObjectManaValue { scope: CostPaidObject }`) sees
     /// the *chosen* object's mana value — not the first eligible card, and not
     /// a fallback of 0. This covers the `EffectZoneChoice` continuation stamp
     /// site, the sibling path to `change_zone_then_lose_life_reads_moved_object_mana_value`.
@@ -4577,7 +4584,9 @@ mod tests {
         let lose_life = ResolvedAbility::new(
             Effect::LoseLife {
                 amount: QuantityExpr::Ref {
-                    qty: QuantityRef::EventContextSourceManaValue,
+                    qty: QuantityRef::ObjectManaValue {
+                        scope: crate::types::ability::ObjectScope::CostPaidObject,
+                    },
                 },
                 target: Some(TargetFilter::Controller),
             },

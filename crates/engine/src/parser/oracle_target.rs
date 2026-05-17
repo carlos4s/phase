@@ -2568,8 +2568,9 @@ pub(crate) fn parse_mana_value_suffix(
 
     // CR 202.3 + CR 120.3: Dynamic comparisons referencing the triggering event.
     // "that damage" → `EventContextAmount` (damage amount captured at trigger).
-    // "that <type>" (e.g. "that creature", "that spell") → `EventContextSourceManaValue`
-    // (mana value of the triggering source object).
+    // "that <type>" (e.g. "that creature", "that spell") →
+    // `ObjectManaValue { CostPaidObject }` (mana value of the triggering /
+    // cost-paid source object per CR 608.2k).
     // Staged checks: first detect "less than" / "greater than", then check for "or equal to".
     type Vbe<'a> = OracleError<'a>;
     let try_dynamic = |rest: &str, is_le: bool| -> Option<(FilterProp, usize)> {
@@ -2597,7 +2598,12 @@ pub(crate) fn parse_mana_value_suffix(
                 // single word terminating at punctuation/space (e.g., "creature",
                 // "spell"). Uses the source object's mana value.
                 let after = a2.find([',', '.', ' ']).map_or(a2, |i| &a2[i..]);
-                (QuantityRef::EventContextSourceManaValue, after)
+                (
+                    QuantityRef::ObjectManaValue {
+                        scope: ObjectScope::CostPaidObject,
+                    },
+                    after,
+                )
             }
         } else if let Some((rest, qty)) =
             nom_quantity::parse_quantity_ref
@@ -2774,7 +2780,9 @@ fn parse_relative_mana_value_suffix(text: &str) -> Option<(FilterProp, &str)> {
     } else {
         (
             QuantityExpr::Ref {
-                qty: QuantityRef::EventContextSourceManaValue,
+                qty: QuantityRef::ObjectManaValue {
+                    scope: ObjectScope::CostPaidObject,
+                },
             },
             rest,
         )
@@ -2878,7 +2886,9 @@ fn parse_mana_value_reference_qty(
             )),
         ),
         value(
-            QuantityRef::EventContextSourceManaValue,
+            QuantityRef::ObjectManaValue {
+                scope: ObjectScope::CostPaidObject,
+            },
             alt((
                 tag::<_, _, Vbe>("that spell's mana value"),
                 tag("the creature that died"),
@@ -5151,7 +5161,9 @@ mod tests {
             TargetFilter::Typed(TypedFilter::creature().properties(vec![FilterProp::Cmc {
                 comparator: Comparator::LT,
                 value: QuantityExpr::Ref {
-                    qty: QuantityRef::EventContextSourceManaValue,
+                    qty: QuantityRef::ObjectManaValue {
+                        scope: ObjectScope::CostPaidObject,
+                    },
                 },
             }]))
         );
@@ -7061,7 +7073,9 @@ mod tests {
             FilterProp::Cmc {
                 comparator: Comparator::LE,
                 value: QuantityExpr::Ref {
-                    qty: QuantityRef::EventContextSourceManaValue
+                    qty: QuantityRef::ObjectManaValue {
+                        scope: ObjectScope::CostPaidObject
+                    }
                 }
             }
         )));

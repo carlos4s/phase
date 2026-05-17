@@ -6549,7 +6549,7 @@ pub(crate) fn parse_post_spell_modifier(modifier: &str) -> Option<TargetFilter> 
     // CR 202.3: "with mana value N or less" / "with mana value N or greater" /
     // "with mana value N" — numeric CMC comparator. Delegates to the shared
     // `parse_mana_value_suffix` combinator so the full set of comparator forms
-    // (static N, X-variable, EventContextSourceManaValue) is supported here for
+    // (static N, X-variable, ObjectManaValue { CostPaidObject }) is supported here for
     // free alongside the search filter and target filter call sites.
     if let Some((prop, consumed)) =
         super::oracle_target::parse_mana_value_suffix(modifier, &mut ParseContext::default())
