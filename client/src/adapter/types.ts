@@ -1301,6 +1301,14 @@ export interface GameState {
   combat: CombatState | null;
   waiting_for: WaitingFor;
   has_pending_cast: boolean;
+  /**
+   * CR 601.2f: The locked-in pending cast (cost, ability, object) while the
+   * caster is mid-cast. Present during ManaPayment / cost-choice WaitingFor
+   * states; the `cost` field is the engine-resolved total (base + Strive +
+   * RaiseCost statics + commander tax - reductions). Absent when no cast is
+   * in progress.
+   */
+  pending_cast?: PendingCast;
   lands_played_this_turn: number;
   max_lands_per_turn: number;
   priority_pass_count: number;
