@@ -2220,6 +2220,13 @@ fn fmt_modification(m: &crate::types::ability::ContinuousModification) -> String
         ContinuousModification::RemoveSubtype { subtype } => {
             format!("remove subtype {subtype}")
         }
+        ContinuousModification::SetCardTypes { core_types } => {
+            let types: Vec<_> = core_types.iter().map(fmt_core_type).collect();
+            format!("set card types {}", types.join("/"))
+        }
+        ContinuousModification::RemoveAllSubtypes { set } => {
+            format!("remove all {set:?} subtypes")
+        }
         ContinuousModification::SetDynamicPower { .. } => "dynamic power".into(),
         ContinuousModification::SetDynamicToughness { .. } => "dynamic toughness".into(),
         ContinuousModification::SetPowerDynamic { .. } => "set base power dynamic".into(),

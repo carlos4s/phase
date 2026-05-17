@@ -6,7 +6,7 @@ use serde::ser::SerializeStructVariant;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
-use super::card_type::{CardType, CoreType, Supertype};
+use super::card_type::{CardType, CoreType, SubtypeSet, Supertype};
 use super::counter::{CounterMatch, CounterType};
 use super::events::BendingType;
 use super::game_state::{
@@ -9393,6 +9393,19 @@ pub enum ContinuousModification {
     },
     RemoveSubtype {
         subtype: String,
+    },
+    /// CR 205.1a + CR 613.1d: Replace the object's entire core card-type set
+    /// (Layer 4). Models "becomes a [type] ... and loses all other card types"
+    /// — set-replacement semantics, atomic, so the parser need not enumerate
+    /// the full `CoreType` space to express "becomes exactly artifact creature".
+    SetCardTypes {
+        core_types: Vec<CoreType>,
+    },
+    /// CR 205.1a + CR 613.1d: Remove every subtype belonging to a given subtype
+    /// set (Layer 4). "loses all other creature types" emits
+    /// `RemoveAllSubtypes { set: SubtypeSet::Creature }`.
+    RemoveAllSubtypes {
+        set: SubtypeSet,
     },
     /// Set power to a dynamically computed value (CDA, layer 7a).
     SetDynamicPower {
