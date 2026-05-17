@@ -29,6 +29,7 @@ mod giada_angel_counters;
 mod gluntch_choose_player_chain;
 mod gran_gran_integration;
 mod harrow_regression;
+mod hunters_insight_combat_draw;
 mod integration_adventure;
 mod integration_bending;
 mod integration_landfall;
