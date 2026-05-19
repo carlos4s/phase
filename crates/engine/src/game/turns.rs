@@ -443,6 +443,13 @@ pub fn start_next_turn(state: &mut GameState, events: &mut Vec<GameEvent>) {
     state.activated_abilities_this_turn.clear();
     // CR 602.5b: "Activate only once each turn" crew restriction resets each turn.
     state.crew_activated_this_turn.clear();
+    // CR 606.3: The "loyalty ability once per turn" limit is a property of the
+    // permanent ("no player has previously activated a loyalty ability of that
+    // permanent that turn"), not its controller. It resets at the start of every
+    // turn for every planeswalker regardless of who controls it.
+    for obj in state.objects.iter_mut().map(|(_, v)| v) {
+        obj.loyalty_activated_this_turn = false;
+    }
     // CR 514 + CR 603.4: Per-ability per-turn resolution counter resets at turn
     // boundary alongside other "this turn" trackers (mirrors the cleanup of
     // `trigger_fire_counts_this_turn`).
@@ -513,17 +520,11 @@ pub fn start_next_turn(state: &mut GameState, events: &mut Vec<GameEvent>) {
     // CR 302.6: At the start of a player's turn, any permanent they have
     // controlled continuously since before this moment has now been under
     // their control "since that player's most recent turn began" — clear
-    // summoning sickness. CR 606.3: Loyalty abilities may be activated only
-    // once per turn per permanent — reset the per-turn flag in the same pass.
+    // summoning sickness.
     let active = state.active_player;
     for obj in state.objects.iter_mut().map(|(_, v)| v) {
-        if obj.controller == active {
-            if obj.summoning_sick {
-                obj.summoning_sick = false;
-            }
-            if obj.loyalty_activated_this_turn {
-                obj.loyalty_activated_this_turn = false;
-            }
+        if obj.controller == active && obj.summoning_sick {
+            obj.summoning_sick = false;
         }
     }
 

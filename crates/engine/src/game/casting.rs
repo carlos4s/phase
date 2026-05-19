@@ -19957,12 +19957,18 @@ mod tests {
             assert!(!can_activate_ability_now(&state, PlayerId(0), pw, 0));
             assert!(!can_activate_ability_now(&state, PlayerId(0), pw, 1));
 
-            // Simulate turn-start reset (turns.rs:260-261 does this for active player).
-            state
-                .objects
-                .get_mut(&pw)
-                .unwrap()
-                .loyalty_activated_this_turn = false;
+            // Drive the real turn-start reset: `start_next_turn` clears the
+            // per-permanent loyalty flag globally (CR 606.3). Restore the
+            // controller's main-phase priority context so the dispatch
+            // predicate can re-evaluate.
+            let mut events = Vec::new();
+            crate::game::turns::start_next_turn(&mut state, &mut events);
+            state.phase = Phase::PreCombatMain;
+            state.active_player = PlayerId(0);
+            state.priority_player = PlayerId(0);
+            state.waiting_for = WaitingFor::Priority {
+                player: PlayerId(0),
+            };
 
             assert!(
                 can_activate_ability_now(&state, PlayerId(0), pw, 0),

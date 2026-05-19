@@ -447,17 +447,11 @@ mod tests {
         handle_activate_loyalty(&mut state, PlayerId(0), pw, 0, &mut events).unwrap();
         assert!(state.objects[&pw].loyalty_activated_this_turn);
 
-        // Simulate turn start reset (what turns.rs start_next_turn should do)
+        // CR 606.3: the per-permanent loyalty limit resets at the start of every
+        // turn for every planeswalker regardless of controller. The reset is
+        // global, so it fires on the very first `start_next_turn` (which makes
+        // PlayerId(1) the active player) — not two turns later.
         crate::game::turns::start_next_turn(&mut state, &mut events);
-
-        // After turn starts, the flag should be reset for active player's permanents
-        // Player 0's pw should reset when player 0's turn starts again
-        // After one start_next_turn, active player is PlayerId(1), so p0's pw won't reset yet
-        // After another start_next_turn, active player is PlayerId(0), so p0's pw resets
-        crate::game::turns::start_next_turn(&mut state, &mut events);
-        // Now active is p0, turn start should have reset loyalty_activated_this_turn
-        // But we need to implement the reset in start_next_turn!
-        // This test will FAIL until we add the reset logic.
         assert!(!state.objects[&pw].loyalty_activated_this_turn);
     }
 
@@ -666,5 +660,168 @@ mod tests {
                 "loyalty cost must be stored for deferred payment"
             );
         }
+    }
+
+    /// CR 606.3 regression for issue #500: a loyalty ability is activatable
+    /// after a control change when the *prior owner* activated a loyalty ability
+    /// of the same planeswalker on a *prior* turn. This mirrors the issue
+    /// scenario exactly: the planeswalker is owned & controlled by P1 (who
+    /// activates it on P1's turn); then on P0's turn P0 gains control. With the
+    /// old controller-scoped reset, P0's turn start skips the still-P1-controlled
+    /// planeswalker and the stale flag blocks P0's activation. The global reset
+    /// clears it for every planeswalker regardless of controller.
+    #[test]
+    fn loyalty_activatable_after_control_change_following_owners_prior_turn_activation() {
+        let mut state = setup();
+        let pw = create_planeswalker(
+            &mut state,
+            PlayerId(1),
+            "Jace",
+            3,
+            vec![make_loyalty_ability(
+                1,
+                Effect::Draw {
+                    count: QuantityExpr::Fixed { value: 1 },
+                    target: TargetFilter::Controller,
+                },
+            )],
+        );
+
+        // setup() is P0's turn — advance to P1's turn so the owner can activate.
+        let mut events = Vec::new();
+        crate::game::turns::start_next_turn(&mut state, &mut events);
+        assert_eq!(state.active_player, PlayerId(1));
+        state.phase = Phase::PreCombatMain;
+        state.priority_player = PlayerId(1);
+
+        // P1 (owner & controller) activates the loyalty ability on P1's turn.
+        handle_activate_loyalty(&mut state, PlayerId(1), pw, 0, &mut events).unwrap();
+        assert!(state.objects[&pw].loyalty_activated_this_turn);
+        state.stack.clear();
+
+        // P1's turn ends, P0's turn begins. The planeswalker is STILL controlled
+        // by P1 at this turn start (the gain-control effect has not resolved).
+        crate::game::turns::start_next_turn(&mut state, &mut events);
+        assert_eq!(state.active_player, PlayerId(0));
+
+        // A gain-control effect resolves this turn, handing the planeswalker to
+        // the current active player (P0).
+        let active = state.active_player;
+        state.objects.get_mut(&pw).unwrap().controller = active;
+        state.phase = Phase::PreCombatMain;
+        state.priority_player = active;
+        state.stack.clear();
+
+        assert!(
+            can_activate_loyalty_ability(&state, pw, active, 0),
+            "new controller may activate after the prior owner's prior-turn activation"
+        );
+        let result = handle_activate_loyalty(&mut state, active, pw, 0, &mut events);
+        assert!(result.is_ok());
+    }
+
+    /// CR 602.5b / CR 606.3: the once-per-turn limit is a property of the
+    /// permanent and persists across a control change *within the same turn*.
+    #[test]
+    fn loyalty_limit_persists_across_same_turn_control_change() {
+        let mut state = setup();
+        let pw = create_planeswalker(
+            &mut state,
+            PlayerId(0),
+            "Jace",
+            3,
+            vec![make_loyalty_ability(
+                1,
+                Effect::Draw {
+                    count: QuantityExpr::Fixed { value: 1 },
+                    target: TargetFilter::Controller,
+                },
+            )],
+        );
+
+        let mut events = Vec::new();
+        handle_activate_loyalty(&mut state, PlayerId(0), pw, 0, &mut events).unwrap();
+        state.stack.clear();
+
+        // Control changes to P1 in the same turn.
+        state.objects.get_mut(&pw).unwrap().controller = PlayerId(1);
+
+        assert!(
+            !can_activate_loyalty_ability(&state, pw, PlayerId(1), 0),
+            "the per-permanent limit survives a same-turn control change"
+        );
+    }
+
+    /// The latent always-present bug: a planeswalker controlled by a
+    /// non-active player must still have its loyalty flag reset at turn start.
+    #[test]
+    fn loyalty_limit_resets_globally_for_non_active_players_planeswalker() {
+        let mut state = setup();
+        // It is P0's turn; the planeswalker is controlled by P1.
+        let pw = create_planeswalker(
+            &mut state,
+            PlayerId(1),
+            "Jace",
+            3,
+            vec![make_loyalty_ability(
+                1,
+                Effect::Draw {
+                    count: QuantityExpr::Fixed { value: 1 },
+                    target: TargetFilter::Controller,
+                },
+            )],
+        );
+        // Simulate activation on P1's previous turn.
+        state
+            .objects
+            .get_mut(&pw)
+            .unwrap()
+            .loyalty_activated_this_turn = true;
+
+        let mut events = Vec::new();
+        crate::game::turns::start_next_turn(&mut state, &mut events);
+
+        assert!(
+            !state.objects[&pw].loyalty_activated_this_turn,
+            "the loyalty limit resets globally, not just for the active player's permanents"
+        );
+    }
+
+    /// CR 606.3: activating any loyalty ability locks out *all* loyalty
+    /// abilities of the same planeswalker (per-permanent, not per-ability).
+    #[test]
+    fn activating_one_loyalty_ability_locks_all_on_same_planeswalker() {
+        let mut state = setup();
+        let pw = create_planeswalker(
+            &mut state,
+            PlayerId(0),
+            "Jace",
+            5,
+            vec![
+                make_loyalty_ability(
+                    1,
+                    Effect::Draw {
+                        count: QuantityExpr::Fixed { value: 1 },
+                        target: TargetFilter::Controller,
+                    },
+                ),
+                make_loyalty_ability(
+                    -2,
+                    Effect::Draw {
+                        count: QuantityExpr::Fixed { value: 2 },
+                        target: TargetFilter::Controller,
+                    },
+                ),
+            ],
+        );
+
+        let mut events = Vec::new();
+        handle_activate_loyalty(&mut state, PlayerId(0), pw, 0, &mut events).unwrap();
+        state.stack.clear();
+
+        assert!(
+            !can_activate_loyalty_ability(&state, pw, PlayerId(0), 1),
+            "activating ability 0 must lock out ability 1 on the same planeswalker"
+        );
     }
 }
