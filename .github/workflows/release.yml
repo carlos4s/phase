@@ -426,7 +426,6 @@ jobs:
     name: Build Tauri (${{ matrix.os }})
     needs: [tauri-preflight, build-wasm]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
