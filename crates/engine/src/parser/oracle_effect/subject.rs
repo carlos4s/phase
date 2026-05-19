@@ -21,8 +21,8 @@ use super::super::oracle_nom::error::OracleResult;
 use super::super::oracle_nom::primitives as nom_primitives;
 use super::super::oracle_nom::target::parse_event_context_ref;
 use super::super::oracle_static::{
-    parse_additive_type_clause_modifications, parse_chosen_qualifier_subject,
-    parse_continuous_modifications, parse_static_line_multi,
+    classify_block_exception, parse_additive_type_clause_modifications,
+    parse_chosen_qualifier_subject, parse_continuous_modifications, parse_static_line_multi,
 };
 use super::super::oracle_target::{parse_target, parse_type_phrase};
 use super::super::oracle_util::{
@@ -2063,7 +2063,7 @@ pub(crate) fn parse_restriction_modes(lower: &str) -> Option<Vec<StaticMode>> {
     if lower == "can't block or be blocked" || lower == "cannot block or be blocked" {
         return Some(vec![StaticMode::CantBlock, StaticMode::CantBeBlocked]);
     }
-    // CR 509.1c: "can't be blocked except by ..." — evasion restriction
+    // CR 509.1b: "can't be blocked except by ..." — evasion restriction
     if let Ok((except_text, _)) = alt((
         tag::<_, _, OracleError<'_>>("can't be blocked except by "),
         tag("cannot be blocked except by "),
@@ -2071,7 +2071,7 @@ pub(crate) fn parse_restriction_modes(lower: &str) -> Option<Vec<StaticMode>> {
     .parse(lower)
     {
         return Some(vec![StaticMode::CantBeBlockedExceptBy {
-            filter: except_text.to_string(),
+            kind: classify_block_exception(except_text),
         }]);
     }
     // CR 509.1b: "can't be blocked by <filter>" — blocker restriction

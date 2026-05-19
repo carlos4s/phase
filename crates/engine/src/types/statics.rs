@@ -326,6 +326,23 @@ impl fmt::Display for TriggerCause {
     }
 }
 
+/// CR 509.1b: An attacker's "can't be blocked except by ..." restriction.
+/// Two structural shapes share this CR sub-rule:
+///  - `Quality`: each blocker must individually match a `TargetFilter`
+///    (e.g. "artifact creatures").
+///  - `MinBlockers`: the attacker must be blocked by `min` or more creatures
+///    total, or not at all — the generalization of Menace (CR 702.111b, min = 2).
+///
+/// NOTE: this enum is deliberately NOT `#[derive(Hash)]` — `TargetFilter` does
+/// not implement `Hash`. `StaticMode::hash` handles it manually (discriminant
+/// for `Quality`, `min` for `MinBlockers`), mirroring the `CantBeBlockedBy`
+/// precedent.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+pub enum BlockExceptionKind {
+    Quality(TargetFilter),
+    MinBlockers { min: u32 },
+}
+
 /// All static ability modes from Forge's static ability registry.
 /// Matched case-sensitively against Forge mode strings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -632,10 +649,9 @@ pub enum StaticMode {
     // -- Tier 1: Keyword/evasion statics with dedicated handlers --
     /// CR 509.1b: This creature can't be blocked.
     CantBeBlocked,
-    /// CR 509.1b: This creature can't be blocked except by creatures matching filter.
-    // TODO: parse filter to TargetFilter for type-safe matching
+    /// CR 509.1b: This creature can't be blocked except by blockers satisfying `kind`.
     CantBeBlockedExceptBy {
-        filter: String,
+        kind: BlockExceptionKind,
     },
     /// CR 509.1b: This creature can't be blocked by creatures matching filter.
     /// Inverse of CantBeBlockedExceptBy — blockers matching the filter are prohibited.
@@ -803,7 +819,11 @@ impl Hash for StaticMode {
             }
             StaticMode::ExtraBlockers { count } => count.hash(state),
             StaticMode::RevealTopOfLibrary { all_players } => all_players.hash(state),
-            StaticMode::CantBeBlockedExceptBy { filter } => filter.hash(state),
+            StaticMode::CantBeBlockedExceptBy { kind } => match kind {
+                // TargetFilter does not implement Hash; discriminant only.
+                BlockExceptionKind::Quality(_) => {}
+                BlockExceptionKind::MinBlockers { min } => min.hash(state),
+            },
             StaticMode::CantBeBlockedBy { .. } => {} // TargetFilter does not implement Hash; discriminant only
             StaticMode::AdditionalLandDrop { count } => count.hash(state),
             StaticMode::StepEndUnspentMana { filter, action } => {
@@ -955,9 +975,16 @@ impl fmt::Display for StaticMode {
             }
             // Tier 1
             StaticMode::CantBeBlocked => write!(f, "CantBeBlocked"),
-            StaticMode::CantBeBlockedExceptBy { filter } => {
-                write!(f, "CantBeBlockedExceptBy:{filter}")
-            }
+            StaticMode::CantBeBlockedExceptBy { kind } => match kind {
+                BlockExceptionKind::MinBlockers { min } => {
+                    write!(f, "CantBeBlockedExceptBy:Min:{min}")
+                }
+                // TargetFilter has no parseable string form — Debug format, one-way
+                // (mirrors CantBeBlockedBy above). No from_str reconstruction.
+                BlockExceptionKind::Quality(filter) => {
+                    write!(f, "CantBeBlockedExceptBy:Quality({filter:?})")
+                }
+            },
             StaticMode::CantBeBlockedBy { filter } => {
                 write!(f, "CantBeBlockedBy({filter:?})")
             }
@@ -1328,9 +1355,12 @@ impl FromStr for StaticMode {
                         }
                     }
                     return Ok(StaticMode::Other(other.to_string()));
-                } else if let Some(filter) = other.strip_prefix("CantBeBlockedExceptBy:") {
-                    StaticMode::CantBeBlockedExceptBy {
-                        filter: filter.to_string(),
+                } else if let Some(rest) = other.strip_prefix("CantBeBlockedExceptBy:Min:") {
+                    match rest.parse::<u32>() {
+                        Ok(min) => StaticMode::CantBeBlockedExceptBy {
+                            kind: BlockExceptionKind::MinBlockers { min },
+                        },
+                        Err(_) => StaticMode::Other(other.to_string()),
                     }
                 } else if let Some(rest) = other.strip_prefix("ExtraBlockers(") {
                     let rest = rest.strip_suffix(')').unwrap_or(rest);
@@ -1493,7 +1523,7 @@ mod tests {
             // Tier 1: keyword/evasion statics
             StaticMode::CantBeBlocked,
             StaticMode::CantBeBlockedExceptBy {
-                filter: "creatures with flying".to_string(),
+                kind: BlockExceptionKind::MinBlockers { min: 3 },
             },
             StaticMode::Protection,
             StaticMode::Indestructible,

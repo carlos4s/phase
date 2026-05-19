@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use super::game_object::GameObject;
 use super::players;
 use crate::game::filter::{matches_target_filter, FilterContext};
-use crate::parser::oracle_target::parse_target;
 use crate::types::ability::StaticDefinition;
 use crate::types::card_type::{CoreType, Supertype};
 use crate::types::events::GameEvent;
@@ -14,7 +13,7 @@ use crate::types::identifiers::ObjectId;
 use crate::types::keywords::{Keyword, ProtectionTarget};
 use crate::types::mana::ManaColor;
 use crate::types::player::PlayerId;
-use crate::types::statics::StaticMode;
+use crate::types::statics::{BlockExceptionKind, StaticMode};
 use crate::types::zones::Zone;
 
 /// CR 702.19: Which trample variant applies to combat damage assignment.
@@ -485,20 +484,24 @@ pub fn validate_blockers_for_player(
                         blocker_id, attacker_id
                     ));
                 }
-                StaticMode::CantBeBlockedExceptBy { filter } => {
-                    let (target_filter, _) = parse_target(filter);
-                    if !matches_target_filter(
-                        state,
-                        blocker_id,
-                        &target_filter,
-                        &FilterContext::from_source(state, src.id),
-                    ) {
-                        return Err(format!(
-                            "{:?} cannot block {:?} (can't be blocked except by {})",
-                            blocker_id, attacker_id, filter
-                        ));
+                StaticMode::CantBeBlockedExceptBy { kind } => match kind {
+                    BlockExceptionKind::Quality(target_filter) => {
+                        if !matches_target_filter(
+                            state,
+                            blocker_id,
+                            target_filter,
+                            &FilterContext::from_source(state, src.id),
+                        ) {
+                            return Err(format!(
+                                "{:?} cannot block {:?} (can't be blocked except by {:?})",
+                                blocker_id, attacker_id, target_filter
+                            ));
+                        }
                     }
-                }
+                    // CR 509.1b: a count constraint is a multi-blocker check —
+                    // enforced in the blockers_per_attacker count pass, not per-pair.
+                    BlockExceptionKind::MinBlockers { .. } => {}
+                },
                 StaticMode::CantBeBlockedBy { filter }
                     if matches_target_filter(
                         state,
@@ -680,6 +683,26 @@ pub fn validate_blockers_for_player(
                     "{:?} has menace and must be blocked by 2+ creatures",
                     attacker_id
                 ));
+            }
+        }
+    }
+
+    // CR 509.1b: "can't be blocked except by N or more creatures" — a minimum-
+    // blocker count restriction (the generalization of Menace, CR 702.111b).
+    // Independent of the Menace gate above: a creature that is both Menace and
+    // MinBlockers { min } correctly requires >= max(2, min) blockers.
+    for (attacker_id, blockers) in &blockers_per_attacker {
+        for (_src, sd) in block_restriction_statics_against(state, *attacker_id) {
+            if let StaticMode::CantBeBlockedExceptBy {
+                kind: BlockExceptionKind::MinBlockers { min },
+            } = &sd.mode
+            {
+                if (blockers.len() as u32) < *min {
+                    return Err(format!(
+                        "{:?} can't be blocked except by {}+ creatures",
+                        attacker_id, min
+                    ));
+                }
             }
         }
     }
@@ -1766,17 +1789,21 @@ pub fn can_block_pair(state: &GameState, blocker_id: ObjectId, attacker_id: Obje
     for (src, sd) in block_restriction_statics_against(state, attacker_id) {
         match &sd.mode {
             StaticMode::CantBeBlocked => return false,
-            StaticMode::CantBeBlockedExceptBy { filter } => {
-                let (target_filter, _) = parse_target(filter);
-                if !matches_target_filter(
-                    state,
-                    blocker_id,
-                    &target_filter,
-                    &FilterContext::from_source(state, src.id),
-                ) {
-                    return false;
+            StaticMode::CantBeBlockedExceptBy { kind } => match kind {
+                BlockExceptionKind::Quality(target_filter) => {
+                    if !matches_target_filter(
+                        state,
+                        blocker_id,
+                        target_filter,
+                        &FilterContext::from_source(state, src.id),
+                    ) {
+                        return false;
+                    }
                 }
-            }
+                // CR 509.1b: a count constraint is a multi-blocker check,
+                // enforced in validate_blockers, not this per-pair predicate.
+                BlockExceptionKind::MinBlockers { .. } => {}
+            },
             StaticMode::CantBeBlockedBy { filter }
                 if matches_target_filter(
                     state,
@@ -4169,8 +4196,9 @@ mod tests {
 
     #[test]
     fn cant_be_blocked_except_by_enforces_filter() {
+        use crate::parser::oracle_target::parse_target;
         use crate::types::ability::StaticDefinition;
-        use crate::types::statics::StaticMode;
+        use crate::types::statics::{BlockExceptionKind, StaticMode};
 
         let mut state = setup();
         let attacker = create_creature(&mut state, PlayerId(0), "Phantom Warrior", 2, 2);
@@ -4180,7 +4208,7 @@ mod tests {
             .unwrap()
             .static_definitions
             .push(StaticDefinition::new(StaticMode::CantBeBlockedExceptBy {
-                filter: "creatures with flying".to_string(),
+                kind: BlockExceptionKind::Quality(parse_target("creatures with flying").0),
             }));
 
         let ground_blocker = create_creature(&mut state, PlayerId(1), "Bear", 2, 2);
@@ -4196,6 +4224,106 @@ mod tests {
         assert!(validate_blockers(&state, &[(ground_blocker, attacker)]).is_err());
         // Flying creature can block (matches the exception filter)
         assert!(validate_blockers(&state, &[(flying_blocker, attacker)]).is_ok());
+    }
+
+    /// Issue #496: "can't be blocked except by three or more creatures" must
+    /// enforce the count. Reverted-fix discrimination: the old `String` path
+    /// degrades `parse_target("three or more creatures")` to a permissive
+    /// filter, so a single blocker passes — failing this test's "1 and 2 fail,
+    /// 3 passes" boundary.
+    #[test]
+    fn cant_be_blocked_except_by_three_requires_three_blockers() {
+        use crate::types::ability::StaticDefinition;
+        use crate::types::statics::{BlockExceptionKind, StaticMode};
+
+        let mut state = setup();
+        let attacker = create_creature(&mut state, PlayerId(0), "Troll of Khazad-dum", 4, 6);
+        state
+            .objects
+            .get_mut(&attacker)
+            .unwrap()
+            .static_definitions
+            .push(StaticDefinition::new(StaticMode::CantBeBlockedExceptBy {
+                kind: BlockExceptionKind::MinBlockers { min: 3 },
+            }));
+
+        let b1 = create_creature(&mut state, PlayerId(1), "Bear1", 2, 2);
+        let b2 = create_creature(&mut state, PlayerId(1), "Bear2", 2, 2);
+        let b3 = create_creature(&mut state, PlayerId(1), "Bear3", 2, 2);
+
+        // One blocker: illegal.
+        assert!(validate_blockers(&state, &[(b1, attacker)]).is_err());
+        // Two blockers: illegal.
+        assert!(validate_blockers(&state, &[(b1, attacker), (b2, attacker)]).is_err());
+        // Three blockers: legal.
+        assert!(
+            validate_blockers(&state, &[(b1, attacker), (b2, attacker), (b3, attacker)]).is_ok()
+        );
+    }
+
+    /// Guards the 122-card quality class: a `Quality` exception is still a
+    /// per-blocker filter check, unaffected by the count generalization.
+    #[test]
+    fn cant_be_blocked_except_by_quality_still_per_blocker() {
+        use crate::parser::oracle_target::parse_target;
+        use crate::types::ability::StaticDefinition;
+        use crate::types::statics::{BlockExceptionKind, StaticMode};
+
+        let mut state = setup();
+        let attacker = create_creature(&mut state, PlayerId(0), "Quality Attacker", 2, 2);
+        state
+            .objects
+            .get_mut(&attacker)
+            .unwrap()
+            .static_definitions
+            .push(StaticDefinition::new(StaticMode::CantBeBlockedExceptBy {
+                kind: BlockExceptionKind::Quality(parse_target("artifact creatures").0),
+            }));
+
+        let plain = create_creature(&mut state, PlayerId(1), "Bear", 2, 2);
+        let artifact = create_creature(&mut state, PlayerId(1), "Myr", 2, 2);
+        state
+            .objects
+            .get_mut(&artifact)
+            .unwrap()
+            .card_types
+            .core_types
+            .push(CoreType::Artifact);
+
+        // Non-artifact blocker: illegal.
+        assert!(validate_blockers(&state, &[(plain, attacker)]).is_err());
+        // Artifact blocker: legal.
+        assert!(validate_blockers(&state, &[(artifact, attacker)]).is_ok());
+    }
+
+    /// CR 509.1b + CR 702.111b: an attacker that is both Menace and
+    /// `MinBlockers { min: 3 }` requires the stricter `max(2, 3)` = 3 blockers.
+    #[test]
+    fn cant_be_blocked_except_by_min_and_menace() {
+        use crate::types::ability::StaticDefinition;
+        use crate::types::statics::{BlockExceptionKind, StaticMode};
+
+        let mut state = setup();
+        let attacker = create_creature(&mut state, PlayerId(0), "Menace Troll", 4, 6);
+        {
+            let obj = state.objects.get_mut(&attacker).unwrap();
+            obj.keywords.push(Keyword::Menace);
+            obj.static_definitions
+                .push(StaticDefinition::new(StaticMode::CantBeBlockedExceptBy {
+                    kind: BlockExceptionKind::MinBlockers { min: 3 },
+                }));
+        }
+
+        let b1 = create_creature(&mut state, PlayerId(1), "Bear1", 2, 2);
+        let b2 = create_creature(&mut state, PlayerId(1), "Bear2", 2, 2);
+        let b3 = create_creature(&mut state, PlayerId(1), "Bear3", 2, 2);
+
+        // Two blockers satisfy Menace but not MinBlockers { min: 3 }: illegal.
+        assert!(validate_blockers(&state, &[(b1, attacker), (b2, attacker)]).is_err());
+        // Three blockers satisfy both: legal.
+        assert!(
+            validate_blockers(&state, &[(b1, attacker), (b2, attacker), (b3, attacker)]).is_ok()
+        );
     }
 
     #[test]

@@ -46,8 +46,8 @@ use crate::types::keywords::{Keyword, KeywordKind};
 use crate::types::mana::{ManaColor, ManaCost, ManaType};
 use crate::types::phase::Phase;
 use crate::types::statics::{
-    ActivationExemption, CastFrequency, CastingProhibitionCondition, CostPaymentProhibition,
-    HandSizeModification, ProhibitionScope, StaticMode, TriggerCause,
+    ActivationExemption, BlockExceptionKind, CastFrequency, CastingProhibitionCondition,
+    CostPaymentProhibition, HandSizeModification, ProhibitionScope, StaticMode, TriggerCause,
 };
 use crate::types::zones::Zone;
 
@@ -59,6 +59,27 @@ fn nom_tag_lower<'a>(text: &'a str, lower: &str, prefix: &str) -> Option<&'a str
         .parse(lower)
         .ok()
         .map(|(_, matched)| &text[matched.len()..])
+}
+
+/// CR 509.1b / CR 702.111b: "<N> or more creatures" minimum-blocker phrase.
+/// Composed from `parse_number` + `tag(" or more creatures")`.
+fn parse_min_blockers_phrase(input: &str) -> OracleResult<'_, u32> {
+    let (rest, n) = nom_primitives::parse_number(input)?;
+    let (rest, _) = tag(" or more creatures").parse(rest)?;
+    Ok((rest, n))
+}
+
+/// CR 509.1b: classify the remainder after "can't be blocked except by " into a
+/// typed `BlockExceptionKind`. A leading count phrase ("N or more creatures")
+/// is a minimum-blocker constraint; everything else is a per-blocker quality
+/// filter. The parser IS the count-vs-quality detector — combat never re-parses.
+pub(crate) fn classify_block_exception(filter_text: &str) -> BlockExceptionKind {
+    let trimmed = filter_text.trim_end_matches('.').trim();
+    if let Ok((_, min)) = parse_min_blockers_phrase(trimmed) {
+        BlockExceptionKind::MinBlockers { min }
+    } else {
+        BlockExceptionKind::Quality(parse_target(trimmed).0)
+    }
 }
 
 /// Like `nom_tag_lower`, but operates on a `TextPair` and returns a new `TextPair`
@@ -7220,9 +7241,8 @@ fn parse_enchanted_equipped_predicate(
     if nom_tag_lower(body_lower, body_lower, "can't be blocked").is_some() {
         // "can't be blocked except by" → CantBeBlockedExceptBy
         if let Some(rest) = nom_tag_lower(body_lower, body_lower, "can't be blocked except by ") {
-            let filter_text = rest.trim_end_matches('.');
             let mut def = StaticDefinition::new(StaticMode::CantBeBlockedExceptBy {
-                filter: filter_text.to_string(),
+                kind: classify_block_exception(rest),
             })
             .affected(affected)
             .description(description.to_string());
@@ -15923,6 +15943,29 @@ mod tests {
         let def = parse_static_line("This creature can't be blocked.").unwrap();
         assert_eq!(def.mode, StaticMode::CantBeBlocked);
         assert!(def.condition.is_none());
+    }
+
+    /// Issue #496: "except by N or more creatures" → typed count constraint.
+    /// `classify_block_exception` is the shared count-vs-quality detector used by
+    /// both parser entry points (`parse_enchanted_equipped_predicate` here and
+    /// `parse_restriction_modes` in `oracle_effect/subject.rs`).
+    #[test]
+    fn classify_block_exception_count_vs_quality() {
+        assert_eq!(
+            classify_block_exception("three or more creatures."),
+            BlockExceptionKind::MinBlockers { min: 3 }
+        );
+        assert_eq!(
+            classify_block_exception("six or more creatures"),
+            BlockExceptionKind::MinBlockers { min: 6 }
+        );
+        assert!(
+            matches!(
+                classify_block_exception("artifact creatures."),
+                BlockExceptionKind::Quality(_)
+            ),
+            "Expected Quality kind for a quality phrase"
+        );
     }
 
     #[test]
