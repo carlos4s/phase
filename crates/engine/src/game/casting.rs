@@ -515,6 +515,40 @@ fn upsert_keyword_by_kind(keywords: &mut Vec<Keyword>, keyword: Keyword) {
     }
 }
 
+/// CR 601.2a: Single matcher-side authority for "what zone did this spell get
+/// cast from" at SpellCast-event time. Encapsulates the placeholder vs
+/// ability-context storage split so the trigger matcher (and any future
+/// caller) never has to know which of the two `cast_from_zone` sites is
+/// populated for a given spell.
+///
+/// Lookup order:
+/// 1. Stack entry's `ResolvedAbility.context.cast_from_zone` — populated for
+///    instants/sorceries with on-resolve abilities at `casting_costs.rs`
+///    just before the `GameEvent::SpellCast` is emitted.
+/// 2. Object's `cast_from_zone` field — populated for permanent spells with
+///    no spell-level ability (the placeholder branch).
+///
+/// Returns `None` only if the lookup races a stack-pop or the object is
+/// missing; SpellCast events always carry a real origin per CR 601.2a, so
+/// callers should fail-closed on `None` rather than fire spuriously.
+pub(crate) fn spell_cast_origin(state: &GameState, object_id: ObjectId) -> Option<Zone> {
+    // CR 601.2a: ability-context first — the typical instant/sorcery path
+    // where `casting_costs.rs` writes `ability.context.cast_from_zone` before
+    // emitting the SpellCast event.
+    if let Some(zone) = state
+        .stack
+        .iter()
+        .rfind(|e| e.id == object_id)
+        .and_then(|e| e.ability())
+        .and_then(|a| a.context.cast_from_zone)
+    {
+        return Some(zone);
+    }
+    // Fallback: placeholder/permanent path where `cast_from_zone` is stamped
+    // on the object directly.
+    state.objects.get(&object_id).and_then(|o| o.cast_from_zone)
+}
+
 /// CR 601.2a + CR 603.4: Look up the pre-announcement zone for a spell that
 /// is currently mid-cast. `obj.zone` stays at the origin until `finalize_cast`
 /// performs the Hand→Stack move itself, but should the ordering ever change

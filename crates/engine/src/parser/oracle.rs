@@ -13116,26 +13116,44 @@ mod pipeline_snapshot_tests {
             modes,
         );
 
-        // Each payoff trigger has valid_card with InZone(Exile).
+        // Each payoff trigger constrains the event to "from exile" — but
+        // through different typed fields per CR 601.2a vs CR 305:
+        //   - LandPlayed (CR 305): `valid_card.InZone(Exile)` — the
+        //     LandPlayed matcher reads the FilterProp::InZone.
+        //   - SpellCast (CR 601.2a): `spell_cast_origin = Equals(Exile)` —
+        //     the SpellCast matcher reads the typed origin constraint via
+        //     the cast-origin gate, since at fire-time the spell object's
+        //     zone is `Stack`, not its cast origin.
+        use crate::types::ability::OriginConstraint;
+        use crate::types::zones::Zone;
         for trigger in &result.triggers[1..] {
-            let valid_card = trigger
-                .valid_card
-                .as_ref()
-                .expect("payoff trigger has valid_card filter");
-            match valid_card {
-                TargetFilter::Typed(TypedFilter { properties, .. }) => {
-                    assert!(
-                        properties.iter().any(|p| matches!(
-                            p,
-                            FilterProp::InZone {
-                                zone: crate::types::zones::Zone::Exile
-                            }
-                        )),
-                        "payoff trigger's valid_card must carry InZone(Exile), got {:?}",
-                        properties,
+            match trigger.mode {
+                TriggerMode::LandPlayed => {
+                    let valid_card = trigger
+                        .valid_card
+                        .as_ref()
+                        .expect("LandPlayed payoff trigger has valid_card filter");
+                    match valid_card {
+                        TargetFilter::Typed(TypedFilter { properties, .. }) => {
+                            assert!(
+                                properties
+                                    .iter()
+                                    .any(|p| matches!(p, FilterProp::InZone { zone: Zone::Exile })),
+                                "LandPlayed valid_card must carry InZone(Exile), got {:?}",
+                                properties,
+                            );
+                        }
+                        other => panic!("expected Typed filter, got {:?}", other),
+                    }
+                }
+                TriggerMode::SpellCast => {
+                    assert_eq!(
+                        trigger.spell_cast_origin,
+                        OriginConstraint::Equals(Zone::Exile),
+                        "SpellCast payoff trigger must constrain cast origin to Exile",
                     );
                 }
-                other => panic!("expected Typed filter, got {:?}", other),
+                ref other => panic!("unexpected payoff trigger mode: {:?}", other),
             }
         }
     }
