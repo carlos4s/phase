@@ -565,7 +565,7 @@ fn evaluate_commander_with_format(
 /// Uses the pre-computed `brawl_commander` field (union of MTGJSON leadershipSkills
 /// and type-line analysis). Falls back to type-line check for cards loaded from
 /// test fixtures that may not have the field set.
-fn is_brawl_commander_eligible(face: &CardFace) -> bool {
+pub fn is_brawl_commander_eligible(face: &CardFace) -> bool {
     if face.brawl_commander {
         return true;
     }
@@ -1004,7 +1004,7 @@ fn quick_tiny_leaders_check(
     }
 }
 
-fn is_tiny_leader_eligible(face: &CardFace) -> bool {
+pub fn is_tiny_leader_eligible(face: &CardFace) -> bool {
     let is_legendary = face.card_type.supertypes.contains(&Supertype::Legendary);
     let subtypes = &face.card_type.subtypes;
     let is_creature = face.card_type.core_types.contains(&CoreType::Creature);
@@ -3126,6 +3126,16 @@ mod tests {
             "{:?}",
             result.selected_format_reasons
         );
+    }
+
+    #[test]
+    fn tiny_leaders_allows_legendary_planeswalker_leaders() {
+        let db = CardDatabase::from_json_str(&tiny_leaders_test_db_json()).unwrap();
+        let face = db
+            .get_face_by_name("Ajani, Nacatl Pariah")
+            .expect("fixture planeswalker exists");
+
+        assert!(is_tiny_leader_eligible(face));
     }
 
     #[test]

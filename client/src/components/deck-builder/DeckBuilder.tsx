@@ -39,9 +39,9 @@ import { useBracketEstimate } from "../../hooks/useBracketEstimate";
 import {
   getColorIdentityViolations,
   getSingletonViolations,
-  canBeCommander,
   canAddPartner,
 } from "./commanderUtils";
+import { isCardCommanderEligibleForFormat } from "../../services/engineRuntime";
 
 function listSavedDecks(): string[] {
   const keys: string[] = [];
@@ -104,6 +104,7 @@ export function DeckBuilder({
   ]);
 
   const [compatibility, setCompatibility] = useState<DeckCompatibilityResult | null>(null);
+  const [commanderEligibleNames, setCommanderEligibleNames] = useState<Set<string>>(new Set());
 
   const artOverrides = usePreferencesStore((s) => s.artOverrides);
   const clearArtOverride = usePreferencesStore((s) => s.clearArtOverride);
@@ -162,7 +163,37 @@ export function DeckBuilder({
 
   const formatConfig = formatMetadata(format)?.default_config;
   const isCommander = formatConfig?.command_zone ?? false;
+  const expectedDeckSize = formatConfig?.deck_size ?? 60;
   const maxCopies = formatConfig?.singleton ? 1 : 4;
+
+  useEffect(() => {
+    if (!isCommander) {
+      setCommanderEligibleNames(new Set());
+      return;
+    }
+    const names = deck.main.map((entry) => entry.name);
+    if (names.length === 0) {
+      setCommanderEligibleNames(new Set());
+      return;
+    }
+    let cancelled = false;
+    Promise.all(
+      names.map(async (name) => [
+        name,
+        await isCardCommanderEligibleForFormat(name, format),
+      ] as const),
+    ).then((results) => {
+      if (cancelled) return;
+      setCommanderEligibleNames(
+        new Set(results.filter(([, eligible]) => eligible).map(([name]) => name)),
+      );
+    }).catch(() => {
+      if (!cancelled) setCommanderEligibleNames(new Set());
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [deck.main, format, isCommander]);
 
   const { estimate, unsupported: bracketUnsupported } = useBracketEstimate({
     deck,
@@ -306,8 +337,8 @@ export function DeckBuilder({
       companion: next.companion,
     });
     setCommanders(next.commander ?? []);
-    if (next.commander?.length) onFormatChange("Commander");
-  }, [onFormatChange]);
+    if (next.commander?.length && !isCommander) onFormatChange("Commander");
+  }, [isCommander, onFormatChange]);
 
   const handleImport = useCallback((imported: ParsedDeck) => {
     applyDeckToEditor(imported);
@@ -408,10 +439,11 @@ export function DeckBuilder({
   //      cycling through legendary creatures to pick the right commander.
   const handleSetCommander = useCallback(
     (cardName: string) => {
+      if (!commanderEligibleNames.has(cardName)) return;
       const card = cardDataCache.get(cardName);
-      if (!card || !canBeCommander(card)) return;
 
       const isPartnerAdd =
+        card !== undefined &&
         commanders.length === 1 &&
         canAddPartner(commanders, card, cardDataCache);
       const displaced =
@@ -437,17 +469,16 @@ export function DeckBuilder({
         return { ...prev, main: restored };
       });
     },
-    [cardDataCache, commanders],
+    [cardDataCache, commanderEligibleNames, commanders],
   );
 
-  // Eligibility predicate consulted by each main-deck row. Pure card-data
-  // lookup — partner/swap logic lives in handleSetCommander.
+  // Eligibility predicate consulted by each main-deck row. The set is loaded
+  // from the engine's format-aware command-zone predicate above.
   const isCommanderEligible = useCallback(
     (name: string) => {
-      const card = cardDataCache.get(name);
-      return !!card && canBeCommander(card);
+      return commanderEligibleNames.has(name);
     },
-    [cardDataCache],
+    [commanderEligibleNames],
   );
 
   const handleRemoveCommander = useCallback((cardName: string) => {
@@ -481,8 +512,8 @@ export function DeckBuilder({
   const warnings: string[] = [];
   if (isCommander) {
     const totalCards = deck.main.reduce((s, e) => s + e.count, 0) + commanders.length;
-    if (totalCards > 0 && totalCards !== 100) {
-      warnings.push(`Deck has ${totalCards} cards (need exactly 100)`);
+    if (totalCards > 0 && totalCards !== expectedDeckSize) {
+      warnings.push(`Deck has ${totalCards} cards (need exactly ${expectedDeckSize})`);
     }
     for (const name of getSingletonViolations(deck.main, cardDataCache)) {
       warnings.push(`${name}: multiple copies (singleton format)`);
@@ -627,6 +658,8 @@ export function DeckBuilder({
                   commanders={commanders}
                   deck={deck.main}
                   cardDataCache={cardDataCache}
+                  expectedDeckSize={expectedDeckSize}
+                  isCommanderEligible={isCommanderEligible}
                   onSetCommander={handleSetCommander}
                   onRemoveCommander={handleRemoveCommander}
                 />

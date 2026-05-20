@@ -313,6 +313,33 @@ Sideboard
     ]);
   });
 
+  it('parses MTGO TLR exports with SIDEBOARD colon and trailing commander', () => {
+    const content = `1 Ajani, Nacatl Pariah
+1 Wrenn and Six
+1 Wooded Foothills
+
+SIDEBOARD:
+1 Absolute Grace
+1 Celestial Purge
+1 Unlicensed Hearse
+
+1 Marath, Will of the Wild`;
+
+    const result = detectAndParseDeck(content);
+
+    expect(result.main).toEqual([
+      { count: 1, name: 'Ajani, Nacatl Pariah' },
+      { count: 1, name: 'Wrenn and Six' },
+      { count: 1, name: 'Wooded Foothills' },
+    ]);
+    expect(result.sideboard).toEqual([
+      { count: 1, name: 'Absolute Grace' },
+      { count: 1, name: 'Celestial Purge' },
+      { count: 1, name: 'Unlicensed Hearse' },
+    ]);
+    expect(result.commander).toEqual(['Marath, Will of the Wild']);
+  });
+
   it('parses MTGA lines with empty set codes (Archidekt Three Visits export)', () => {
     const content = '1 Three Visits () 315';
     const result = detectAndParseDeck(content);
