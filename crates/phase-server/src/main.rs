@@ -2922,13 +2922,14 @@ async fn handle_client_message(
 
             if reserve {
                 if info.is_p2p {
-                    match {
+                    let reserve_result = {
                         let mut lob = lobby.lock().await;
                         lob.reserve_seat(
                             &game_code,
                             display_name.unwrap_or_else(|| "Player".to_string()),
                         )
-                    } {
+                    };
+                    match reserve_result {
                         Ok(reservation) => {
                             reservation_token = Some(reservation.token.clone());
                             reservation_expires_at_ms = reservation.expires_at_ms;
@@ -2956,14 +2957,15 @@ async fn handle_client_message(
                         }
                     }
                 } else {
-                    match {
+                    let reserve_result = {
                         let mut mgr = state.lock().await;
                         mgr.reserve_seat(
                             &game_code,
                             display_name.unwrap_or_else(|| "Player".to_string()),
                             password.is_some(),
                         )
-                    } {
+                    };
+                    match reserve_result {
                         Ok(reservation) => {
                             reservation_token = Some(reservation.token.clone());
                             reservation_expires_at_ms = reservation.expires_at_ms;
@@ -3238,7 +3240,7 @@ async fn handle_client_message(
                     joiner: PlayerId,
                     slot_info: Vec<server_core::PlayerSlotInfo>,
                     current_count: u32,
-                    filtered_state: engine::types::game_state::GameState,
+                    filtered_state: Box<engine::types::game_state::GameState>,
                 },
                 Started {
                     player_token: String,
@@ -3289,7 +3291,7 @@ async fn handle_client_message(
                                 joiner,
                                 slot_info: session.player_slot_info(),
                                 current_count: session.current_player_count(),
-                                filtered_state,
+                                filtered_state: Box::new(filtered_state),
                             })
                         }
                     }
@@ -3305,6 +3307,7 @@ async fn handle_client_message(
                     current_count,
                     filtered_state,
                 }) => {
+                    let filtered_state = *filtered_state;
                     identity.set_session(game_code.clone(), joiner, player_token);
 
                     let mut conns = connections.lock().await;
