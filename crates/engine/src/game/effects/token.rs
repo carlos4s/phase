@@ -3321,4 +3321,82 @@ mod tests {
             "host's attachments list must include the Role"
         );
     }
+
+    /// CR 303.4 + CR 603.7 + CR 109.5: Asinine Antics — for each creature an
+    /// opponent controls, create a Cursed Role token attached to that creature.
+    /// Drives the real `repeat_for: ObjectCount` loop through
+    /// `resolve_ability_chain` so the per-iteration ParentTarget rebind binds each
+    /// distinct creature. DISCRIMINATING: before the member-driven gate recognizes
+    /// `Token { attach_to }`, `ParentTarget` finds no object slot, the loop never
+    /// becomes member-driven, and both Roles end up unattached; post-fix the two
+    /// Roles attach to the two distinct opponent creatures.
+    #[test]
+    fn asinine_antics_attaches_one_role_per_opponent_creature() {
+        let mut state = GameState::new_two_player(42);
+        let c1 = spawn_creature(&mut state, PlayerId(1), "Opp Creature 1");
+        let c2 = spawn_creature(&mut state, PlayerId(1), "Opp Creature 2");
+
+        let mut ability = ResolvedAbility::new(
+            role_token_effect(Some(TargetFilter::ParentTarget)),
+            vec![],
+            ObjectId(100),
+            PlayerId(0),
+        );
+        ability.repeat_for = Some(QuantityExpr::Ref {
+            qty: QuantityRef::ObjectCount {
+                filter: TargetFilter::Typed(
+                    crate::types::ability::TypedFilter::creature()
+                        .controller(crate::types::ability::ControllerRef::Opponent),
+                ),
+            },
+        });
+
+        let mut events = Vec::new();
+        super::super::resolve_ability_chain(&mut state, &ability, &mut events, 0).unwrap();
+
+        let role_hosts: std::collections::HashSet<AttachTarget> = state
+            .battlefield
+            .iter()
+            .filter_map(|id| state.objects.get(id))
+            .filter(|obj| obj.is_token && obj.card_types.subtypes.iter().any(|s| s == "Role"))
+            .filter_map(|obj| obj.attached_to)
+            .collect();
+
+        assert_eq!(
+            role_hosts,
+            std::collections::HashSet::from([AttachTarget::Object(c1), AttachTarget::Object(c2)]),
+            "exactly one Role per opponent creature, each attached to a distinct host"
+        );
+    }
+
+    /// CR 303.4g: an `attach_to: ParentTarget` for-each loop with an empty member
+    /// set creates zero tokens (member-driven count = 0), so no orphaned Auras
+    /// appear.
+    #[test]
+    fn asinine_antics_no_creatures_creates_no_roles() {
+        let mut state = GameState::new_two_player(42);
+
+        let mut ability = ResolvedAbility::new(
+            role_token_effect(Some(TargetFilter::ParentTarget)),
+            vec![],
+            ObjectId(100),
+            PlayerId(0),
+        );
+        ability.repeat_for = Some(QuantityExpr::Ref {
+            qty: QuantityRef::ObjectCount {
+                filter: TargetFilter::Typed(
+                    crate::types::ability::TypedFilter::creature()
+                        .controller(crate::types::ability::ControllerRef::Opponent),
+                ),
+            },
+        });
+
+        let mut events = Vec::new();
+        super::super::resolve_ability_chain(&mut state, &ability, &mut events, 0).unwrap();
+
+        assert!(
+            state.last_created_token_ids.is_empty(),
+            "no opponent creatures ⇒ zero Role tokens"
+        );
+    }
 }

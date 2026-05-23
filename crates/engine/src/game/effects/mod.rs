@@ -1582,36 +1582,51 @@ fn effect_refs_parent_target(effect: &Effect) -> bool {
     effect_target_filter(effect).is_some_and(filter_refs_parent_target)
 }
 
-/// True if the effect body references the per-iteration object via a parent
-/// context ref — INCLUDING effect-specific slots that `target_filter()` does not
-/// surface as the stack-push target. `Effect::CopyTokenOf::target_filter()`
-/// surfaces the token *owner*, not the copy *source*, when the source is a
-/// context ref (CR 707.2). So "For each token you control, create a token that's
-/// a copy of that permanent" (Second Harvest) needs its `target` (copy source)
-/// inspected directly — otherwise the loop never rebinds and every iteration
-/// copies the source object (the spell itself) instead of each token.
+/// CR 109.5 + CR 603.7: Every object-target filter slot of an effect that may
+/// carry a parent-ref, INCLUDING slots `target_filter()` hides. Single source of
+/// truth for which slots a member-driven loop inspects for rebinding.
 ///
-/// KNOWN GAP: other effects also hide a parent-target object slot behind
-/// `target_filter()` — `Effect::Token { attach_to }` (surfaces `owner`) and
-/// `Effect::Attach { attachment }` (surfaces `target`). Those per-iteration
-/// "for each [object], create/attach to that object" cases are NOT covered here:
-/// `Token`'s create path does not yet consume `attach_to`, and `Attach` resolves
-/// two object slots sequentially (so `rebind_first_object_target`, which
-/// replaces only the first, is insufficient). They were already broken before
-/// this rebind existed (no regression). Generalizing to an "all iterated
-/// context-ref slots" accessor + multi-slot rebind is tracked as follow-up.
-fn effect_iterates_over_parent_target(effect: &Effect) -> bool {
-    if effect_refs_parent_target(effect) {
-        return true;
-    }
-    matches!(
-        effect,
+/// `target_filter()` surfaces exactly one slot, and for some effects it is not
+/// the parent-ref-bearing one:
+///  * `Effect::CopyTokenOf` surfaces the token *owner*, not the copy *source*,
+///    when the source is a context ref (CR 707.2) — Second Harvest's "for each
+///    token you control, create a token that's a copy of that permanent" needs
+///    its `target` (copy source) inspected. The arm fires ONLY when the source
+///    is a context ref (`source_filter: None && target.is_context_ref()`), which
+///    is exactly when `target_filter()` returns `owner` instead of `target`, so
+///    `target` is never double-counted.
+///  * `Effect::Token` surfaces `owner` (a player ref) and hides `attach_to` —
+///    Asinine Antics' "for each opponent creature, create a Cursed Role attached
+///    to that creature" rebinds through `attach_to`.
+///  * `Effect::Attach` surfaces `target` but hides `attachment`.
+///
+/// NOTE: the `_ => {}` arm means "no hidden object slot beyond `target_filter()`".
+/// Any FUTURE effect that hides an object slot behind `target_filter()` MUST add
+/// an arm here, or its for-each parent-ref form won't rebind.
+fn effect_parent_ref_slots(effect: &Effect) -> Vec<&TargetFilter> {
+    let mut slots: Vec<&TargetFilter> = effect_target_filter(effect).into_iter().collect();
+    match effect {
         Effect::CopyTokenOf {
             target,
             source_filter: None,
             ..
-        } if filter_refs_parent_target(target)
-    )
+        } if target.is_context_ref() => slots.push(target),
+        Effect::Token {
+            attach_to: Some(f), ..
+        } => slots.push(f),
+        Effect::Attach { attachment, .. } => slots.push(attachment),
+        _ => {}
+    }
+    slots
+}
+
+/// True if any object-target slot of the effect references the per-iteration
+/// object via a parent context ref. Member-driven `repeat_for: ObjectCount`
+/// loops use this to decide whether to rebind the parent target each iteration.
+fn effect_iterates_over_parent_target(effect: &Effect) -> bool {
+    effect_parent_ref_slots(effect)
+        .iter()
+        .any(|f| filter_refs_parent_target(f))
 }
 
 /// Recurse into compound filters so a wrapped `ParentTargetController` is
@@ -2919,7 +2934,15 @@ fn resolve_chain_body(
             let initial_waiting_for = state.waiting_for.clone();
             let mut iteration = 0usize;
             while iteration < iterations {
-                // Snapshot per-iteration ability with parent-target rebinding when applicable.
+                // Snapshot per-iteration ability with parent-target rebinding when
+                // applicable. CR 109.5: the rebind is SINGLE-slot — every reachable
+                // member-driven card has exactly ONE parent-ref object slot. Second
+                // Harvest's copy source, and Asinine Antics' `attach_to: ParentTarget`
+                // (whose `owner: Controller` is a player ref, not an object slot, and
+                // whose `effective.targets` is empty) each push exactly one
+                // `TargetRef::Object(member)`. The `Effect::Attach`-under-for-each
+                // case (two sequential object slots) has zero reachable card
+                // consumers and is deferred — see `effect_parent_ref_slots`.
                 let mut iter_ability;
                 let iter_effective: &ResolvedAbility =
                     if let Some(member) = iter_tracked_members.get(iteration) {
