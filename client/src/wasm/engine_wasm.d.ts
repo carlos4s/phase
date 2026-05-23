@@ -34,6 +34,15 @@ export function clear_game_state(): void;
 export function create_initial_state(): any;
 
 /**
+ * Reports the WASM linear-memory footprint plus the sizes of the largest
+ * `#[serde(skip)]` runtime tables, so the browser can correlate a
+ * memory-exhaustion trap at `initialize_game` with the registry/name-list
+ * allocation spike. Reads the current `GAME_STATE` without disturbing it
+ * (take/set, falling back to zero counts when no game is loaded).
+ */
+export function engine_memory_report(): any;
+
+/**
  * Estimates a Commander deck's bracket without touching `GAME_STATE`.
  * Reads `CARD_DB` for bracket signals. Returns `null` (via serde) when the
  * deck has no commander or the card database is not loaded.
@@ -332,6 +341,7 @@ export interface InitOutput {
     readonly get_legal_actions_js: () => any;
     readonly get_stack_pressure: () => any;
     readonly init_panic_hook: () => void;
+    readonly engine_memory_report: () => any;
     readonly list_token_presets_js: () => any;
     readonly create_initial_state: () => any;
     readonly clear_game_state: () => void;
