@@ -3,10 +3,9 @@ import { useMultiplayerStore } from "../stores/multiplayerStore";
 
 const DEFAULT_PORT = 9374;
 
-/** Which national flag to show beside a canonical region. The EU instance is
- * hosted in Switzerland, so it carries the Swiss flag rather than a generic
- * European one. */
-export type FlagCode = "us" | "ch";
+/** Which national flag to show beside a canonical region. A union (not a bare
+ * literal) so a future self-host preset can add its own flag. */
+export type FlagCode = "us";
 
 export interface ServerPreset {
   label: string;
@@ -15,13 +14,11 @@ export interface ServerPreset {
 }
 
 /**
- * User-pickable canonical regions. Intentionally US-only: additional official
- * endpoints (e.g. an EU region) belong in the client failover manifest consumed
- * automatically — exposing them as separate selectable lobbies would fragment
- * the matchmaking pool, which defeats the broker's purpose. Self-hosted servers
- * are entered via the custom-URL field, not here. The `ch` FlagCode and Swiss
- * flag are retained for that forthcoming manifest (see
- * .planning/lobby-failover-federation-plan.md).
+ * User-pickable canonical regions. The official deployment is a single global
+ * lobby, so there is intentionally one entry — additional regional lobbies would
+ * fragment the matchmaking pool, defeating the broker's purpose. Self-hosted
+ * servers are entered via the custom-URL field, not here. See
+ * .planning/lobby-failover-federation-plan.md.
  */
 export const SERVER_PRESETS: ServerPreset[] = [
   { label: "US (default)", url: "wss://us.phase-rs.dev/ws", flag: "us" },
