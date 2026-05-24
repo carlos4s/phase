@@ -5994,6 +5994,11 @@ fn try_parse_verb_and_target<'a>(
         let (target, rem) = parse_target_with_ctx(target_text, ctx);
         return Some((TargetedImperativeAst::Untap { target }, rem));
     }
+    if let Some((_, rest)) = nom_on_lower(text, lower, |i| value((), tag("goad ")).parse(i)) {
+        let (target_text, _) = strip_optional_target_prefix(rest);
+        let (target, rem) = parse_target_with_ctx(target_text, ctx);
+        return Some((TargetedImperativeAst::Goad { target }, rem));
+    }
     if let Some((_, rest)) = nom_on_lower(text, lower, |i| value((), tag("sacrifice ")).parse(i)) {
         if let Some((count, target, rem)) = imperative::parse_all_sacrifice(rest, ctx) {
             return Some((
@@ -6240,12 +6245,13 @@ fn try_parse_verb_and_target<'a>(
     // Return: determine destination separately, use parse_target remainder for compound detection
     if let Some((_, rest)) = nom_on_lower(text, lower, |i| value((), tag("return ")).parse(i)) {
         let rest_lower = &lower[lower.len() - rest.len()..];
-        let (trailing_target_text, trailing_dest) = strip_return_destination_ext(rest);
+        let (trailing_target_text, trailing_dest, trailing_dest_remainder) =
+            strip_return_destination_ext_with_remainder(rest);
         let (leading_target_text, leading_dest) = strip_leading_return_destination_ext(rest);
-        let (target_text, dest) = if leading_dest.is_some() {
-            (leading_target_text, leading_dest)
+        let (target_text, dest, dest_remainder) = if leading_dest.is_some() {
+            (leading_target_text, leading_dest, "")
         } else {
-            (trailing_target_text, trailing_dest)
+            (trailing_target_text, trailing_dest, trailing_dest_remainder)
         };
         let (is_mass, target_text) = if let Some((_, stripped)) =
             nom_on_lower(target_text, &target_text.to_ascii_lowercase(), |i| {
@@ -6255,7 +6261,10 @@ fn try_parse_verb_and_target<'a>(
         } else {
             (false, target_text)
         };
-        let (target, rem) = parse_target_with_ctx(target_text, ctx);
+        let (target, mut rem) = parse_target_with_ctx(target_text, ctx);
+        if rem.is_empty() {
+            rem = dest_remainder;
+        }
         let origin = infer_origin_zone(rest_lower);
         return match dest {
             Some(d) if d.zone == Zone::Battlefield => {
@@ -14656,7 +14665,9 @@ fn parse_each_of_up_to_damage_target<'a>(
 /// UpTo(ObjectCount), min_count: 0 }` by `parse_one_or_more_sacrifice` — not a
 /// `MultiTargetSpec`. Routing it through this list would strip the quantifier
 /// and collapse the count to a fixed 1 (issue #458).
-const MULTI_TARGET_VERBS: &[&str] = &["exile", "tap", "untap", "return", "destroy", "choose"];
+const MULTI_TARGET_VERBS: &[&str] = &[
+    "exile", "tap", "untap", "goad", "return", "destroy", "choose",
+];
 
 /// CR 115.1d: Strip numeric word prefix before "target" from effect text.
 /// "two target creatures" → (2, "target creatures")
@@ -14774,6 +14785,13 @@ struct ReturnDestination {
 
 /// Detect "return ... to <zone>" destination phrase, including "transformed" flag.
 fn strip_return_destination_ext(text: &str) -> (&str, Option<ReturnDestination>) {
+    let (target, dest, _) = strip_return_destination_ext_with_remainder(text);
+    (target, dest)
+}
+
+fn strip_return_destination_ext_with_remainder(
+    text: &str,
+) -> (&str, Option<ReturnDestination>, &str) {
     let lower = text.to_lowercase();
     // Ordered longest-first to avoid partial matches.
     // "transformed" variants must come before their non-transformed counterparts.
@@ -14952,6 +14970,7 @@ fn strip_return_destination_ext(text: &str) -> (&str, Option<ReturnDestination>)
     for (phrase, zone, transformed, under_your_control, enter_tapped) in patterns {
         if let Some(pos) = lower.rfind(phrase) {
             let after_destination = &lower[pos + phrase.len()..];
+            let original_after_destination = &text[pos + phrase.len()..];
             return (
                 text[..pos].trim(),
                 Some(ReturnDestination {
@@ -14961,10 +14980,11 @@ fn strip_return_destination_ext(text: &str) -> (&str, Option<ReturnDestination>)
                     enter_tapped: *enter_tapped,
                     enter_with_counters: parse_with_counters_suffix(after_destination),
                 }),
+                original_after_destination,
             );
         }
     }
-    (text, None)
+    (text, None, "")
 }
 
 /// Detect "return to <zone> <target>" destination phrases.
@@ -20808,6 +20828,16 @@ mod tests {
     }
 
     #[test]
+    fn strip_return_destination_preserves_compound_remainder() {
+        let (target, dest, remainder) = strip_return_destination_ext_with_remainder(
+            "target permanent to its owner's hand and put a +1/+1 counter on this creature",
+        );
+        assert_eq!(target, "target permanent");
+        assert_eq!(dest.unwrap().zone, Zone::Hand);
+        assert_eq!(remainder, " and put a +1/+1 counter on this creature");
+    }
+
+    #[test]
     fn strip_return_destination_your_hand() {
         let (target, dest) = strip_return_destination_ext("~ to your hand");
         assert_eq!(target, "~");
@@ -23108,6 +23138,62 @@ mod tests {
                 }
             ),
             "sub should be PutCounter with ParentTarget, got {:?}",
+            sub.effect
+        );
+    }
+
+    #[test]
+    fn compound_return_to_hand_and_put_counter_preserves_subability() {
+        let def = parse_effect_chain(
+            "return another target permanent you control to its owner's hand and put a +1/+1 counter on this creature",
+            AbilityKind::Spell,
+        );
+        assert!(
+            matches!(&*def.effect, Effect::Bounce { .. }),
+            "primary should be Bounce, got {:?}",
+            def.effect
+        );
+        let sub = def.sub_ability.expect("should have counter sub_ability");
+        assert!(
+            matches!(
+                *sub.effect,
+                Effect::PutCounter {
+                    counter_type: CounterType::Plus1Plus1,
+                    count: QuantityExpr::Fixed { value: 1 },
+                    target: TargetFilter::SelfRef,
+                }
+            ),
+            "sub should be PutCounter on SelfRef, got {:?}",
+            sub.effect
+        );
+    }
+
+    #[test]
+    fn compound_goad_and_put_counter_preserves_subability() {
+        let def = parse_effect_chain(
+            "goad up to one target creature you don't control and put a +1/+1 counter on this creature",
+            AbilityKind::Spell,
+        );
+        assert!(
+            matches!(&*def.effect, Effect::Goad { .. }),
+            "primary should be Goad, got {:?}",
+            def.effect
+        );
+        assert!(
+            def.multi_target.is_some(),
+            "up to one targeting should be preserved"
+        );
+        let sub = def.sub_ability.expect("should have counter sub_ability");
+        assert!(
+            matches!(
+                *sub.effect,
+                Effect::PutCounter {
+                    counter_type: CounterType::Plus1Plus1,
+                    count: QuantityExpr::Fixed { value: 1 },
+                    target: TargetFilter::SelfRef,
+                }
+            ),
+            "sub should be PutCounter on SelfRef, got {:?}",
             sub.effect
         );
     }
