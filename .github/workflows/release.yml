@@ -407,9 +407,53 @@ jobs:
           path: client/public/draft-pools.json
           retention-days: 1
 
+  # ── Server binary compile (linux musl, shared) ──────────────────────────────
+  # Compiles the static musl binary ONCE per release run. Consumed by both
+  # build-server-image (prebuilt Docker image) and build-server's linux leg
+  # (release archive), so neither pays a redundant ~10min compile. Needs nothing
+  # the data pipeline produces, so it starts immediately.
+  build-server-binary:
+    name: Build Server Binary (linux)
+    needs: [resolve-release-ref]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      RELEASE_SHA: ${{ needs.resolve-release-ref.outputs.release_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-shared-key: rust-server-linux
+
+      - name: Install musl tools and target
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          rustup target add x86_64-unknown-linux-musl
+
+      - name: Build phase-server (static musl)
+        # No chmod here: upload-artifact strips the executable bit anyway; both
+        # consumers (image build, archive packaging) re-apply it.
+        run: |
+          cargo build --profile server-release --bin phase-server --target x86_64-unknown-linux-musl
+          cp target/x86_64-unknown-linux-musl/server-release/phase-server ./phase-server
+
+      - name: Upload server binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-binary-linux
+          path: phase-server
+          if-no-files-found: error
+          retention-days: 1
+
   build-server-image:
     name: Build Server Image
-    needs: [resolve-release-ref, build-wasm]
+    needs: [resolve-release-ref, build-wasm, build-server-binary]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -436,8 +480,16 @@ jobs:
           name: draft-pools
           path: data
 
-      - name: Verify server data
+      - name: Download server binary
+        uses: actions/download-artifact@v4
+        with:
+          name: server-binary-linux
+          path: .
+
+      - name: Verify build context
         run: |
+          test -s phase-server
+          chmod +x phase-server
           test -s data/card-data.json
           test -s data/draft-pools.json
 
@@ -449,12 +501,16 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push release image
+        # BINARY_STAGE=prebuilt: copy the musl binary from build-server-binary
+        # instead of compiling in-container — the build is just apt + COPY.
         uses: docker/build-push-action@v6
         env:
           DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: .
           push: true
+          build-args: |
+            BINARY_STAGE=prebuilt
           tags: |
             ${{ env.IMAGE_NAME }}:${{ env.RELEASE_TAG }}
             ${{ env.IMAGE_NAME }}:latest
@@ -547,7 +603,7 @@ jobs:
 
   build-server:
     name: Build Server (${{ matrix.os }})
-    needs: [resolve-release-ref, tauri-preflight, build-wasm]
+    needs: [resolve-release-ref, tauri-preflight, build-wasm, build-server-binary]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
     env:
@@ -581,15 +637,20 @@ jobs:
         with:
           cache-shared-key: rust-server-${{ matrix.os }}
 
-      - name: Install musl tools
-        if: matrix.triple == 'x86_64-unknown-linux-musl'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
-          rustup target add x86_64-unknown-linux-musl
-
-      - name: Build phase-server
+      - name: Build phase-server (macOS/Windows)
+        # Linux musl is compiled once in build-server-binary and reused below;
+        # only the non-musl targets compile here.
+        if: matrix.triple != 'x86_64-unknown-linux-musl'
         run: cargo build --profile server-release --bin phase-server --target ${{ matrix.triple }}
+
+      - name: Download prebuilt linux binary
+        # Reuse the single musl build from build-server-binary, placed at the
+        # canonical target path so the packaging step is identical across OSes.
+        if: matrix.triple == 'x86_64-unknown-linux-musl'
+        uses: actions/download-artifact@v4
+        with:
+          name: server-binary-linux
+          path: target/x86_64-unknown-linux-musl/server-release
 
       - name: Download card data
         uses: actions/download-artifact@v4
