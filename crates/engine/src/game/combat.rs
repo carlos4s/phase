@@ -297,12 +297,32 @@ pub fn validate_attackers(state: &GameState, attacker_ids: &[ObjectId]) -> Resul
                 return Err(format!("{:?} has Defender", id));
             }
         }
+        // CR 508.1 + CR 101.2 + CR 109.5: Intrinsic CantAttack statics live ON the
+        // attacker; remote CantAttack statics (e.g. Angelic Arbiter restricting
+        // opponents' creatures via an `affected` filter) live elsewhere and are
+        // resolved through the shared `check_static_ability` building block, which
+        // matches `def.affected` against this attacker and applies any
+        // per-affected-player gate.
         if super::functioning_abilities::active_static_definitions(state, obj).any(|sd| {
             matches!(
                 sd.mode,
                 StaticMode::CantAttack | StaticMode::CantAttackOrBlock
             )
-        }) {
+        }) || crate::game::static_abilities::check_static_ability(
+            state,
+            StaticMode::CantAttack,
+            &crate::game::static_abilities::StaticCheckContext {
+                target_id: Some(id),
+                ..Default::default()
+            },
+        ) || crate::game::static_abilities::check_static_ability(
+            state,
+            StaticMode::CantAttackOrBlock,
+            &crate::game::static_abilities::StaticCheckContext {
+                target_id: Some(id),
+                ..Default::default()
+            },
+        ) {
             return Err(format!("{:?} can't attack", id));
         }
 
@@ -1642,6 +1662,25 @@ pub fn get_valid_attacker_ids(state: &GameState) -> Vec<ObjectId> {
                         StaticMode::CantAttack | StaticMode::CantAttackOrBlock
                     )
                 })
+                // CR 508.1 + CR 101.2 + CR 109.5: remote CantAttack statics
+                // (Angelic Arbiter restricting opponents' creatures) resolved via
+                // the shared `check_static_ability` building block.
+                && !crate::game::static_abilities::check_static_ability(
+                    state,
+                    StaticMode::CantAttack,
+                    &crate::game::static_abilities::StaticCheckContext {
+                        target_id: Some(*id),
+                        ..Default::default()
+                    },
+                )
+                && !crate::game::static_abilities::check_static_ability(
+                    state,
+                    StaticMode::CantAttackOrBlock,
+                    &crate::game::static_abilities::StaticCheckContext {
+                        target_id: Some(*id),
+                        ..Default::default()
+                    },
+                )
                 // CR 302.6: delegate to the single authority for summoning
                 // sickness — folds in Haste at query time without duplicating
                 // the flag/keyword logic here.
@@ -2212,6 +2251,24 @@ pub fn has_potential_attackers(state: &GameState) -> bool {
                             )
                         },
                     )
+                    // CR 508.1 + CR 101.2 + CR 109.5: remote CantAttack statics
+                    // (Angelic Arbiter) resolved via `check_static_ability`.
+                    && !crate::game::static_abilities::check_static_ability(
+                        state,
+                        StaticMode::CantAttack,
+                        &crate::game::static_abilities::StaticCheckContext {
+                            target_id: Some(*id),
+                            ..Default::default()
+                        },
+                    )
+                    && !crate::game::static_abilities::check_static_ability(
+                        state,
+                        StaticMode::CantAttackOrBlock,
+                        &crate::game::static_abilities::StaticCheckContext {
+                            target_id: Some(*id),
+                            ..Default::default()
+                        },
+                    )
                     && (obj.has_keyword(&Keyword::Haste)
                         || obj.entered_battlefield_turn.is_some_and(|etb| etb < turn))
             })
@@ -2223,6 +2280,7 @@ pub fn has_potential_attackers(state: &GameState) -> bool {
 mod tests {
     use super::*;
     use crate::game::zones::create_object;
+    use crate::parser::oracle_static::parse_static_line;
     use crate::types::ability::StaticDefinition;
     use crate::types::card_type::CoreType;
     use crate::types::format::FormatConfig;
@@ -2262,6 +2320,67 @@ mod tests {
         let mut state = setup();
         let id = create_creature(&mut state, PlayerId(0), "Bear", 2, 2);
         assert!(validate_attackers(&state, &[id]).is_ok());
+    }
+
+    /// CR 508.1 + CR 109.5: Angelic Arbiter — "Each opponent who cast a spell this
+    /// turn can't attack with creatures." The remote CantAttack static (with
+    /// `affected = opponents' creatures`) must be enforced in combat, gated on the
+    /// attacking creature's controller having cast a spell THIS turn. This
+    /// discriminates the prior misparse (affected = SelfRef, which never restricted
+    /// opponents' creatures, so the post-cast assertion would fail).
+    #[test]
+    fn angelic_arbiter_attack_lock_only_after_opponent_casts() {
+        let mut state = setup();
+        // Opponent-controlled (PlayerId(1)) Angelic Arbiter clause on battlefield.
+        let arbiter = create_creature(&mut state, PlayerId(1), "Angelic Arbiter", 5, 6);
+        let def = parse_static_line(
+            "Each opponent who cast a spell this turn can't attack with creatures.",
+        )
+        .unwrap();
+        assert_eq!(def.mode, StaticMode::CantAttack);
+        state
+            .objects
+            .get_mut(&arbiter)
+            .unwrap()
+            .static_definitions
+            .push(def);
+
+        // Player 0 (the Arbiter-controller's opponent, and the active player) has an
+        // attack-ready creature.
+        let attacker = create_creature(&mut state, PlayerId(0), "Bear", 2, 2);
+
+        // Player 0 has NOT cast a spell this turn -> creature is a valid attacker.
+        // On main (SelfRef misparse) this also passes; the discriminator is below.
+        assert!(
+            get_valid_attacker_ids(&state).contains(&attacker),
+            "creature must be a legal attacker before its controller casts a spell"
+        );
+        assert!(validate_attackers(&state, &[attacker]).is_ok());
+
+        // Record a spell cast by player 0 this turn.
+        let spell = create_object(
+            &mut state,
+            CardId(903),
+            PlayerId(0),
+            "Some Spell".to_string(),
+            crate::types::zones::Zone::Stack,
+        );
+        let spell_obj = state.objects.get(&spell).unwrap().clone();
+        crate::game::restrictions::record_spell_cast(
+            &mut state,
+            PlayerId(0),
+            &spell_obj,
+            crate::types::game_state::CastingVariant::Normal,
+        );
+
+        // Now the remote CantAttack prohibition applies -> creature is excluded and
+        // declaration is illegal. On main this assertion FAILS (SelfRef never
+        // restricts opponents' creatures).
+        assert!(
+            !get_valid_attacker_ids(&state).contains(&attacker),
+            "after its controller casts a spell, the creature can't attack"
+        );
+        assert!(validate_attackers(&state, &[attacker]).is_err());
     }
 
     #[test]

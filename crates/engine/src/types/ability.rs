@@ -9782,6 +9782,17 @@ pub struct StaticDefinition {
     /// `StaticDefinition` must reach `layers.rs` only with `condition: None`.
     #[serde(default)]
     pub condition: Option<StaticCondition>,
+    /// CR 101.2 + CR 109.5: Per-affected-player applicability gate.
+    ///
+    /// Distinct from `condition` (the source-relative CR 604.1 FUNCTIONING gate,
+    /// evaluated against the source's controller upstream by
+    /// `battlefield_active_statics`). `per_player_condition` is evaluated against
+    /// the AFFECTED player (the caster for `CantBeCast`; the attacking creature's
+    /// controller for `CantAttack`) via `restrictions::evaluate_condition`. Used by
+    /// "each opponent who [did X] this turn can't [Y]" prohibitions (Angelic
+    /// Arbiter). `None` = unconditional.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_player_condition: Option<ParsedCondition>,
     #[serde(default)]
     pub affected_zone: Option<Zone>,
     #[serde(default)]
@@ -9809,6 +9820,7 @@ impl StaticDefinition {
             affected: None,
             modifications: vec![],
             condition: None,
+            per_player_condition: None,
             affected_zone: None,
             effect_zone: None,
             active_zones: vec![],
@@ -9833,6 +9845,14 @@ impl StaticDefinition {
 
     pub fn condition(mut self, cond: StaticCondition) -> Self {
         self.condition = Some(cond);
+        self
+    }
+
+    /// CR 101.2 + CR 109.5: Set the per-affected-player applicability gate.
+    /// Evaluated against the affected player (caster / attacking creature's
+    /// controller), not the source controller. Mirrors `.condition()`.
+    pub fn per_player_condition(mut self, cond: ParsedCondition) -> Self {
+        self.per_player_condition = Some(cond);
         self
     }
 
@@ -11648,6 +11668,7 @@ mod tests {
                 ContinuousModification::AddToughness { value: 1 },
             ],
             condition: None,
+            per_player_condition: None,
             affected_zone: None,
             effect_zone: None,
             active_zones: vec![],
@@ -11884,6 +11905,7 @@ mod tests {
                 affected: Some(TargetFilter::SelfRef),
                 modifications: vec![ContinuousModification::AddPower { value: 3 }],
                 condition: None,
+                per_player_condition: None,
                 affected_zone: None,
                 effect_zone: None,
                 active_zones: vec![],

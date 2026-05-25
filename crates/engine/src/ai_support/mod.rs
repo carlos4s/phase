@@ -2048,6 +2048,7 @@ mod tests {
                 affected: Some(affected),
                 modifications: vec![],
                 condition: None,
+                per_player_condition: None,
                 affected_zone: None,
                 effect_zone: None,
                 active_zones: vec![],
