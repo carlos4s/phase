@@ -49,6 +49,25 @@ for arg in "$@"; do
   esac
 done
 
+# Normalize env-var booleans so PHASE_SETUP_AGENT=true / yes / on all work,
+# not just the literal "1".
+for var in NO_TILT AGENT; do
+  case "$(eval echo \$$var)" in
+    1|true|TRUE|yes|YES|on|ON) eval "$var=1" ;;
+    *)                          eval "$var=0" ;;
+  esac
+done
+
+# Agent mode means "produce the data files cargo coverage / semantic-audit /
+# integration tests need, on a one-shot basis." The Tilt skip-eager-builds
+# optimization assumes the user is about to run `tilt up` and would otherwise
+# fight Tilt for the cargo target lock — neither is true for an LLM
+# contributor. Force NO_TILT in agent mode so card-data.json is guaranteed to
+# exist when setup.sh exits.
+if [ "$AGENT" = 1 ]; then
+  NO_TILT=1
+fi
+
 echo "=== phase.rs Setup ==="
 if [ "$AGENT" = 1 ]; then
   echo "    (mode: agent — Scryfall image fetchers skipped)"
@@ -56,8 +75,11 @@ fi
 echo ""
 
 # --- Preflight: hard tools ---
+# curl is required by gen-card-data.sh, fetch-comp-rules.sh, and every
+# gen-scryfall-*.sh — preflight here so missing-curl fails with a tidy
+# message instead of a deep stack trace from inside a child script.
 missing=()
-for tool in cargo pnpm jq; do
+for tool in cargo pnpm jq curl; do
   command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 done
 if [ "${#missing[@]}" -ne 0 ]; then
@@ -65,13 +87,26 @@ if [ "${#missing[@]}" -ne 0 ]; then
   echo "  cargo: https://rustup.rs/" >&2
   echo "  pnpm:  https://pnpm.io/installation" >&2
   echo "  jq:    https://stedolan.github.io/jq/" >&2
+  echo "  curl:  preinstalled on macOS/Linux; Windows: winget install cURL.cURL" >&2
   exit 1
 fi
 
-# --- Preflight: soft tool (tilt) ---
+# --- Preflight: soft tool (tilt-dev/tilt, NOT other CLIs named "tilt") ---
+# Multiple unrelated binaries ship as `tilt` (e.g. Go template tools). The
+# tilt-dev/tilt binary is the only one whose help text references the
+# `Tiltfile` manifest, which has been the stable identifier across every
+# release since 0.x. Use that as a positive identity check — `command -v
+# tilt` alone is not sufficient.
 USE_TILT=0
 if [ "$NO_TILT" != 1 ] && command -v tilt >/dev/null 2>&1; then
-  USE_TILT=1
+  if tilt --help 2>&1 | grep -q "Tiltfile"; then
+    USE_TILT=1
+  else
+    echo "Note: found a 'tilt' binary on PATH but it isn't tilt-dev/tilt"
+    echo "      ('Tiltfile' not mentioned in --help). Falling back to inline"
+    echo "      WASM + card-data build. Install from https://tilt.dev if you"
+    echo "      want the watched-rebuild dev loop."
+  fi
 fi
 
 FAIL=0

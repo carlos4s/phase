@@ -127,13 +127,17 @@ Run **once per fresh clone** before invoking `$engine-implementer`. This downloa
 
 The `--agent` flag skips the three Scryfall image sidecars (`scryfall-data.json`, `scryfall-token-images.json`, `scryfall-printings.json`). They are runtime-only image data for the React frontend in a browser — no Rust integration test, parser tool, `cargo coverage`, `cargo semantic-audit`, or vitest test depends on them. Skipping saves a ~500 MB Scryfall bulk download with zero impact on the signal §6 verification consumes.
 
-What `--agent` mode produces, in agent-relevant order:
+**Required for §6 verification:**
 - `client/public/card-data.json` — without this, integration tests in `crates/engine/tests/integration/*.rs` self-skip with `"skipping: client/public/card-data.json not generated"` and `cargo coverage` / `cargo semantic-audit` / `cargo parser-gaps` cannot read parsed AST shape for any card. Agents without this file have no signal beyond unit tests.
 - `client/public/card-names.json`, `coverage-data.json`, `coverage-summary.json`, `card-data-meta.json`, `set-list.json`, `decks.json` — sidecars consumed by `cargo coverage` and the parser audit binaries.
-- `client/src/wasm/*` — WASM artifacts; required by `pnpm run type-check` because TypeScript files import their generated `.d.ts`.
 - `docs/MagicCompRules.txt` — gitignored. Required for the CR-annotation rule (`grep -n "^701.21" docs/MagicCompRules.txt`); without it you cannot verify CR numbers and §0.1 honesty applies.
-- `client/node_modules/` — required by `pnpm run type-check` / `pnpm lint` / `pnpm test`.
-- `.git/config` git-hooks include — applies the repo's pre-commit hooks.
+- `.git/config` git-hooks include — applies the repo's pre-commit hooks (including the `check-parser-combinators.sh` gate).
+
+**Also produced, but not consumed by Developer-track §6:**
+- `client/src/wasm/*` — WASM artifacts. Required by `pnpm run type-check` / vitest because TypeScript files import their generated `.d.ts`, but §6 doesn't run either. Safe to ignore unless your card touches frontend code.
+- `client/node_modules/` — required by `pnpm` commands. Same caveat.
+
+Agent mode also implies `--no-tilt` internally: even if `tilt` is on your PATH, setup.sh runs `gen-card-data.sh` and `build-wasm.sh` inline rather than deferring them to `tilt up`, so the required artifacts above are guaranteed present when the script exits.
 
 Skip this section entirely on the Non-developer track — CI runs everything `--agent` mode produces.
 
