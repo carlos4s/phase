@@ -805,9 +805,10 @@ mod tests {
                             TargetFilter::Typed(tf) => {
                                 assert_eq!(tf.controller, Some(ControllerRef::You));
                                 assert!(
-                                    tf.type_filters
-                                        .iter()
-                                        .any(|t| format!("{t:?}").contains("Creature")),
+                                    tf.type_filters.iter().any(|t| matches!(
+                                        t,
+                                        crate::types::ability::TypeFilter::Creature
+                                    )),
                                     "expected a Creature type filter, got {:?}",
                                     tf.type_filters
                                 );
