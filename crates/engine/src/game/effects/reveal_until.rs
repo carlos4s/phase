@@ -120,6 +120,7 @@ pub fn resolve(
         state.waiting_for = WaitingFor::RevealUntilKeptChoice {
             player: revealing_player,
             hit_card: hit,
+            source_id: ability.source_id,
             accept_zone,
             decline_zone: kept_destination,
             enter_tapped,
