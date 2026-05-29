@@ -31,6 +31,7 @@ mod dralnu_dealt_damage_sacrifice;
 mod dredgers_insight_mill_from_among;
 mod elemental_spectacle_regression;
 mod elusive_otter_repro;
+mod emissary_green;
 #[cfg(feature = "proptest")]
 mod engine_invariants;
 mod enlightened_tutor_regression;
