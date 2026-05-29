@@ -398,8 +398,7 @@ pub(crate) fn parse_trigger_lines_at_index_ir(
         return results;
     }
 
-    // Pattern 2: "whenever ~ [event1] or [event2]" — compound events sharing a subject.
-    // Pattern 2: "whenever ~ [event1], [event2], or [event3]" - serial
+    // Pattern 2: "whenever ~ [event1], [event2], or [event3]" — serial
     // compound events sharing a subject.
     if let Some(halves) = split_serial_event_compound(&cond_lower, &condition) {
         let mut results = Vec::with_capacity(halves.len());
@@ -3647,7 +3646,17 @@ fn normalize_compound_pronouns(text: &str) -> String {
 fn split_serial_event_compound(cond_lower: &str, condition: &str) -> Option<Vec<String>> {
     use super::oracle_nom::primitives::split_once_on;
 
+    // Split the original and lowercase forms in lockstep on the same ASCII
+    // delimiters rather than slicing `condition` with byte offsets taken from
+    // `cond_lower`. `str::to_lowercase()` is not byte-position-preserving for
+    // non-ASCII input (e.g. `İ` grows, `ẞ` shrinks), so a lowercase-derived
+    // offset could land mid-`char` in the original and panic. The delimiters
+    // (`", or "`, `", "`) are pure punctuation and identical in both views, so
+    // parallel splits keep the two aligned without cross-case byte arithmetic.
     let Ok((_, (before_or_lower, after_or_lower))) = split_once_on(cond_lower, ", or ") else {
+        return None;
+    };
+    let Ok((_, (before_or, after_or))) = split_once_on(condition, ", or ") else {
         return None;
     };
     if parse_event_verb_start(after_or_lower.trim_start()).is_err() {
@@ -3657,36 +3666,39 @@ fn split_serial_event_compound(cond_lower: &str, condition: &str) -> Option<Vec<
     let Ok((_, (first_lower, rest_events_lower))) = split_once_on(before_or_lower, ", ") else {
         return None;
     };
+    let Ok((_, (first_original, rest_events_original))) = split_once_on(before_or, ", ") else {
+        return None;
+    };
     let keyword_and_subject = extract_keyword_and_subject(first_lower.trim());
-    let mut results = vec![condition[..first_lower.len()].trim().to_string()];
+    let mut results = vec![first_original.trim().to_string()];
 
-    let rest_events_start = first_lower.len() + ", ".len();
-    let rest_events_original = &condition[rest_events_start..before_or_lower.len()];
     let mut remaining_lower = rest_events_lower;
     let mut remaining_original = rest_events_original;
     loop {
         if let Ok((_, (event_lower, tail_lower))) = split_once_on(remaining_lower, ", ") {
-            let event_original = remaining_original[..event_lower.len()].trim();
+            let Ok((_, (event_original, tail_original))) = split_once_on(remaining_original, ", ")
+            else {
+                return None;
+            };
             if parse_event_verb_start(event_lower.trim()).is_err() {
                 return None;
             }
-            results.push(format!("{keyword_and_subject} {event_original}"));
-            let next_start = event_lower.len() + ", ".len();
+            results.push(format!("{keyword_and_subject} {}", event_original.trim()));
             remaining_lower = tail_lower;
-            remaining_original = &remaining_original[next_start..];
+            remaining_original = tail_original;
         } else {
-            let event_original = remaining_original.trim();
             if parse_event_verb_start(remaining_lower.trim()).is_err() {
                 return None;
             }
-            results.push(format!("{keyword_and_subject} {event_original}"));
+            results.push(format!(
+                "{keyword_and_subject} {}",
+                remaining_original.trim()
+            ));
             break;
         }
     }
 
-    let after_event_start = before_or_lower.len() + ", or ".len();
-    let after_event_original = condition[after_event_start..].trim();
-    results.push(format!("{keyword_and_subject} {after_event_original}"));
+    results.push(format!("{keyword_and_subject} {}", after_or.trim()));
 
     Some(results)
 }
