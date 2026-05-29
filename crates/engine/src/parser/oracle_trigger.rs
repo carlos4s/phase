@@ -398,28 +398,10 @@ pub(crate) fn parse_trigger_lines_at_index_ir(
         return results;
     }
 
-    // Pattern 2: "whenever ~ [event1], [event2], or [event3]" — serial
-    // compound events sharing a subject.
-    if let Some(halves) = split_serial_event_compound(&cond_lower, &condition) {
-        let mut results = Vec::with_capacity(halves.len());
-        for (i, cond) in halves.into_iter().enumerate() {
-            let trigger_text = if effect.is_empty() {
-                cond
-            } else {
-                format!("{cond}, {effect}")
-            };
-            results.push(parse_trigger_line_with_index_ir(
-                &trigger_text,
-                card_name,
-                base_trigger_index.map(|b| b + i),
-                ctx,
-            ));
-        }
-        return results;
-    }
-
-    // Pattern 3: "whenever ~ [event1] or [event2]" - compound events sharing a subject.
-    if let Some(halves) = split_or_event_compound(&cond_lower, &condition) {
+    // Pattern 2: disjunctive shared-subject event list — "whenever ~ A, B, or C"
+    // (N-way serial) or "whenever ~ A or B" (2-way). CR 603.1: each listed event
+    // is its own trigger condition, all sharing the one subject.
+    if let Some(halves) = split_shared_subject_event_list(&cond_lower, &condition) {
         let mut results = Vec::with_capacity(halves.len());
         for (i, cond) in halves.into_iter().enumerate() {
             let trigger_text = if effect.is_empty() {
@@ -3639,7 +3621,23 @@ fn normalize_compound_pronouns(text: &str) -> String {
     result
 }
 
-/// Split serial compound events sharing one subject.
+/// Split a disjunctive shared-subject event trigger into one reconstructed
+/// trigger line per event, with the subject shared across all of them. This is
+/// the single entry point for the whole class: the N-way serial form
+/// ("Whenever ~ A, B, or C") and the 2-way "or" form ("Whenever ~ A or B") are
+/// its two branches. CR 603.1: each listed event is an independent trigger
+/// condition. Dedicated 2-way compound `TriggerMode` variants (AttacksOrBlocks,
+/// EntersOrAttacks) are intentionally left unsplit by `split_or_event_compound`.
+///
+/// Serial is tried first so a comma list ("A, B, or C") is not mis-split by the
+/// 2-way scanner; this preserves the prior dispatch order exactly.
+fn split_shared_subject_event_list(cond_lower: &str, condition: &str) -> Option<Vec<String>> {
+    split_serial_event_compound(cond_lower, condition)
+        .or_else(|| split_or_event_compound(cond_lower, condition))
+}
+
+/// Split serial compound events sharing one subject — the N-way branch of
+/// [`split_shared_subject_event_list`].
 ///
 /// Example: "Whenever ~ attacks, blocks, or becomes the target of a spell"
 /// becomes three trigger conditions, each reusing the same subject.
