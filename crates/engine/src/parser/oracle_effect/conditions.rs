@@ -2126,6 +2126,7 @@ pub(crate) fn static_condition_to_ability_condition(
         | StaticCondition::SpeedGE { .. }
         | StaticCondition::ClassLevelGE { .. }
         | StaticCondition::RecipientHasCounters { .. }
+        | StaticCondition::RecipientMatchesFilter { .. }
         | StaticCondition::IsRingBearer
         | StaticCondition::SourceInZone { .. }
         | StaticCondition::DefendingPlayerControls { .. }
