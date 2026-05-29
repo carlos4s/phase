@@ -399,6 +399,27 @@ pub(crate) fn parse_trigger_lines_at_index_ir(
     }
 
     // Pattern 2: "whenever ~ [event1] or [event2]" — compound events sharing a subject.
+    // Pattern 2: "whenever ~ [event1], [event2], or [event3]" - serial
+    // compound events sharing a subject.
+    if let Some(halves) = split_serial_event_compound(&cond_lower, &condition) {
+        let mut results = Vec::with_capacity(halves.len());
+        for (i, cond) in halves.into_iter().enumerate() {
+            let trigger_text = if effect.is_empty() {
+                cond
+            } else {
+                format!("{cond}, {effect}")
+            };
+            results.push(parse_trigger_line_with_index_ir(
+                &trigger_text,
+                card_name,
+                base_trigger_index.map(|b| b + i),
+                ctx,
+            ));
+        }
+        return results;
+    }
+
+    // Pattern 3: "whenever ~ [event1] or [event2]" - compound events sharing a subject.
     if let Some(halves) = split_or_event_compound(&cond_lower, &condition) {
         let mut results = Vec::with_capacity(halves.len());
         for (i, cond) in halves.into_iter().enumerate() {
@@ -3619,6 +3640,57 @@ fn normalize_compound_pronouns(text: &str) -> String {
     result
 }
 
+/// Split serial compound events sharing one subject.
+///
+/// Example: "Whenever ~ attacks, blocks, or becomes the target of a spell"
+/// becomes three trigger conditions, each reusing the same subject.
+fn split_serial_event_compound(cond_lower: &str, condition: &str) -> Option<Vec<String>> {
+    use super::oracle_nom::primitives::split_once_on;
+
+    let Ok((_, (before_or_lower, after_or_lower))) = split_once_on(cond_lower, ", or ") else {
+        return None;
+    };
+    if parse_event_verb_start(after_or_lower.trim_start()).is_err() {
+        return None;
+    }
+
+    let Ok((_, (first_lower, rest_events_lower))) = split_once_on(before_or_lower, ", ") else {
+        return None;
+    };
+    let keyword_and_subject = extract_keyword_and_subject(first_lower.trim());
+    let mut results = vec![condition[..first_lower.len()].trim().to_string()];
+
+    let rest_events_start = first_lower.len() + ", ".len();
+    let rest_events_original = &condition[rest_events_start..before_or_lower.len()];
+    let mut remaining_lower = rest_events_lower;
+    let mut remaining_original = rest_events_original;
+    loop {
+        if let Ok((_, (event_lower, tail_lower))) = split_once_on(remaining_lower, ", ") {
+            let event_original = remaining_original[..event_lower.len()].trim();
+            if parse_event_verb_start(event_lower.trim()).is_err() {
+                return None;
+            }
+            results.push(format!("{keyword_and_subject} {event_original}"));
+            let next_start = event_lower.len() + ", ".len();
+            remaining_lower = tail_lower;
+            remaining_original = &remaining_original[next_start..];
+        } else {
+            let event_original = remaining_original.trim();
+            if parse_event_verb_start(remaining_lower.trim()).is_err() {
+                return None;
+            }
+            results.push(format!("{keyword_and_subject} {event_original}"));
+            break;
+        }
+    }
+
+    let after_event_start = before_or_lower.len() + ", or ".len();
+    let after_event_original = condition[after_event_start..].trim();
+    results.push(format!("{keyword_and_subject} {after_event_original}"));
+
+    Some(results)
+}
+
 /// Split compound conditions where "or" joins two event verbs sharing the same subject.
 /// Returns `Some(vec![first_trigger, second_trigger])` with reconstructed trigger lines,
 /// or `None` if no compound event "or" is found.
@@ -3767,6 +3839,10 @@ fn parse_event_verb_start(input: &str) -> OracleResult<'_, ()> {
         parse_event_word("exploits"),
         parse_event_word("mutates"),
         parse_event_word("transforms"),
+        parse_event_phrase("becomes the target of a spell or ability"),
+        parse_event_phrase("become the target of a spell or ability"),
+        parse_event_phrase("becomes the target of an aura spell"),
+        parse_event_phrase("becomes the target of a spell"),
     ));
     let player_actions = alt((
         passive_player_actions,
@@ -3912,6 +3988,7 @@ fn find_effect_boundary(lower: &str) -> Option<usize> {
         let comma_pos = search_start + before.len();
         if !continues_player_action_list(after)
             && !continues_disjunctive_zone_change_condition(after)
+            && !continues_serial_event_condition(after)
         {
             return Some(comma_pos);
         }
@@ -3939,6 +4016,21 @@ fn continues_disjunctive_zone_change_condition(after_comma: &str) -> bool {
     let mut ctx = ParseContext::default();
     let (subject, verb) = parse_trigger_subject(clause.trim(), &mut ctx);
     parse_zone_change_clause(&subject, verb).is_some()
+}
+
+fn continues_serial_event_condition(after_comma: &str) -> bool {
+    use super::oracle_nom::primitives::split_once_on;
+
+    let trimmed = after_comma.trim_start();
+    if let Ok((after_or, ())) = value((), tag::<_, _, OracleError<'_>>("or ")).parse(trimmed) {
+        return parse_event_verb_start(after_or.trim_start()).is_ok();
+    }
+
+    let Ok((_, (first_event, after_or))) = split_once_on(trimmed, ", or ") else {
+        return false;
+    };
+    parse_event_verb_start(first_event.trim()).is_ok()
+        && parse_event_verb_start(after_or.trim_start()).is_ok()
 }
 
 fn continues_player_action_list(after_comma: &str) -> bool {
@@ -10106,6 +10198,74 @@ mod tests {
     // so it only fires when the ETB-tapped replacement did NOT apply. For a
     // SelfRef trigger the entering object IS the source, so the evaluator's
     // `source_id` fallback resolves to the same permanent.
+    #[test]
+    fn parse_serial_attack_block_target_compound() {
+        let defs = parse_trigger_lines(
+            "Whenever this creature attacks, blocks, or becomes the target of a spell, \
+             it deals damage equal to its power to each opponent.",
+            "Giggling Skitterspike",
+        );
+
+        assert_eq!(defs.len(), 3, "expected three trigger branches: {defs:?}");
+        assert_eq!(defs[0].mode, TriggerMode::Attacks);
+        assert_eq!(defs[0].valid_card, Some(TargetFilter::SelfRef));
+        assert_eq!(defs[1].mode, TriggerMode::Blocks);
+        assert_eq!(defs[1].valid_card, Some(TargetFilter::SelfRef));
+        assert_eq!(defs[2].mode, TriggerMode::BecomesTarget);
+        assert_eq!(defs[2].valid_card, Some(TargetFilter::SelfRef));
+        assert_eq!(defs[2].valid_source, Some(TargetFilter::StackSpell));
+
+        fn has_damage_each_player(ability: &AbilityDefinition) -> bool {
+            matches!(*ability.effect, Effect::DamageEachPlayer { .. })
+                || ability
+                    .sub_ability
+                    .as_ref()
+                    .is_some_and(|s| has_damage_each_player(s))
+        }
+        fn has_unimplemented(ability: &AbilityDefinition) -> bool {
+            matches!(*ability.effect, Effect::Unimplemented { .. })
+                || ability
+                    .sub_ability
+                    .as_ref()
+                    .is_some_and(|s| has_unimplemented(s))
+        }
+        fn damage_each_player_amount(ability: &AbilityDefinition) -> Option<&QuantityExpr> {
+            match ability.effect.as_ref() {
+                Effect::DamageEachPlayer { amount, .. } => Some(amount),
+                _ => ability
+                    .sub_ability
+                    .as_ref()
+                    .and_then(|s| damage_each_player_amount(s)),
+            }
+        }
+
+        for def in &defs {
+            let execute = def.execute.as_ref().expect("execute ability");
+            assert!(
+                has_damage_each_player(execute),
+                "expected DamageEachPlayer effect, got {:?}",
+                execute.effect
+            );
+            assert!(
+                !has_unimplemented(execute),
+                "effect chain leaked Unimplemented: {:?}",
+                execute
+            );
+            assert!(
+                matches!(
+                    damage_each_player_amount(execute),
+                    Some(QuantityExpr::Ref {
+                        qty: QuantityRef::Power {
+                            scope: crate::types::ability::ObjectScope::Source
+                        }
+                    })
+                ),
+                "expected damage amount to use source power, got {:?}",
+                damage_each_player_amount(execute)
+            );
+        }
+    }
+
     #[test]
     fn trigger_etb_self_enters_untapped_attaches_condition() {
         let def = parse_trigger_line(

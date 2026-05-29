@@ -42,6 +42,7 @@ mod frostcliff_siege_anchor_word_modes;
 mod gatta_and_luzzu_regression;
 mod gemstone_caverns_begin_game;
 mod giada_angel_counters;
+mod giggling_skitterspike_issue_890;
 mod gimbal_gremlin_prodigy;
 mod gluntch_choose_player_chain;
 mod gran_gran_integration;

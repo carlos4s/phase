@@ -1689,11 +1689,9 @@ pub(super) fn match_becomes_target(
     // CR 115.1a + CR 115.1b: Trigger text like "of a spell" and "of an Aura spell"
     // constrains the targeting source to matching stack spell characteristics.
     if let Some(source_filter) = &trigger.valid_source {
-        let Some(targeting_entry) = state
-            .stack
-            .iter()
-            .find(|entry| entry.id == *targeting_spell_id)
-        else {
+        let Some(targeting_entry) = state.stack.iter().find(|entry| {
+            entry.id == *targeting_spell_id || entry.source_id == *targeting_spell_id
+        }) else {
             return false;
         };
         let trigger_controller = state
@@ -6561,6 +6559,32 @@ mod tests {
             source_id: spell_id,
         };
         // No valid_card, so fallback: event.object_id == source_id param
+        assert!(match_becomes_target(
+            &event,
+            &trigger,
+            trigger_owner,
+            &state
+        ));
+    }
+
+    #[test]
+    fn becomes_target_spell_only_matches_spell_source_object_id() {
+        let (mut state, spell_id) = setup_with_spell_on_stack(false);
+        let stack_entry_id = ObjectId(600);
+        let Some(entry) = state.stack.front_mut() else {
+            panic!("expected spell on stack");
+        };
+        entry.id = stack_entry_id;
+        entry.source_id = spell_id;
+
+        let trigger_owner = ObjectId(5);
+        let mut trigger = make_trigger(TriggerMode::BecomesTarget);
+        trigger.valid_source = Some(TargetFilter::StackSpell);
+
+        let event = GameEvent::BecomesTarget {
+            target: TargetRef::Object(trigger_owner),
+            source_id: spell_id,
+        };
         assert!(match_becomes_target(
             &event,
             &trigger,

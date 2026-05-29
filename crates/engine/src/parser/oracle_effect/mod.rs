@@ -9648,7 +9648,9 @@ fn inject_subject_target(effect: &mut Effect, subject: &SubjectPhraseAst) {
         // power. Only `ObjectScope::Anaphoric` is rewritten — an explicit
         // possessive ("the sacrificed creature's power", `CostPaidObject` per
         // CR 608.2k) keeps its parser-fixed referent and is left untouched.
-        Effect::DealDamage { amount, .. } if subject_filter == TargetFilter::SelfRef => {
+        Effect::DealDamage { amount, .. } | Effect::DamageEachPlayer { amount, .. }
+            if subject_filter == TargetFilter::SelfRef =>
+        {
             rewrite_event_source_power_to_object_power(amount, ObjectScope::Source);
         }
         // CR 701.23a: "Its controller may search their library..." — the subject
