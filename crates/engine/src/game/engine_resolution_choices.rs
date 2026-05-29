@@ -320,6 +320,7 @@ pub(super) fn handle_resolution_choice(
                 accept_zone,
                 decline_zone,
                 enter_tapped,
+                enters_attacking,
                 revealed_misses,
                 rest_destination,
             },
@@ -333,6 +334,18 @@ pub(super) fn handle_resolution_choice(
                     if let Some(obj) = state.objects.get_mut(&hit_card) {
                         obj.tapped = true;
                     }
+                }
+                // CR 508.4: "...tapped and attacking" — place the accepted card
+                // in combat. No source attacker is threaded through this optional
+                // path, so `enter_attacking` falls back to the current trigger
+                // event / first opponent for the defending player.
+                if enters_attacking && accept_zone == Zone::Battlefield {
+                    let controller = state
+                        .objects
+                        .get(&hit_card)
+                        .map(|obj| obj.controller)
+                        .unwrap_or(player);
+                    crate::game::combat::enter_attacking(state, hit_card, hit_card, controller);
                 }
             } else if decline_zone == rest_destination {
                 misses.push(hit_card);

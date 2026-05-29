@@ -5111,6 +5111,7 @@ fn try_parse_reveal_until(tp: TextPair, player: TargetFilter) -> Option<ParsedEf
         kept_destination: Zone::Hand,
         rest_destination: Zone::Library,
         enter_tapped: false,
+        enters_attacking: false,
         kept_optional_to: None,
     }))
 }
@@ -34879,6 +34880,7 @@ mod tests {
                     kept_destination: Zone::Hand,
                     rest_destination: Zone::Library,
                     enter_tapped: false,
+                    enters_attacking: false,
                     kept_optional_to: None,
                 } if type_filters.contains(&TypeFilter::Creature)
             ),
@@ -34909,6 +34911,7 @@ mod tests {
                     kept_destination: Zone::Hand,
                     rest_destination: Zone::Library,
                     enter_tapped: false,
+                    enters_attacking: false,
                     kept_optional_to: None,
                 } if type_filters.contains(&TypeFilter::Creature)
             ),
@@ -34984,6 +34987,7 @@ mod tests {
                     kept_destination: Zone::Graveyard,
                     rest_destination: Zone::Graveyard,
                     enter_tapped: false,
+                    enters_attacking: false,
                     kept_optional_to: None,
                 } if type_filters.contains(&TypeFilter::Land)
             ),
@@ -35060,6 +35064,7 @@ mod tests {
                     kept_destination: Zone::Battlefield,
                     rest_destination: Zone::Library,
                     enter_tapped: false,
+                    enters_attacking: false,
                     kept_optional_to: None,
                 } if type_filters.contains(&TypeFilter::Artifact)
             ),

@@ -13240,6 +13240,146 @@ pub mod tests {
         );
     }
 
+    /// RUNTIME REGRESSION — issue #886 (Raph & Mikey, Troublemakers).
+    /// CR 508.4: "Put that card onto the battlefield tapped and attacking."
+    /// Drives the real `Attacks` trigger end-to-end and asserts the revealed
+    /// creature joins combat as an attacker and deals its combat damage. Also
+    /// covers the class member Fireflux Squad (same RevealUntil → attacking).
+    #[test]
+    fn raph_mikey_revealed_creature_enters_attacking_and_deals_damage() {
+        use crate::game::combat::AttackTarget;
+
+        let mut state = setup();
+        state.turn_number = 2;
+        state.phase = Phase::DeclareAttackers;
+        state.active_player = PlayerId(0);
+        state.priority_player = PlayerId(0);
+        state.players[0].life = 20;
+        state.players[1].life = 20;
+        state.waiting_for = WaitingFor::DeclareAttackers {
+            player: PlayerId(0),
+            valid_attacker_ids: vec![],
+            valid_attack_targets: vec![],
+        };
+
+        // Raph & Mikey on P0's battlefield, carrying its real Attacks trigger.
+        let raph = make_creature(&mut state, PlayerId(0), "Raph & Mikey, Troublemakers", 7, 7);
+        {
+            let parsed = crate::parser::oracle::parse_oracle_text(
+                "Trample, haste\nWhenever Raph & Mikey attack, reveal cards from the \
+                 top of your library until you reveal a creature card. Put that card \
+                 onto the battlefield tapped and attacking and the rest on the bottom \
+                 of your library in a random order.",
+                "Raph & Mikey, Troublemakers",
+                &[],
+                &[String::from("Creature")],
+                &[],
+            );
+            let obj = state.objects.get_mut(&raph).unwrap();
+            obj.entered_battlefield_turn = Some(1);
+            for trig in &parsed.triggers {
+                obj.trigger_definitions.push(trig.clone());
+            }
+            std::sync::Arc::make_mut(&mut obj.base_trigger_definitions).extend(parsed.triggers);
+        }
+
+        // Top of P0's library: a 6/6 creature (the reveal-until hit).
+        let revealed = create_object(
+            &mut state,
+            CardId(8001),
+            PlayerId(0),
+            "Colossal Dreadmaw".to_string(),
+            Zone::Library,
+        );
+        {
+            let o = state.objects.get_mut(&revealed).unwrap();
+            o.card_types.core_types.push(CoreType::Creature);
+            o.base_card_types = o.card_types.clone();
+            o.power = Some(6);
+            o.toughness = Some(6);
+            o.base_power = Some(6);
+            o.base_toughness = Some(6);
+        }
+        // Library filler so neither player decks out.
+        for player in [PlayerId(0), PlayerId(1)] {
+            for i in 0..10u64 {
+                create_object(
+                    &mut state,
+                    CardId(8100 + u64::from(player.0) * 100 + i),
+                    player,
+                    format!("Filler {}-{i}", player.0),
+                    Zone::Library,
+                );
+            }
+        }
+
+        // Declare Raph & Mikey attacking P1.
+        crate::game::engine::apply_as_current(
+            &mut state,
+            GameAction::DeclareAttackers {
+                attacks: vec![(raph, AttackTarget::Player(PlayerId(1)))],
+            },
+        )
+        .expect("declare attackers");
+
+        // Resolve the attack trigger by passing priority.
+        let mut safety = 40;
+        while !state.stack.is_empty() && safety > 0 {
+            if !matches!(state.waiting_for, WaitingFor::Priority { .. }) {
+                break;
+            }
+            crate::game::engine::apply_as_current(&mut state, GameAction::PassPriority)
+                .expect("pass priority to resolve Raph & Mikey trigger");
+            safety -= 1;
+        }
+
+        // FIX: the revealed creature is now an attacker (CR 508.4), tapped.
+        let combat = state.combat.as_ref().expect("combat in progress");
+        assert!(
+            combat.attackers.iter().any(|a| a.object_id == raph),
+            "Raph & Mikey itself attacks"
+        );
+        assert!(
+            combat.attackers.iter().any(|a| a.object_id == revealed),
+            "issue #886 FIX: the revealed creature must enter attacking"
+        );
+        assert!(
+            state.objects[&revealed].tapped,
+            "revealed creature is tapped"
+        );
+
+        // Drive combat to damage: P1 should lose 7 (Raph) + 6 (Dreadmaw) = 13.
+        let mut guard = 0;
+        while state.phase != Phase::PostCombatMain && guard < 60 {
+            guard += 1;
+            if !state.stack.is_empty() && matches!(state.waiting_for, WaitingFor::Priority { .. }) {
+                crate::game::engine::apply_as_current(&mut state, GameAction::PassPriority)
+                    .expect("resolve stack");
+                continue;
+            }
+            match &state.waiting_for {
+                WaitingFor::Priority { .. } => {
+                    crate::game::engine::apply_as_current(&mut state, GameAction::PassPriority)
+                        .expect("pass priority through combat");
+                }
+                WaitingFor::DeclareBlockers { .. } => {
+                    crate::game::engine::apply_as_current(
+                        &mut state,
+                        GameAction::DeclareBlockers {
+                            assignments: vec![],
+                        },
+                    )
+                    .expect("declare no blockers");
+                }
+                _ => break,
+            }
+        }
+        assert_eq!(
+            state.players[1].life, 7,
+            "issue #886 FIX: P1 takes 7 (Raph) + 6 (revealed Dreadmaw) = 13 combat damage"
+        );
+    }
+
     /// RUNTIME TEST — issue #411. Drives Syr Konrad's `{1}{B}: Each player mills
     /// a card.` activated ability through the real `apply` pipeline four times.
     /// Both libraries are stacked deterministically: the controller's library
