@@ -5911,6 +5911,9 @@ mod tests {
         // in the OPPONENT's graveyard (neither must be counted). `create_object`
         // already registers each object in the correct zone via `add_to_zone`,
         // so we must NOT push to the graveyard list again (that would double-count).
+        // CR 404.2: Graveyard membership is player-scoped. Deliberately diverge
+        // owner/controller below so this test fails if graveyard counts use
+        // controller instead of owner.
         for _ in 0..4 {
             let id = create_object(
                 &mut state,
@@ -5920,6 +5923,7 @@ mod tests {
                 Zone::Graveyard,
             );
             let o = state.objects.get_mut(&id).unwrap();
+            o.controller = PlayerId(1);
             o.card_types.core_types.push(CoreType::Creature);
             o.card_types.subtypes.push("Elf".to_string());
             o.base_card_types = o.card_types.clone();
@@ -5938,6 +5942,7 @@ mod tests {
             .card_types
             .core_types
             .push(CoreType::Creature);
+        state.objects.get_mut(&non_elf).unwrap().controller = PlayerId(1);
 
         let opp_elf = create_object(
             &mut state,
@@ -5948,6 +5953,7 @@ mod tests {
         );
         {
             let o = state.objects.get_mut(&opp_elf).unwrap();
+            o.controller = PlayerId(0);
             o.card_types.core_types.push(CoreType::Creature);
             o.card_types.subtypes.push("Elf".to_string());
             o.base_card_types = o.card_types.clone();
