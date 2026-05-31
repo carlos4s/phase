@@ -853,15 +853,15 @@ fn apply_parent_chain_context(
     effect_context_object: Option<&CostPaidObjectSnapshot>,
 ) {
     child.context = parent.context.clone();
-    // CR 608.2c + CR 603.4: A sub-ability is part of the SAME printed ability
-    // instance as its parent — its instructions are followed in order during a
-    // single resolution. Propagate the parent's `ability_index` so chain-level
+    // CR 608.2c: A sub-ability is part of the same printed ability instance as
+    // its parent; its instructions are followed in order during a single
+    // resolution. Propagate the parent's `ability_index` so chain-level
     // `AbilityCondition::NthResolutionThisTurn` gates can identify "this ability"
     // when evaluated on a chained sub-ability. The per-turn resolution counter is
     // keyed on `(source_id, ability_index)`; without this the sub carries no
     // index and the gate always evaluates false, so e.g. Nissa, Resurgent
     // Animist's "Then if this is the second time this ability has resolved this
-    // turn, reveal …" never fires its second-resolution half. Sub-abilities
+    // turn, reveal ..." never fires its second-resolution half. Sub-abilities
     // always resolve at depth > 0, so propagating the index never causes a
     // spurious counter bump (that happens only at the depth-0 top-level
     // resolution). Guarded on `is_none()` to never clobber an explicit index.
