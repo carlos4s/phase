@@ -4,10 +4,11 @@ use std::collections::HashMap;
 use crate::game::filter;
 use crate::game::speed::has_max_speed;
 use crate::types::ability::{
-    AbilityCondition, AbilityCost, AbilityKind, ControllerRef, CopyRetargetPermission,
-    CostPaidObjectSnapshot, Effect, EffectError, EffectKind, EffectOutcomeSignal, FilterProp,
-    PlayerFilter, PlayerScope, QuantityExpr, QuantityRef, RepeatContinuation, ResolvedAbility,
-    SharedQuality, SharedQualityRelation, SubAbilityLink, TargetFilter, TargetRef,
+    AbilityCondition, AbilityCost, AbilityKind, ChosenAttribute, ControllerRef,
+    CopyRetargetPermission, CostPaidObjectSnapshot, Effect, EffectError, EffectKind,
+    EffectOutcomeSignal, FilterProp, PlayerFilter, PlayerScope, QuantityExpr, QuantityRef,
+    RepeatContinuation, ResolvedAbility, SharedQuality, SharedQualityRelation, SubAbilityLink,
+    TargetFilter, TargetRef,
 };
 use crate::types::events::GameEvent;
 use crate::types::game_state::{
@@ -834,6 +835,7 @@ fn lki_snapshot_from_zone_change_record(record: &ZoneChangeRecord) -> LKISnapsho
         supertypes: record.supertypes.clone(),
         keywords: record.keywords.clone(),
         colors: record.colors.clone(),
+        chosen_attributes: Vec::new(),
         counters: Default::default(),
     }
 }
@@ -2368,6 +2370,13 @@ pub(crate) fn resolve_player_for_context_ref(
             return player;
         }
     }
+    if matches!(target_filter, TargetFilter::SourceChosenPlayer) {
+        // CR 607.2d + CR 608.2c: Resolve "the chosen player" from the
+        // source's linked persisted choice.
+        if let Some(player) = source_chosen_player(state, ability.source_id) {
+            return player;
+        }
+    }
     if let Some(target_ref) = crate::game::targeting::resolve_event_context_target(
         state,
         target_filter,
@@ -2405,6 +2414,30 @@ pub(crate) fn resolve_player_for_context_ref(
         }
     }
     ability.controller
+}
+
+/// CR 607.2d + CR 608.2c: Resolve "the chosen player" from the source's
+/// linked persisted choice. Triggered abilities may resolve after the source
+/// left the battlefield; in that case the LKI cache carries the source choices
+/// as they last existed in the public zone.
+pub(crate) fn source_chosen_player(state: &GameState, source_id: ObjectId) -> Option<PlayerId> {
+    state
+        .objects
+        .get(&source_id)
+        .and_then(|obj| {
+            obj.chosen_attributes.iter().find_map(|attr| match attr {
+                ChosenAttribute::Player(player) => Some(*player),
+                _ => None,
+            })
+        })
+        .or_else(|| {
+            state.lki_cache.get(&source_id).and_then(|lki| {
+                lki.chosen_attributes.iter().find_map(|attr| match attr {
+                    ChosenAttribute::Player(player) => Some(*player),
+                    _ => None,
+                })
+            })
+        })
 }
 
 /// CR 117.3a: Determine which player receives the "may" prompt for an optional
@@ -4985,7 +5018,7 @@ mod tests {
     use crate::game::zones::create_object;
     use crate::types::ability::{
         AbilityCondition, AbilityDefinition, AbilityKind, AggregateFunction, BounceSelection,
-        CastingPermission, Comparator, ContinuousModification, ControllerRef,
+        CastingPermission, ChosenAttribute, Comparator, ContinuousModification, ControllerRef,
         DelayedTriggerCondition, Duration, FilterProp, GainLifePlayer, ManaSpendPermission,
         ObjectProperty, PermissionGrantee, PlayerFilter, PlayerScope, PtValue, QuantityExpr,
         QuantityRef, SpellContext, StaticDefinition, TargetFilter, TargetRef, TypeFilter,
@@ -4996,7 +5029,7 @@ mod tests {
     use crate::types::counter::CounterType;
     use crate::types::format::FormatConfig;
     use crate::types::game_state::{
-        AutoMayChoice, CastingVariant, ExileLink, ExileLinkKind, LinkedExileSnapshot,
+        AutoMayChoice, CastingVariant, ExileLink, ExileLinkKind, LKISnapshot, LinkedExileSnapshot,
         MayTriggerAutoChoiceKey, MayTriggerOrigin, StackEntry, StackEntryKind,
     };
     use crate::types::identifiers::{CardId, ObjectId, TrackedSetId};
@@ -5027,6 +5060,66 @@ mod tests {
             handler: crate::types::ability::RuntimeHandler::NinjutsuFamily,
         };
         assert!(is_known_effect(&runtime));
+    }
+
+    #[test]
+    fn source_chosen_player_reads_live_source_then_lki() {
+        let mut state = GameState::new_two_player(42);
+        let source = create_object(
+            &mut state,
+            CardId(100),
+            PlayerId(0),
+            "Choice Source".to_string(),
+            Zone::Battlefield,
+        );
+        state
+            .objects
+            .get_mut(&source)
+            .unwrap()
+            .chosen_attributes
+            .push(ChosenAttribute::Player(PlayerId(1)));
+        let ability = ResolvedAbility::new(
+            Effect::DealDamage {
+                amount: QuantityExpr::Fixed { value: 1 },
+                target: TargetFilter::SourceChosenPlayer,
+                damage_source: None,
+            },
+            Vec::new(),
+            source,
+            PlayerId(0),
+        );
+
+        assert_eq!(
+            source_chosen_player(&state, ability.source_id),
+            Some(PlayerId(1))
+        );
+
+        state.objects.remove(&source);
+        state.lki_cache.insert(
+            source,
+            LKISnapshot {
+                name: "Choice Source".to_string(),
+                power: None,
+                toughness: None,
+                base_power: None,
+                base_toughness: None,
+                mana_value: 4,
+                controller: PlayerId(0),
+                owner: PlayerId(0),
+                card_types: vec![CoreType::Artifact],
+                subtypes: vec![],
+                supertypes: vec![],
+                keywords: vec![],
+                colors: vec![],
+                chosen_attributes: vec![ChosenAttribute::Player(PlayerId(1))],
+                counters: HashMap::new(),
+            },
+        );
+
+        assert_eq!(
+            source_chosen_player(&state, ability.source_id),
+            Some(PlayerId(1))
+        );
     }
 
     /// CR 119.3 + CR 115.10: `effect_has_iteration_bound_recipient` must
@@ -6405,6 +6498,7 @@ mod tests {
                 supertypes: vec![],
                 keywords: vec![],
                 colors: vec![],
+                chosen_attributes: Vec::new(),
                 counters: Default::default(),
             },
         );
@@ -8208,6 +8302,7 @@ mod tests {
                 target_player: Some(TargetFilter::ParentTargetController),
                 selection_constraint: SearchSelectionConstraint::None,
                 split: None,
+                source_zones: vec![crate::types::zones::Zone::Library],
             },
             vec![],
             ObjectId(9000),
@@ -8421,6 +8516,7 @@ mod tests {
                 target_player: Some(TargetFilter::ParentTargetController),
                 selection_constraint: SearchSelectionConstraint::None,
                 split: None,
+                source_zones: vec![crate::types::zones::Zone::Library],
             },
             vec![],
             ObjectId(9000),
@@ -8703,6 +8799,7 @@ mod tests {
                 target_player: Some(TargetFilter::ParentTargetController),
                 selection_constraint: SearchSelectionConstraint::None,
                 split: None,
+                source_zones: vec![crate::types::zones::Zone::Library],
             },
             vec![],
             ObjectId(9000),
@@ -8910,6 +9007,7 @@ mod tests {
                 target_player: Some(TargetFilter::ParentTargetController),
                 selection_constraint: SearchSelectionConstraint::None,
                 split: None,
+                source_zones: vec![crate::types::zones::Zone::Library],
             },
             vec![TargetRef::Object(destroyed_land)],
             ObjectId(9000),
@@ -10485,6 +10583,7 @@ mod tests {
                 target_player: None,
                 selection_constraint: crate::types::ability::SearchSelectionConstraint::None,
                 split: None,
+                source_zones: vec![crate::types::zones::Zone::Library],
             },
             vec![],
             ObjectId(100),
