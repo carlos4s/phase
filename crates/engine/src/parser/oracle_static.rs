@@ -14810,6 +14810,83 @@ mod tests {
     }
 
     #[test]
+    fn issue_1593_abomination_of_llanowar_cda_sums_battlefield_and_graveyard() {
+        // Issue #1593 — Abomination of Llanowar:
+        // "~'s power and toughness are each equal to the number of Elves you
+        //  control plus the number of Elf cards in your graveyard."
+        // CR 604.3: the CDA must parse to a SUM of two cross-zone object counts
+        // — battlefield Elves you control + Elf cards in your graveyard — not
+        // fall through to an Unimplemented static.
+        let def = parse_static_line(
+            "Abomination of Llanowar's power and toughness are each equal to the number of Elves you control plus the number of Elf cards in your graveyard.",
+        )
+        .expect("CDA must parse, not fall through to Unimplemented");
+        assert_eq!(def.mode, StaticMode::Continuous);
+        assert_eq!(def.affected, Some(TargetFilter::SelfRef));
+        assert!(def.characteristic_defining, "must be a CDA");
+        assert_eq!(def.modifications.len(), 2, "power + toughness");
+
+        // Both P/T resolve to the same summed quantity. Assert the structure of
+        // each: Sum[ ObjectCount{Elf, controller: You}, ZoneCardCount{Graveyard,
+        // [Elf], Controller} ].
+        let assert_sum = |value: &QuantityExpr| {
+            let QuantityExpr::Sum { exprs } = value else {
+                panic!("expected Sum, got {value:?}");
+            };
+            assert_eq!(exprs.len(), 2, "two summed operands");
+
+            // Operand 1: battlefield Elves you control.
+            let QuantityExpr::Ref {
+                qty:
+                    QuantityRef::ObjectCount {
+                        filter: TargetFilter::Typed(tf),
+                    },
+            } = &exprs[0]
+            else {
+                panic!("operand 0 must be ObjectCount, got {:?}", exprs[0]);
+            };
+            assert_eq!(tf.controller, Some(ControllerRef::You));
+            assert!(
+                tf.type_filters
+                    .iter()
+                    .any(|t| matches!(t, TypeFilter::Subtype(s) if s == "Elf")),
+                "operand 0 must filter Elf, got {:?}",
+                tf.type_filters
+            );
+
+            // Operand 2: Elf cards in your graveyard.
+            let QuantityExpr::Ref {
+                qty:
+                    QuantityRef::ZoneCardCount {
+                        zone: ZoneRef::Graveyard,
+                        card_types,
+                        scope: CountScope::Controller,
+                    },
+            } = &exprs[1]
+            else {
+                panic!(
+                    "operand 1 must be a Graveyard ZoneCardCount, got {:?}",
+                    exprs[1]
+                );
+            };
+            assert!(
+                card_types
+                    .iter()
+                    .any(|t| matches!(t, TypeFilter::Subtype(s) if s == "Elf")),
+                "operand 1 must filter Elf cards, got {card_types:?}"
+            );
+        };
+
+        for m in &def.modifications {
+            match m {
+                ContinuousModification::SetDynamicPower { value }
+                | ContinuousModification::SetDynamicToughness { value } => assert_sum(value),
+                other => panic!("unexpected modification {other:?}"),
+            }
+        }
+    }
+
+    #[test]
     fn static_tarmogoyf_cda() {
         let def = parse_static_line(
             "Tarmogoyf's power is equal to the number of card types among cards in all graveyards and its toughness is equal to that number plus 1.",

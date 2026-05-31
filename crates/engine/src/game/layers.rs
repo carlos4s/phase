@@ -5853,6 +5853,108 @@ mod tests {
         );
     }
 
+    /// Issue #1593 — Abomination of Llanowar: end-to-end (real parser → layers).
+    /// "~'s power and toughness are each equal to the number of Elves you control
+    ///  plus the number of Elf cards in your graveyard." The graveyard term must
+    ///  be ADDED, not dropped (the reported "not adding from graveyard").
+    #[test]
+    fn issue_1593_abomination_of_llanowar_runtime_counts_elves_and_graveyard() {
+        let mut state = setup();
+
+        // Abomination of Llanowar is itself an Elf (Elf Horror), so it counts
+        // toward "Elves you control". Parse its CDA with the REAL parser so this
+        // test exercises the full parser→runtime pipeline.
+        let abomination = make_creature(&mut state, "Abomination of Llanowar", 0, 0, PlayerId(0));
+        {
+            let def = crate::parser::oracle_static::parse_static_line(
+                "Abomination of Llanowar's power and toughness are each equal to the number of Elves you control plus the number of Elf cards in your graveyard.",
+            )
+            .expect("CDA must parse");
+            let obj = state.objects.get_mut(&abomination).unwrap();
+            obj.card_types.subtypes.push("Elf".to_string());
+            obj.base_card_types = obj.card_types.clone();
+            obj.static_definitions.push(def);
+        }
+
+        // Baseline: only Abomination itself is an Elf you control, empty graveyard.
+        state.layers_dirty.mark_full();
+        evaluate_layers(&mut state);
+        let obj = state.objects.get(&abomination).unwrap();
+        assert_eq!(
+            obj.power,
+            Some(1),
+            "1 Elf you control (itself), 0 graveyard"
+        );
+        assert_eq!(obj.toughness, Some(1));
+
+        // Add 2 more Elf creatures you control (total 3 Elves you control) and a
+        // non-Elf creature that must NOT be counted.
+        for _ in 0..2 {
+            let elf = make_creature(&mut state, "Llanowar Elves", 1, 1, PlayerId(0));
+            let o = state.objects.get_mut(&elf).unwrap();
+            o.card_types.subtypes.push("Elf".to_string());
+            o.base_card_types = o.card_types.clone();
+        }
+        let _bear = make_creature(&mut state, "Grizzly Bears", 2, 2, PlayerId(0));
+
+        // Add 4 Elf cards to YOUR graveyard, plus a non-Elf card and an Elf card
+        // in the OPPONENT's graveyard (neither must be counted). `create_object`
+        // already registers each object in the correct zone via `add_to_zone`,
+        // so we must NOT push to the graveyard list again (that would double-count).
+        for _ in 0..4 {
+            let id = create_object(
+                &mut state,
+                CardId(0),
+                PlayerId(0),
+                "Dead Elf".to_string(),
+                Zone::Graveyard,
+            );
+            let o = state.objects.get_mut(&id).unwrap();
+            o.card_types.core_types.push(CoreType::Creature);
+            o.card_types.subtypes.push("Elf".to_string());
+            o.base_card_types = o.card_types.clone();
+        }
+        let non_elf = create_object(
+            &mut state,
+            CardId(0),
+            PlayerId(0),
+            "Dead Bear".to_string(),
+            Zone::Graveyard,
+        );
+        state
+            .objects
+            .get_mut(&non_elf)
+            .unwrap()
+            .card_types
+            .core_types
+            .push(CoreType::Creature);
+
+        let opp_elf = create_object(
+            &mut state,
+            CardId(0),
+            PlayerId(1),
+            "Opp Dead Elf".to_string(),
+            Zone::Graveyard,
+        );
+        {
+            let o = state.objects.get_mut(&opp_elf).unwrap();
+            o.card_types.core_types.push(CoreType::Creature);
+            o.card_types.subtypes.push("Elf".to_string());
+            o.base_card_types = o.card_types.clone();
+        }
+
+        // Expected: 3 Elves you control + 4 Elf cards in YOUR graveyard = 7.
+        state.layers_dirty.mark_full();
+        evaluate_layers(&mut state);
+        let obj = state.objects.get(&abomination).unwrap();
+        assert_eq!(
+            obj.power,
+            Some(7),
+            "3 Elves you control + 4 Elf cards in graveyard = 7"
+        );
+        assert_eq!(obj.toughness, Some(7));
+    }
+
     #[test]
     fn test_tarmogoyf_cda_counts_card_types_in_graveyards() {
         let mut state = setup();
