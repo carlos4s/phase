@@ -997,15 +997,45 @@ fn parse_as_enters_choose(norm_lower: &str, original_text: &str) -> Option<Repla
     })?;
     let choice_type = try_parse_named_choice(choose_text)?;
 
+    let choose = AbilityDefinition::new(
+        AbilityKind::Spell,
+        Effect::Choose {
+            choice_type,
+            persist: true,
+        },
+    );
+
+    // CR 614.1c + CR 614.1d: The Thriving land cycle ("This land enters tapped.
+    // As it enters, choose a color other than <C>.") layers TWO replacement
+    // effects on the same entry event — the enters-tapped modifier AND the
+    // choice. This handler is dispatched BEFORE the unconditional enters-tapped
+    // guard and returns early, so without composing here the tap is silently
+    // dropped (issue #1581). Compose them into one Moved replacement:
+    // `Tap { SelfRef }` (the enter_tapped event-modifier) followed by the
+    // `Choose` as post-replacement "real work" — exactly the shape the engine
+    // already resolves for Vesuva's "enter tapped as a copy"
+    // (`Tap { SelfRef }` -> `sub_ability(BecomeCopy)`). The modifier must come
+    // first so `EventModifiers` accumulates the tap before reaching the choice.
+    let enters_tapped = (nom_primitives::scan_contains(norm_lower, "enters tapped")
+        || nom_primitives::scan_contains(norm_lower, "enters the battlefield tapped"))
+        && !nom_primitives::scan_contains(norm_lower, "unless")
+        && !nom_primitives::scan_contains(norm_lower, "if you control");
+
+    let execute = if enters_tapped {
+        AbilityDefinition::new(
+            AbilityKind::Spell,
+            Effect::Tap {
+                target: TargetFilter::SelfRef,
+            },
+        )
+        .sub_ability(choose)
+    } else {
+        choose
+    };
+
     Some(
         ReplacementDefinition::new(ReplacementEvent::Moved)
-            .execute(AbilityDefinition::new(
-                AbilityKind::Spell,
-                Effect::Choose {
-                    choice_type,
-                    persist: true,
-                },
-            ))
+            .execute(execute)
             .valid_card(TargetFilter::SelfRef)
             .description(original_text.to_string()),
     )
@@ -6835,6 +6865,49 @@ mod tests {
                 persist: true,
             } if excluded.is_empty()
         ));
+    }
+
+    #[test]
+    fn enters_tapped_then_choose_color_composes_tap_and_choice() {
+        // Issue #1581 — Thriving land cycle. "This land enters tapped. As it
+        // enters, choose a color other than green." must compose BOTH the
+        // enters-tapped modifier AND the colour choice into one Moved
+        // replacement: Tap { SelfRef } (modifier) -> sub_ability(Choose).
+        let def = parse_replacement_line(
+            "This land enters tapped. As it enters, choose a color other than green.",
+            "Thriving Grove",
+        )
+        .unwrap();
+        assert_eq!(def.event, ReplacementEvent::Moved);
+        assert_eq!(def.valid_card, Some(TargetFilter::SelfRef));
+        let execute = def.execute.as_ref().unwrap();
+        // Primary effect is the enters-tapped event modifier.
+        assert!(
+            matches!(
+                *execute.effect,
+                Effect::Tap {
+                    target: TargetFilter::SelfRef
+                }
+            ),
+            "primary effect must be Tap {{ SelfRef }} (enter_tapped modifier), got {:?}",
+            execute.effect
+        );
+        // The colour choice rides as the sub-ability "real work".
+        let sub = execute
+            .sub_ability
+            .as_ref()
+            .expect("enters-tapped choose-colour must carry the Choose as a sub-ability");
+        assert!(
+            matches!(
+                *sub.effect,
+                Effect::Choose {
+                    choice_type: ChoiceType::Color { ref excluded },
+                    persist: true,
+                } if excluded == &vec![ManaColor::Green]
+            ),
+            "sub-ability must be Choose color (excluding Green), got {:?}",
+            sub.effect
+        );
     }
 
     #[test]
