@@ -7183,11 +7183,11 @@ mod tests {
         );
     }
 
-    /// Issue #1581 — Thriving land cycle. "This land enters tapped. As it
-    /// enters, choose a color other than green." must ENTER TAPPED in addition
-    /// to prompting for the colour. Drives the real PlayLand → ETB replacement
-    /// pipeline (synthesis via `from_oracle_text`) and asserts the land is
-    /// tapped on the battlefield.
+    /// CR 614.1c + CR 614.1d: Thriving land text ("This land enters tapped. As
+    /// it enters, choose a color other than green.") must ENTER TAPPED in
+    /// addition to prompting for the colour. Drives the real PlayLand → ETB
+    /// replacement pipeline (synthesis via `from_oracle_text`) and asserts the
+    /// land is tapped on the battlefield.
     #[test]
     fn thriving_grove_enters_tapped_with_color_choice() {
         use crate::game::scenario::{GameScenario, P0};

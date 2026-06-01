@@ -977,17 +977,20 @@ fn parse_shock_land(norm_lower: &str, original_text: &str) -> Option<Replacement
 /// Parse "As ~ enters, choose a [type]" into a Moved replacement with persisted Choose.
 /// Skips lines that also contain shock land markers (handled by parse_shock_land).
 fn parse_as_enters_choose(norm_lower: &str, original_text: &str) -> Option<ReplacementDefinition> {
+    let has_phrase = |phrase: &'static str| {
+        nom_primitives::scan_at_word_boundaries(norm_lower, |input| {
+            tag::<_, _, OracleError<'_>>(phrase).parse(input)
+        })
+        .is_some()
+    };
+
     // Must have "as" + "enters" framing
-    if !nom_primitives::scan_contains(norm_lower, "as")
-        || !nom_primitives::scan_contains(norm_lower, "enters")
-    {
+    if !has_phrase("as ") || !has_phrase("enters") {
         return None;
     }
 
     // Don't match shock lands — they have their own handler
-    if nom_primitives::scan_contains(norm_lower, "you may pay")
-        && nom_primitives::scan_contains(norm_lower, "life")
-    {
+    if has_phrase("you may pay") && has_phrase("life") {
         return None;
     }
 
@@ -1016,10 +1019,10 @@ fn parse_as_enters_choose(norm_lower: &str, original_text: &str) -> Option<Repla
     // already resolves for Vesuva's "enter tapped as a copy"
     // (`Tap { SelfRef }` -> `sub_ability(BecomeCopy)`). The modifier must come
     // first so `EventModifiers` accumulates the tap before reaching the choice.
-    let enters_tapped = (nom_primitives::scan_contains(norm_lower, "enters tapped")
-        || nom_primitives::scan_contains(norm_lower, "enters the battlefield tapped"))
-        && !nom_primitives::scan_contains(norm_lower, "unless")
-        && !nom_primitives::scan_contains(norm_lower, "if you control");
+    let enters_tapped = (has_phrase("enters tapped")
+        || has_phrase("enters the battlefield tapped"))
+        && !has_phrase("unless")
+        && !has_phrase("if you control");
 
     let execute = if enters_tapped {
         AbilityDefinition::new(
@@ -6869,9 +6872,9 @@ mod tests {
 
     #[test]
     fn enters_tapped_then_choose_color_composes_tap_and_choice() {
-        // Issue #1581 — Thriving land cycle. "This land enters tapped. As it
-        // enters, choose a color other than green." must compose BOTH the
-        // enters-tapped modifier AND the colour choice into one Moved
+        // CR 614.1c + CR 614.1d: Thriving land text ("This land enters
+        // tapped. As it enters, choose a color other than green.") must compose
+        // BOTH the enters-tapped modifier AND the colour choice into one Moved
         // replacement: Tap { SelfRef } (modifier) -> sub_ability(Choose).
         let def = parse_replacement_line(
             "This land enters tapped. As it enters, choose a color other than green.",
