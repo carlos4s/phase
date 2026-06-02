@@ -1482,17 +1482,15 @@ mod tests {
         }
         // Source ("Another") and the opponent's creature ("you control") get none.
         assert!(
-            state.objects[&source]
+            !state.objects[&source]
                 .counters
-                .get(&CounterType::Plus1Plus1)
-                .is_none(),
+                .contains_key(&CounterType::Plus1Plus1),
             "source must be excluded by Another"
         );
         assert!(
-            state.objects[&opp]
+            !state.objects[&opp]
                 .counters
-                .get(&CounterType::Plus1Plus1)
-                .is_none(),
+                .contains_key(&CounterType::Plus1Plus1),
             "opponent's creature must be excluded by 'you control'"
         );
     }
