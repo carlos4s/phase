@@ -6449,7 +6449,7 @@ pub(super) fn counter_placement_is_mass(clause_lower: &str) -> bool {
         || nom_primitives::scan_contains(clause_lower, "on all ")
 }
 
-/// CR 122.1 + CR 613.4c: In a distributive "put a number of +1/+1 counters on
+/// CR 122.1 + CR 608.2c: In a distributive "put a number of +1/+1 counters on
 /// EACH ... equal to THAT CREATURE's <stat>" (Canopy Gargantuan), "that
 /// creature" is the per-iteration recipient — each object receives counters
 /// equal to its OWN stat. The shared `parse_event_context_refs` lowers "that
@@ -6459,7 +6459,7 @@ pub(super) fn counter_placement_is_mass(clause_lower: &str) -> bool {
 /// the count per object. A genuine cost referent ("the SACRIFICED creature's
 /// power") carries a cost/zone-change participle and is left as
 /// `CostPaidObject` — `resolve_add_all` resolves that once and applies it
-/// uniformly, which is correct.
+/// uniformly per CR 608.2k.
 fn rebind_distributive_recipient_count(count: QuantityExpr, lower: &str) -> QuantityExpr {
     let is_cost_referent = nom_primitives::scan_contains(lower, "sacrificed")
         || nom_primitives::scan_contains(lower, "exiled")
@@ -6515,7 +6515,18 @@ fn rebind_costpaid_scope_to_recipient(expr: QuantityExpr) -> QuantityExpr {
                 .map(rebind_costpaid_scope_to_recipient)
                 .collect(),
         },
-        other => other,
+        QuantityExpr::UpTo { max } => QuantityExpr::UpTo {
+            max: Box::new(rebind_costpaid_scope_to_recipient(*max)),
+        },
+        QuantityExpr::Power { base, exponent } => QuantityExpr::Power {
+            base,
+            exponent: Box::new(rebind_costpaid_scope_to_recipient(*exponent)),
+        },
+        QuantityExpr::Difference { left, right } => QuantityExpr::Difference {
+            left: Box::new(rebind_costpaid_scope_to_recipient(*left)),
+            right: Box::new(rebind_costpaid_scope_to_recipient(*right)),
+        },
+        QuantityExpr::Fixed { value } => QuantityExpr::Fixed { value },
     }
 }
 
@@ -10340,6 +10351,61 @@ mod tests {
             rebound,
             QuantityExpr::Ref {
                 qty: QuantityRef::Power {
+                    scope: ObjectScope::Recipient
+                }
+            }
+        ));
+    }
+
+    #[test]
+    fn rebind_distributive_recipient_count_walks_all_quantity_wrappers() {
+        use crate::types::ability::ObjectScope;
+
+        let expr = QuantityExpr::Difference {
+            left: Box::new(QuantityExpr::Ref {
+                qty: QuantityRef::Power {
+                    scope: ObjectScope::CostPaidObject,
+                },
+            }),
+            right: Box::new(QuantityExpr::Power {
+                base: 2,
+                exponent: Box::new(QuantityExpr::UpTo {
+                    max: Box::new(QuantityExpr::Ref {
+                        qty: QuantityRef::ObjectManaValue {
+                            scope: ObjectScope::CostPaidObject,
+                        },
+                    }),
+                }),
+            }),
+        };
+
+        let rebound = super::rebind_distributive_recipient_count(
+            expr,
+            "put a number of +1/+1 counters on each creature you control equal to that creature's power",
+        );
+
+        let QuantityExpr::Difference { left, right } = rebound else {
+            panic!("expected Difference, got {rebound:?}");
+        };
+        assert!(matches!(
+            *left,
+            QuantityExpr::Ref {
+                qty: QuantityRef::Power {
+                    scope: ObjectScope::Recipient
+                }
+            }
+        ));
+
+        let QuantityExpr::Power { exponent, .. } = *right else {
+            panic!("expected Power, got {right:?}");
+        };
+        let QuantityExpr::UpTo { max } = *exponent else {
+            panic!("expected UpTo, got {exponent:?}");
+        };
+        assert!(matches!(
+            *max,
+            QuantityExpr::Ref {
+                qty: QuantityRef::ObjectManaValue {
                     scope: ObjectScope::Recipient
                 }
             }

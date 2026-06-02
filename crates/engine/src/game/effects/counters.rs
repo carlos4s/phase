@@ -678,7 +678,7 @@ pub fn resolve_add_all(
                 .collect()
         };
 
-    // CR 122.1 + CR 613.4c: A per-recipient count ("each other creature you
+    // CR 122.1 + CR 608.2c: A per-recipient count ("each other creature you
     // control equal to THAT CREATURE's toughness" — Canopy Gargantuan) is
     // re-evaluated against each object; a uniform count (the source's power —
     // Ouroboroid) is resolved once and shared. Detected via the recipient-
