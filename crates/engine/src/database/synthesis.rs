@@ -210,6 +210,11 @@ impl KeywordTriggerInstaller {
             Keyword::Persist => vec![build_dies_return_with_counter_trigger(
                 "M1M1", "-1/-1", "702.79a",
             )],
+            // CR 702.135a: Afterlife N — dies trigger creating N 1/1 white and
+            // black Spirit creature tokens with flying. Per CR 702.135b each
+            // instance triggers separately, so one trigger is emitted per
+            // `Keyword::Afterlife(_)` on the face.
+            Keyword::Afterlife(n) => vec![build_afterlife_trigger(*n)],
             Keyword::Annihilator(n) => vec![build_annihilator_trigger(*n)],
             Keyword::Renown(n) => vec![build_renown_trigger(*n)],
             Keyword::Mentor => vec![build_mentor_trigger()],
@@ -253,6 +258,7 @@ impl KeywordTriggerInstaller {
             Keyword::Persist => {
                 is_dies_return_with_counter_trigger(trigger, &CounterType::Minus1Minus1)
             }
+            Keyword::Afterlife(_) => is_afterlife_trigger(trigger),
             Keyword::Annihilator(_) => is_annihilator_attack_trigger(trigger),
             Keyword::Renown(_) => is_renown_trigger(trigger),
             Keyword::Mentor => is_mentor_trigger(trigger),
@@ -2321,6 +2327,82 @@ pub fn synthesize_undying(face: &mut CardFace) {
 /// one synthesized trigger is emitted per keyword on the face.
 pub fn synthesize_persist(face: &mut CardFace) {
     KeywordTriggerInstaller::install_matching(face, |kw| matches!(kw, Keyword::Persist));
+}
+
+/// CR 702.135a: Afterlife N — "When this permanent is put into a graveyard from
+/// the battlefield, create N 1/1 white and black Spirit creature tokens with
+/// flying."
+///
+/// Synthesized as a self-referential dies trigger (`ChangesZone`
+/// Battlefield→Graveyard with `valid_card: SelfRef`, the same shape Undying and
+/// Persist use) whose effect creates the Spirit tokens. The trigger keys on
+/// "this permanent" (CR 702.135a), not "this creature", so it also fires for a
+/// non-creature permanent that has afterlife.
+///
+/// CR 702.135b: multiple instances of afterlife trigger separately, so (via
+/// `install_matching`) one trigger is emitted per `Keyword::Afterlife(_)` on the
+/// face.
+pub fn synthesize_afterlife(face: &mut CardFace) {
+    KeywordTriggerInstaller::install_matching(face, |kw| matches!(kw, Keyword::Afterlife(_)));
+}
+
+/// Builds the CR 702.135a Afterlife dies trigger for `count` Spirit tokens.
+fn build_afterlife_trigger(count: u32) -> TriggerDefinition {
+    let plural = if count == 1 { "" } else { "s" };
+    // CR 702.135a + CR 111.10: 1/1 white and black Spirit creature token with
+    // flying. Colors carry both White and Black (CR 105.3 multicolored).
+    let token_effect = Effect::Token {
+        name: "Spirit".to_string(),
+        power: PtValue::Fixed(1),
+        toughness: PtValue::Fixed(1),
+        types: vec!["Creature".to_string(), "Spirit".to_string()],
+        colors: vec![ManaColor::White, ManaColor::Black],
+        keywords: vec![Keyword::Flying],
+        tapped: false,
+        count: QuantityExpr::Fixed {
+            value: count as i32,
+        },
+        owner: TargetFilter::Controller,
+        attach_to: None,
+        enters_attacking: false,
+        supertypes: vec![],
+        static_abilities: vec![],
+        enter_with_counters: vec![],
+    };
+
+    let execute = AbilityDefinition::new(AbilityKind::Spell, token_effect).description(format!(
+        "Create {count} 1/1 white and black Spirit creature token{plural} with flying"
+    ));
+
+    // CR 702.135a: "put into a graveyard from the battlefield" — the same
+    // Battlefield→Graveyard self-referential dies trigger shape as Undying /
+    // Persist (`build_dies_return_with_counter_trigger`).
+    TriggerDefinition::new(TriggerMode::ChangesZone)
+        .origin(Zone::Battlefield)
+        .destination(Zone::Graveyard)
+        .valid_card(TargetFilter::SelfRef)
+        .execute(execute)
+        .description(format!(
+            "CR 702.135a: When ~ is put into a graveyard from the battlefield, create {count} 1/1 white and black Spirit creature token{plural} with flying."
+        ))
+}
+
+/// Idempotency-shape predicate for `synthesize`-installed Afterlife triggers.
+/// Mirrors `is_dies_return_with_counter_trigger` but discriminates on the
+/// Spirit-token effect (so it never collides with the Undying/Persist return
+/// triggers, which share the Battlefield→Graveyard self-ref shape but carry an
+/// `Effect::ChangeZone` rather than `Effect::Token`).
+fn is_afterlife_trigger(t: &TriggerDefinition) -> bool {
+    if !matches!(t.mode, TriggerMode::ChangesZone)
+        || t.origin != Some(Zone::Battlefield)
+        || t.destination != Some(Zone::Graveyard)
+        || !matches!(t.valid_card, Some(TargetFilter::SelfRef))
+    {
+        return false;
+    }
+    t.execute.as_deref().is_some_and(
+        |execute| matches!(&*execute.effect, Effect::Token { name, .. } if name == "Spirit"),
+    )
 }
 
 /// CR 702.112a: Renown N — combat-damage-to-player trigger with an
@@ -4644,6 +4726,10 @@ pub fn synthesize_all(face: &mut CardFace) {
     // -1/-1 counter, gated on having had no -1/-1 counter at death (LKI).
     // Sibling of Undying via shared `synthesize_dies_return_with_counter`.
     synthesize_persist(face);
+    // CR 702.135a: Afterlife N — dies trigger creating N 1/1 white and black
+    // Spirit creature tokens with flying. Self-referential dies trigger shape
+    // shared with Undying/Persist.
+    synthesize_afterlife(face);
     // CR 702.112a: Renown N — combat damage to player trigger with
     // designation-setting resolution. CR 702.112c: each instance triggers
     // separately; the resolution-time designation guard suppresses later ones.
@@ -6820,6 +6906,166 @@ mod undying_persist_synthesis_tests {
             .count();
         assert_eq!(p1p1, 1, "exactly one Undying trigger");
         assert_eq!(m1m1, 1, "exactly one Persist trigger");
+    }
+
+    /// CR 702.135a: Afterlife N synthesizes a self-ref dies trigger whose
+    /// effect creates N 1/1 white-and-black flying Spirit tokens.
+    #[test]
+    fn synthesize_afterlife_adds_dies_trigger_with_spirit_tokens() {
+        let mut face = face_with_keyword(Keyword::Afterlife(2));
+        synthesize_afterlife(&mut face);
+
+        let trigger = face
+            .triggers
+            .iter()
+            .find(|t| is_afterlife_trigger(t))
+            .expect("afterlife should synthesize a dies trigger");
+
+        // Trigger shape: dies (battlefield → graveyard) with self-ref filter.
+        assert!(matches!(trigger.mode, TriggerMode::ChangesZone));
+        assert_eq!(trigger.origin, Some(Zone::Battlefield));
+        assert_eq!(trigger.destination, Some(Zone::Graveyard));
+        assert!(matches!(trigger.valid_card, Some(TargetFilter::SelfRef)));
+        // CR 702.135a is unconditional — no intervening-if gate.
+        assert!(trigger.condition.is_none());
+
+        let execute = trigger.execute.as_deref().expect("execute body required");
+        let Effect::Token {
+            name,
+            power,
+            toughness,
+            types,
+            colors,
+            keywords,
+            count,
+            owner,
+            tapped,
+            enters_attacking,
+            ..
+        } = &*execute.effect
+        else {
+            panic!("afterlife execute should be Effect::Token");
+        };
+        assert_eq!(name, "Spirit");
+        assert!(matches!(power, PtValue::Fixed(1)));
+        assert!(matches!(toughness, PtValue::Fixed(1)));
+        assert!(types.contains(&"Creature".to_string()));
+        assert!(types.contains(&"Spirit".to_string()));
+        assert_eq!(colors, &vec![ManaColor::White, ManaColor::Black]);
+        assert_eq!(keywords, &vec![Keyword::Flying]);
+        assert!(matches!(count, QuantityExpr::Fixed { value: 2 }));
+        assert!(matches!(owner, TargetFilter::Controller));
+        assert!(!tapped);
+        assert!(!enters_attacking);
+    }
+
+    /// Afterlife 1 vs Afterlife 3 — the token `count` tracks N.
+    #[test]
+    fn synthesize_afterlife_count_tracks_n() {
+        for n in [1u32, 3] {
+            let mut face = face_with_keyword(Keyword::Afterlife(n));
+            synthesize_afterlife(&mut face);
+            let execute = face
+                .triggers
+                .iter()
+                .find(|t| is_afterlife_trigger(t))
+                .and_then(|t| t.execute.as_deref())
+                .expect("afterlife trigger with execute");
+            let Effect::Token { count, .. } = &*execute.effect else {
+                panic!("expected Effect::Token");
+            };
+            assert!(
+                matches!(count, QuantityExpr::Fixed { value } if *value == n as i32),
+                "afterlife {n} should create {n} tokens"
+            );
+        }
+    }
+
+    #[test]
+    fn synthesize_afterlife_is_idempotent() {
+        let mut face = face_with_keyword(Keyword::Afterlife(2));
+        synthesize_afterlife(&mut face);
+        synthesize_afterlife(&mut face);
+        let count = face
+            .triggers
+            .iter()
+            .filter(|t| is_afterlife_trigger(t))
+            .count();
+        assert_eq!(count, 1, "afterlife trigger should be deduped");
+    }
+
+    #[test]
+    fn synthesize_afterlife_noop_without_keyword() {
+        let mut face = face_with_keyword(Keyword::Flying);
+        synthesize_afterlife(&mut face);
+        assert!(face.triggers.is_empty());
+    }
+
+    /// CR 702.135b: multiple instances of afterlife each trigger separately.
+    #[test]
+    fn synthesize_afterlife_emits_one_trigger_per_instance() {
+        let mut face = CardFace::default();
+        face.keywords.push(Keyword::Afterlife(1));
+        face.keywords.push(Keyword::Afterlife(1));
+        synthesize_afterlife(&mut face);
+        let count = face
+            .triggers
+            .iter()
+            .filter(|t| is_afterlife_trigger(t))
+            .count();
+        assert_eq!(count, 2);
+    }
+
+    /// The Afterlife matcher (Spirit-token effect) must not collide with the
+    /// Undying/Persist return triggers, which share the Battlefield→Graveyard
+    /// self-ref shape but carry an `Effect::ChangeZone`.
+    #[test]
+    fn afterlife_trigger_distinct_from_undying() {
+        let mut face = CardFace::default();
+        face.keywords.push(Keyword::Afterlife(2));
+        face.keywords.push(Keyword::Undying);
+        synthesize_afterlife(&mut face);
+        synthesize_undying(&mut face);
+
+        let afterlife = face
+            .triggers
+            .iter()
+            .filter(|t| is_afterlife_trigger(t))
+            .count();
+        let undying = face
+            .triggers
+            .iter()
+            .filter(|t| is_dies_return_with_counter_trigger(t, &CounterType::Plus1Plus1))
+            .count();
+        assert_eq!(afterlife, 1, "exactly one Afterlife trigger");
+        assert_eq!(undying, 1, "exactly one Undying trigger");
+        // Neither predicate matches the other's trigger.
+        assert!(
+            !face.triggers.iter().any(|t| is_afterlife_trigger(t)
+                && is_dies_return_with_counter_trigger(t, &CounterType::Plus1Plus1)),
+            "no trigger is matched by both predicates"
+        );
+    }
+
+    /// CR 604.1 runtime-grant path: `triggers_for` produces the trigger and
+    /// `trigger_matches_keyword_kind` recognizes it (used by layers.rs when
+    /// afterlife is granted on the battlefield, and for symmetric removal).
+    #[test]
+    fn afterlife_triggers_for_and_matcher_roundtrip() {
+        let triggers = KeywordTriggerInstaller::triggers_for(&Keyword::Afterlife(2));
+        assert_eq!(triggers.len(), 1, "afterlife yields exactly one trigger");
+        assert!(
+            KeywordTriggerInstaller::trigger_matches_keyword_kind(
+                &triggers[0],
+                &Keyword::Afterlife(2)
+            ),
+            "matcher must recognize the synthesized afterlife trigger"
+        );
+        // It must NOT be recognized as some other keyword's trigger.
+        assert!(!KeywordTriggerInstaller::trigger_matches_keyword_kind(
+            &triggers[0],
+            &Keyword::Undying
+        ));
     }
 }
 
