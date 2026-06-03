@@ -23,6 +23,38 @@ use crate::types::proposed_event::{CounterMoveStage, EtbTapState, ProposedEvent,
 use crate::types::replacements::ReplacementEvent;
 use crate::types::zones::Zone;
 
+/// CR 122.1c: Remove one shield counter from the permanent, emitting
+/// `CounterRemoved`. Returns `true` if a shield counter was present and removed
+/// (so the caller should treat the destruction/damage as replaced/prevented),
+/// `false` otherwise. Mirrors the CR 122.1d stun-counter removal model in
+/// `turns.rs`: decrement, drop the map entry at zero, and emit one
+/// `CounterRemoved { count: 1 }` event so counter-removal triggers observe it.
+pub(crate) fn consume_shield_counter(
+    state: &mut GameState,
+    object_id: ObjectId,
+    events: &mut Vec<GameEvent>,
+) -> bool {
+    let Some(obj) = state.objects.get_mut(&object_id) else {
+        return false;
+    };
+    let Some(entry) = obj.counters.get_mut(&CounterType::Shield) else {
+        return false;
+    };
+    if *entry == 0 {
+        return false;
+    }
+    *entry -= 1;
+    if *entry == 0 {
+        obj.counters.remove(&CounterType::Shield);
+    }
+    events.push(GameEvent::CounterRemoved {
+        object_id,
+        counter_type: CounterType::Shield,
+        count: 1,
+    });
+    true
+}
+
 /// CR 614.1: Replacement effects modify events as they would occur.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ReplacementResult {

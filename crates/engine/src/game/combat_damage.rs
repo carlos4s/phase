@@ -704,6 +704,11 @@ pub(crate) fn apply_combat_damage(
     // and are dropped here; the gate already emitted any required DamagePrevented.
     let mut entries: Vec<BatchEntry> = Vec::with_capacity(assignments.len());
     let mut proposed_events: Vec<ProposedEvent> = Vec::with_capacity(assignments.len());
+    // CR 122.1c: permanents whose shield counter has already absorbed combat
+    // damage this simultaneous batch (CR 510.2), so one counter prevents all of
+    // the combat damage dealt to that permanent and is removed exactly once.
+    let mut shielded_this_batch: std::collections::HashSet<ObjectId> =
+        std::collections::HashSet::new();
     for (source_id, assignment) in assignments {
         // Read commander flag before DamageContext borrows — both are immutable reads.
         let source_is_commander = state
@@ -735,6 +740,24 @@ pub(crate) fn apply_combat_damage(
             true,
             &mut events,
         ) {
+            // CR 122.1c prevention: a shield counter prevents all combat damage
+            // dealt to the permanent in this batch, removing one counter. The
+            // first instance to a shielded permanent consumes the counter; every
+            // later instance to the same permanent this batch is prevented
+            // without consuming another.
+            if let TargetRef::Object(obj_id) = &target_ref {
+                let prevented = shielded_this_batch.contains(obj_id)
+                    || replacement::consume_shield_counter(state, *obj_id, &mut events);
+                if prevented {
+                    shielded_this_batch.insert(*obj_id);
+                    events.push(GameEvent::DamagePrevented {
+                        source_id: ctx.source_id,
+                        target: target_ref.clone(),
+                        amount: assignment.amount,
+                    });
+                    continue;
+                }
+            }
             entries.push(BatchEntry {
                 ctx,
                 source_is_commander,
@@ -1214,6 +1237,69 @@ mod tests {
             }
             other => panic!("Expected AssignCombatDamage choice, got {other:?}"),
         }
+    }
+
+    /// CR 122.1c + CR 510.2: a single shield counter prevents ALL combat damage
+    /// dealt to the permanent in one simultaneous batch and is removed exactly
+    /// once, even when multiple sources deal damage to it.
+    #[test]
+    fn shield_counter_prevents_all_simultaneous_combat_damage_once() {
+        let mut state = setup();
+        let shielded = create_creature(&mut state, PlayerId(1), "Shielded Bear", 2, 2);
+        state
+            .objects
+            .get_mut(&shielded)
+            .unwrap()
+            .counters
+            .insert(CounterType::Shield, 1);
+        let atk1 = create_creature(&mut state, PlayerId(0), "Attacker A", 3, 3);
+        let atk2 = create_creature(&mut state, PlayerId(0), "Attacker B", 3, 3);
+
+        let assignments = vec![
+            (
+                atk1,
+                DamageAssignment {
+                    target: DamageTarget::Object(shielded),
+                    amount: 3,
+                },
+            ),
+            (
+                atk2,
+                DamageAssignment {
+                    target: DamageTarget::Object(shielded),
+                    amount: 3,
+                },
+            ),
+        ];
+        let events = apply_combat_damage(&mut state, &assignments);
+
+        assert_eq!(
+            state.objects[&shielded].damage_marked, 0,
+            "all simultaneous combat damage must be prevented"
+        );
+        assert_eq!(
+            state.objects[&shielded].counters.get(&CounterType::Shield),
+            None,
+            "exactly one shield counter consumed for the whole batch"
+        );
+        let removed = events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    GameEvent::CounterRemoved {
+                        counter_type: CounterType::Shield,
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(removed, 1, "shield counter removed exactly once");
+        let prevented = events
+            .iter()
+            .filter(|e| matches!(e, GameEvent::DamagePrevented { .. }))
+            .count();
+        assert_eq!(prevented, 2, "both damage instances reported as prevented");
     }
 
     #[test]
