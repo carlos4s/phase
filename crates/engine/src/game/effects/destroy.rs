@@ -119,16 +119,6 @@ pub(crate) fn destroy_single_object(
         return DestroyOutcome::Skipped;
     }
 
-    // CR 122.1c: "If this permanent would be destroyed as the result of an
-    // effect, instead remove a shield counter from it." Consumes one shield
-    // counter and aborts the destruction. (The damage half of the shield —
-    // CR 122.1c prevention — is handled in the damage pipeline, so a shielded
-    // permanent never reaches lethal-damage destruction.) Like indestructible,
-    // this is a direct pre-pipeline guard.
-    if replacement::consume_shield_counter(state, object_id, events) {
-        return DestroyOutcome::Skipped;
-    }
-
     let proposed = ProposedEvent::Destroy {
         object_id,
         source: Some(source),

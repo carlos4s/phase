@@ -235,24 +235,6 @@ pub(crate) fn apply_damage_to_target(
         return Ok(DamageResult::Applied(0));
     };
 
-    // CR 122.1c prevention: "If damage would be dealt to this permanent, prevent
-    // that damage and remove a shield counter from it." Applied after the
-    // pre-replacement gate (0-damage / protection / prohibition) and before the
-    // CR 614/615 pipeline — mirroring the indestructible / stun-counter
-    // pre-pipeline guards. (Combat damage runs the symmetric per-batch check in
-    // `combat_damage.rs` so all simultaneous combat damage to one permanent is
-    // prevented by a single counter.)
-    if let TargetRef::Object(obj_id) = &target {
-        if replacement::consume_shield_counter(state, *obj_id, events) {
-            events.push(GameEvent::DamagePrevented {
-                source_id: ctx.source_id,
-                target: target.clone(),
-                amount,
-            });
-            return Ok(DamageResult::Applied(0));
-        }
-    }
-
     match replacement::replace_event(state, proposed, events) {
         ReplacementResult::Execute(event) => Ok(apply_damage_after_replacement(
             state, ctx, event, is_combat, events,

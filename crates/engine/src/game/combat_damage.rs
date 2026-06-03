@@ -704,11 +704,6 @@ pub(crate) fn apply_combat_damage(
     // and are dropped here; the gate already emitted any required DamagePrevented.
     let mut entries: Vec<BatchEntry> = Vec::with_capacity(assignments.len());
     let mut proposed_events: Vec<ProposedEvent> = Vec::with_capacity(assignments.len());
-    // CR 122.1c: permanents whose shield counter has already absorbed combat
-    // damage this simultaneous batch (CR 510.2), so one counter prevents all of
-    // the combat damage dealt to that permanent and is removed exactly once.
-    let mut shielded_this_batch: std::collections::HashSet<ObjectId> =
-        std::collections::HashSet::new();
     for (source_id, assignment) in assignments {
         // Read commander flag before DamageContext borrows — both are immutable reads.
         let source_is_commander = state
@@ -740,24 +735,6 @@ pub(crate) fn apply_combat_damage(
             true,
             &mut events,
         ) {
-            // CR 122.1c prevention: a shield counter prevents all combat damage
-            // dealt to the permanent in this batch, removing one counter. The
-            // first instance to a shielded permanent consumes the counter; every
-            // later instance to the same permanent this batch is prevented
-            // without consuming another.
-            if let TargetRef::Object(obj_id) = &target_ref {
-                let prevented = shielded_this_batch.contains(obj_id)
-                    || replacement::consume_shield_counter(state, *obj_id, &mut events);
-                if prevented {
-                    shielded_this_batch.insert(*obj_id);
-                    events.push(GameEvent::DamagePrevented {
-                        source_id: ctx.source_id,
-                        target: target_ref.clone(),
-                        amount: assignment.amount,
-                    });
-                    continue;
-                }
-            }
             entries.push(BatchEntry {
                 ctx,
                 source_is_commander,
@@ -875,6 +852,16 @@ fn fire_combat_prevention_riders(
 ) {
     for (rid, &total_prevented) in prevention_tally {
         if total_prevented <= 0 {
+            continue;
+        }
+
+        if replacement::is_shield_counter_damage_replacement(*rid) {
+            replacement::consume_shield_counter(state, rid.source, events);
+            events.push(GameEvent::DamagePrevented {
+                source_id: rid.source,
+                target: TargetRef::Object(rid.source),
+                amount: total_prevented as u32,
+            });
             continue;
         }
 
@@ -1299,7 +1286,10 @@ mod tests {
             .iter()
             .filter(|e| matches!(e, GameEvent::DamagePrevented { .. }))
             .count();
-        assert_eq!(prevented, 2, "both damage instances reported as prevented");
+        assert_eq!(
+            prevented, 1,
+            "one aggregate DamagePrevented event emitted for the simultaneous batch"
+        );
     }
 
     #[test]
