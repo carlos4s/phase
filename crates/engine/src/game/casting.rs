@@ -6187,19 +6187,25 @@ pub fn handle_cast_spell_with_payment_mode(
         }
     }
 
-    // CR 702.140a: Mutate — when a hand card has `Keyword::Mutate(cost)` and both
-    // the printed creature cost AND the mutate cost are affordable AND there is at
-    // least one legal "non-Human creature you own" to merge with, present the
-    // choice. Auto-skip when only one path is viable. Mirrors the Bestow opt-in
-    // flow: mutate is opt-in via `variant_override`, so a fall-through proceeds as
-    // a normal creature cast.
+    // CR 702.140a: Mutate — when a card being cast has `Keyword::Mutate(cost)`
+    // and both the printed creature cost AND the mutate cost are affordable AND
+    // there is at least one legal "non-Human creature you own" to merge with,
+    // present the choice. Auto-skip when only one path is viable. Mirrors the
+    // Bestow opt-in flow: mutate is opt-in via `variant_override`, so a
+    // fall-through proceeds as a normal creature cast.
+    //
+    // Offered from the hand and from the command zone — CR 702.140a places no
+    // zone restriction, and a mutate creature that is also a commander (e.g.
+    // Otrimi, the Ever-Playful) is cast for its mutate cost straight from the
+    // command zone (CR 903.9 cast permission applies; commander tax is added by
+    // the normal cost pipeline).
     //
     // CR 702.140a + CR 108.3: "a non-Human creature with the same owner as this
     // spell" == a non-Human creature the caster owns (for a cast spell the owner
     // is the caster). B1: `TypeFilter::Non(Subtype("Human"))` +
     // `FilterProp::Owned { controller: You }` — no new filter prop / variant.
     if let Some(obj) = state.objects.get(&object_id) {
-        if obj.zone == Zone::Hand {
+        if matches!(obj.zone, Zone::Hand | Zone::Command) {
             if let Some(mutate_cost) = obj.keywords.iter().find_map(|k| match k {
                 crate::types::keywords::Keyword::Mutate(cost) => Some(cost.clone()),
                 _ => None,

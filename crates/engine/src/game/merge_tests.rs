@@ -234,6 +234,137 @@ fn absorbed_component_is_not_an_independent_permanent() {
     );
 }
 
+/// CR 730.3 + CR 400.7: when the merged permanent leaves the battlefield, the
+/// surviving object reverts to its OWN card identity (name, P/T, abilities) —
+/// it must NOT keep the topmost component's characteristics in the graveyard.
+#[test]
+fn merge_survivor_reverts_to_its_own_card_on_leave() {
+    use crate::types::keywords::Keyword;
+    let (mut state, host, rider, p0) = two_creatures();
+    state
+        .objects
+        .get_mut(&host)
+        .unwrap()
+        .base_keywords
+        .push(Keyword::Flying);
+    state
+        .objects
+        .get_mut(&rider)
+        .unwrap()
+        .base_keywords
+        .push(Keyword::Trample);
+
+    let mut events = Vec::new();
+    // Top merge → survivor adopts the rider's name/P-T while merged.
+    merge_object_onto(&mut state, rider, host, MergeSide::Top, &mut events);
+    assert_eq!(state.objects.get(&host).unwrap().name, "Rider");
+
+    // The merged permanent leaves the battlefield.
+    crate::game::zones::move_to_zone(&mut state, host, Zone::Graveyard, &mut events);
+
+    let survivor = state.objects.get(&host).unwrap();
+    // CR 730.3 + CR 400.7: reverted to its OWN card.
+    assert_eq!(survivor.name, "Host", "survivor reverts to its own name");
+    assert_eq!(survivor.power, Some(2), "survivor reverts to its own power");
+    assert_eq!(survivor.toughness, Some(2));
+    assert!(
+        survivor.base_keywords.contains(&Keyword::Flying),
+        "keeps its own Flying"
+    );
+    assert!(
+        !survivor.base_keywords.contains(&Keyword::Trample),
+        "does NOT keep the rider's Trample after the merge ends"
+    );
+    assert!(
+        survivor.merge_self_origin.is_none(),
+        "self-origin snapshot is consumed on leave"
+    );
+    assert!(survivor.merged_components.is_empty());
+    // Both components land in the graveyard (CR 730.3).
+    let gy = &state.players.iter().find(|p| p.id == p0).unwrap().graveyard;
+    assert!(gy.contains(&host) && gy.contains(&rider));
+}
+
+/// CR 730.2 multi-instance stacking: mutating a SECOND creature onto an
+/// already-merged permanent extends the component stack, re-derives copiable
+/// characteristics from the new topmost component, and unions ALL components'
+/// abilities (CR 702.140e). This is Otrimi's core gameplay loop.
+#[test]
+fn merge_stacking_extends_stack_and_unions_all_abilities() {
+    use crate::game::scenario::GameScenario;
+    use crate::types::keywords::Keyword;
+
+    let mut sc = GameScenario::new();
+    let host = sc.add_creature(P0, "Host", 2, 2).id();
+    let rider1 = sc.add_creature(P0, "Rider1", 4, 4).id();
+    let rider2 = sc.add_creature(P0, "Rider2", 6, 6).id();
+    let mut state = sc.state;
+    for (id, kw) in [
+        (host, Keyword::Flying),
+        (rider1, Keyword::Trample),
+        (rider2, Keyword::Lifelink),
+    ] {
+        let o = state.objects.get_mut(&id).unwrap();
+        o.base_keywords.push(kw.clone());
+        o.keywords.push(kw);
+    }
+
+    let mut events = Vec::new();
+    // First mutate: rider1 on top of host.
+    merge_object_onto(&mut state, rider1, host, MergeSide::Top, &mut events);
+    // Second mutate: rider2 on top of the already-merged permanent.
+    merge_object_onto(&mut state, rider2, host, MergeSide::Top, &mut events);
+
+    let survivor = state.objects.get(&host).unwrap();
+    // CR 730.2c: still the host's ObjectId; the whole stack is recorded.
+    assert_eq!(
+        survivor.merged_components,
+        vec![rider2, rider1, host],
+        "topmost-first: rider2, then rider1, then host"
+    );
+    // CR 730.2a: copiable characteristics come from the new topmost (rider2).
+    assert_eq!(survivor.name, "Rider2");
+    assert_eq!(survivor.power, Some(6));
+    // CR 702.140e: union of ALL three components' abilities.
+    assert!(survivor.base_keywords.contains(&Keyword::Flying), "host's");
+    assert!(
+        survivor.base_keywords.contains(&Keyword::Trample),
+        "rider1's"
+    );
+    assert!(
+        survivor.base_keywords.contains(&Keyword::Lifelink),
+        "rider2's"
+    );
+}
+
+/// CR 730.3: when a 3-component merged permanent leaves, every component is put
+/// into its owner's zone and the survivor reverts to its own identity.
+#[test]
+fn merge_stacking_leave_routes_all_components_and_restores_survivor() {
+    use crate::game::scenario::GameScenario;
+
+    let mut sc = GameScenario::new();
+    let host = sc.add_creature(P0, "Host", 2, 2).id();
+    let rider1 = sc.add_creature(P0, "Rider1", 4, 4).id();
+    let rider2 = sc.add_creature(P0, "Rider2", 6, 6).id();
+    let mut state = sc.state;
+
+    let mut events = Vec::new();
+    merge_object_onto(&mut state, rider1, host, MergeSide::Top, &mut events);
+    merge_object_onto(&mut state, rider2, host, MergeSide::Bottom, &mut events);
+
+    crate::game::zones::move_to_zone(&mut state, host, Zone::Graveyard, &mut events);
+
+    let gy = &state.players.iter().find(|p| p.id == P0).unwrap().graveyard;
+    assert!(gy.contains(&host), "survivor card to graveyard");
+    assert!(gy.contains(&rider1), "rider1 component to graveyard");
+    assert!(gy.contains(&rider2), "rider2 component to graveyard");
+    let survivor = state.objects.get(&host).unwrap();
+    assert_eq!(survivor.name, "Host", "survivor reverted to its own card");
+    assert!(survivor.merged_components.is_empty());
+    assert!(survivor.merge_self_origin.is_none());
+}
+
 /// CR 608.2b + CR 702.140b: end-to-end / resolution-time coverage of the wired
 /// runtime path (the actual bug #2014 path), not just the merge primitive. These
 /// drive `stack::resolve_top` and the full `handle_cast_spell` pipeline.
@@ -631,6 +762,61 @@ mod cast_pipeline {
         assert!(
             !matches!(state.waiting_for, WaitingFor::MutateMergeChoice { .. }),
             "no merge choice is presented when the target is illegal"
+        );
+    }
+
+    /// CR 702.140a + CR 903.9: a mutate creature that is also a commander (e.g.
+    /// Otrimi, the Ever-Playful) can be cast for its mutate cost straight from the
+    /// command zone — the offer must be presented from `Zone::Command`, not only
+    /// from the hand.
+    #[test]
+    fn mutate_offered_from_command_zone_for_a_commander() {
+        let mut state = GameState::new(crate::types::format::FormatConfig::commander(), 2, 42);
+        state.turn_number = 2;
+        state.phase = Phase::PreCombatMain;
+        state.active_player = P0;
+        state.priority_player = P0;
+        state.waiting_for = WaitingFor::Priority { player: P0 };
+        add_mana(&mut state, P0, ManaType::Green, 6);
+
+        // Otrimi-like commander in the command zone: green mutate creature.
+        let spell = create_object(
+            &mut state,
+            CardId(2011),
+            P0,
+            "Otrimi".to_string(),
+            Zone::Command,
+        );
+        {
+            let obj = state.objects.get_mut(&spell).unwrap();
+            obj.card_types.core_types.push(CoreType::Creature);
+            obj.base_card_types.core_types.push(CoreType::Creature);
+            obj.mana_cost = green_cost(1);
+            obj.base_mana_cost = green_cost(1);
+            obj.power = Some(4);
+            obj.toughness = Some(4);
+            obj.base_power = Some(4);
+            obj.base_toughness = Some(4);
+            obj.keywords.push(Keyword::Mutate(green_cost(2)));
+            obj.base_keywords.push(Keyword::Mutate(green_cost(2)));
+            obj.is_commander = true;
+            obj.base_characteristics_initialized = true;
+        }
+        // A legal mutate target the caster owns.
+        let _target = target_creature(&mut state, P0, "Beast", 2012);
+
+        let mut events = Vec::new();
+        let waiting = handle_cast_spell(&mut state, P0, spell, CardId(2011), &mut events)
+            .expect("a commander mutate cast from the command zone must be allowed");
+        assert!(
+            matches!(
+                waiting,
+                WaitingFor::AlternativeCastChoice {
+                    keyword: AlternativeCastKeyword::Mutate,
+                    ..
+                }
+            ),
+            "the mutate choice is offered from the command zone; got {waiting:?}"
         );
     }
 }
