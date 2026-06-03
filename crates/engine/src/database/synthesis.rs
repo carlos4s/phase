@@ -261,7 +261,7 @@ impl KeywordTriggerInstaller {
             Keyword::Persist => {
                 is_dies_return_with_counter_trigger(trigger, &CounterType::Minus1Minus1)
             }
-            Keyword::Afterlife(_) => is_afterlife_trigger(trigger),
+            Keyword::Afterlife(n) => is_afterlife_trigger_for_count(trigger, *n),
             Keyword::Annihilator(_) => is_annihilator_attack_trigger(trigger),
             Keyword::Renown(_) => is_renown_trigger(trigger),
             Keyword::Mentor => is_mentor_trigger(trigger),
@@ -2406,8 +2406,9 @@ pub fn synthesize_afterlife(face: &mut CardFace) {
 /// Builds the CR 702.135a Afterlife dies trigger for `count` Spirit tokens.
 fn build_afterlife_trigger(count: u32) -> TriggerDefinition {
     let plural = if count == 1 { "" } else { "s" };
-    // CR 702.135a + CR 111.10: 1/1 white and black Spirit creature token with
-    // flying. Colors carry both White and Black (CR 105.3 multicolored).
+    // CR 702.135a + CR 111.3 / CR 111.4: 1/1 white and black Spirit creature
+    // token with flying. Colors carry both White and Black (CR 105.2b
+    // multicolored).
     let token_effect = Effect::Token {
         name: "Spirit".to_string(),
         power: PtValue::Fixed(1),
@@ -2446,20 +2447,71 @@ fn build_afterlife_trigger(count: u32) -> TriggerDefinition {
 
 /// Idempotency-shape predicate for `synthesize`-installed Afterlife triggers.
 /// Mirrors `is_dies_return_with_counter_trigger` but discriminates on the
-/// Spirit-token effect (so it never collides with the Undying/Persist return
-/// triggers, which share the Battlefield→Graveyard self-ref shape but carry an
-/// `Effect::ChangeZone` rather than `Effect::Token`).
+/// full CR 702.135a Spirit-token effect (so it never collides with another
+/// self-ref dies trigger that happens to create a Spirit token).
+#[cfg(test)]
 fn is_afterlife_trigger(t: &TriggerDefinition) -> bool {
+    afterlife_trigger_count(t).is_some()
+}
+
+fn is_afterlife_trigger_for_count(t: &TriggerDefinition, count: u32) -> bool {
+    let Ok(count) = i32::try_from(count) else {
+        return false;
+    };
+    afterlife_trigger_count(t) == Some(count)
+}
+
+fn afterlife_trigger_count(t: &TriggerDefinition) -> Option<i32> {
     if !matches!(t.mode, TriggerMode::ChangesZone)
         || t.origin != Some(Zone::Battlefield)
         || t.destination != Some(Zone::Graveyard)
         || !matches!(t.valid_card, Some(TargetFilter::SelfRef))
     {
-        return false;
+        return None;
     }
-    t.execute.as_deref().is_some_and(
-        |execute| matches!(&*execute.effect, Effect::Token { name, .. } if name == "Spirit"),
-    )
+    let execute = t.execute.as_deref()?;
+    let Effect::Token {
+        name,
+        power,
+        toughness,
+        types,
+        colors,
+        keywords,
+        tapped,
+        count,
+        owner,
+        attach_to,
+        enters_attacking,
+        supertypes,
+        static_abilities,
+        enter_with_counters,
+        ..
+    } = &*execute.effect
+    else {
+        return None;
+    };
+
+    if name != "Spirit"
+        || !matches!(power, PtValue::Fixed(1))
+        || !matches!(toughness, PtValue::Fixed(1))
+        || !types.iter().map(String::as_str).eq(["Creature", "Spirit"])
+        || colors.as_slice() != [ManaColor::White, ManaColor::Black]
+        || keywords.as_slice() != [Keyword::Flying]
+        || *tapped
+        || owner != &TargetFilter::Controller
+        || attach_to.is_some()
+        || *enters_attacking
+        || !supertypes.is_empty()
+        || !static_abilities.is_empty()
+        || !enter_with_counters.is_empty()
+    {
+        return None;
+    }
+
+    let QuantityExpr::Fixed { value } = count else {
+        return None;
+    };
+    Some(*value)
 }
 
 /// CR 702.112a: Renown N — combat-damage-to-player trigger with an
@@ -7074,6 +7126,25 @@ mod undying_persist_synthesis_tests {
         assert_eq!(count, 2);
     }
 
+    /// CR 702.135b with differing N values: each Afterlife instance carries its
+    /// own token count, so a face with Afterlife 1 and Afterlife 2 gets one
+    /// trigger for each quantity instead of collapsing by keyword kind.
+    #[test]
+    fn synthesize_afterlife_keeps_distinct_counts() {
+        let mut face = CardFace::default();
+        face.keywords.push(Keyword::Afterlife(1));
+        face.keywords.push(Keyword::Afterlife(2));
+        synthesize_afterlife(&mut face);
+
+        let mut counts: Vec<i32> = face
+            .triggers
+            .iter()
+            .filter_map(afterlife_trigger_count)
+            .collect();
+        counts.sort_unstable();
+        assert_eq!(counts, vec![1, 2]);
+    }
+
     /// The Afterlife matcher (Spirit-token effect) must not collide with the
     /// Undying/Persist return triggers, which share the Battlefield→Graveyard
     /// self-ref shape but carry an `Effect::ChangeZone`.
@@ -7123,6 +7194,24 @@ mod undying_persist_synthesis_tests {
         assert!(!KeywordTriggerInstaller::trigger_matches_keyword_kind(
             &triggers[0],
             &Keyword::Undying
+        ));
+    }
+
+    /// Runtime-grant removal uses `trigger_matches_keyword_kind`, so the matcher
+    /// must discriminate `Afterlife(N)` by N rather than stripping every
+    /// Afterlife-style Spirit trigger for the same discriminant.
+    #[test]
+    fn afterlife_matcher_distinguishes_count() {
+        let triggers = KeywordTriggerInstaller::triggers_for(&Keyword::Afterlife(2));
+        assert_eq!(triggers.len(), 1, "afterlife yields exactly one trigger");
+
+        assert!(KeywordTriggerInstaller::trigger_matches_keyword_kind(
+            &triggers[0],
+            &Keyword::Afterlife(2)
+        ));
+        assert!(!KeywordTriggerInstaller::trigger_matches_keyword_kind(
+            &triggers[0],
+            &Keyword::Afterlife(1)
         ));
     }
 }
@@ -7309,6 +7398,54 @@ mod undying_persist_runtime_tests {
             Zone::Graveyard,
             "persist must NOT return a creature that died with a -1/-1 counter"
         );
+    }
+
+    /// CR 702.135a runtime path: when a permanent with Afterlife N dies, the
+    /// synthesized dies trigger resolves through `Effect::Token` and creates N
+    /// 1/1 white-and-black flying Spirit creature tokens under the controller.
+    #[test]
+    fn afterlife_creates_spirit_tokens_when_permanent_dies() {
+        let face = creature_face_with_keyword("Tithe Taker", Keyword::Afterlife(2));
+        let (mut state, obj_id) = setup_with_creature(&face, PlayerId(0));
+
+        let _ = kill_and_resolve(&mut state, obj_id);
+
+        let source = state.objects.get(&obj_id).expect("object still tracked");
+        assert_eq!(
+            source.zone,
+            Zone::Graveyard,
+            "afterlife does not return the source permanent"
+        );
+
+        let spirits: Vec<_> = state
+            .objects
+            .values()
+            .filter(|obj| obj.is_token && obj.name == "Spirit" && obj.zone == Zone::Battlefield)
+            .collect();
+        assert_eq!(
+            spirits.len(),
+            2,
+            "Afterlife 2 must create exactly 2 Spirits"
+        );
+        for spirit in spirits {
+            assert_eq!(spirit.owner, PlayerId(0));
+            assert_eq!(spirit.controller, PlayerId(0));
+            assert_eq!(spirit.power, Some(1));
+            assert_eq!(spirit.toughness, Some(1));
+            assert!(
+                spirit.card_types.core_types.contains(&CoreType::Creature),
+                "Spirit token must be a creature"
+            );
+            assert!(
+                spirit.card_types.subtypes.iter().any(|s| s == "Spirit"),
+                "Spirit token must carry Spirit subtype"
+            );
+            assert_eq!(spirit.color, vec![ManaColor::White, ManaColor::Black]);
+            assert!(
+                spirit.keywords.contains(&Keyword::Flying),
+                "Spirit token must have flying"
+            );
+        }
     }
 
     /// CR 603 multi-trigger semantics: a permanent that carries BOTH Undying
