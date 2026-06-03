@@ -4766,36 +4766,37 @@ pub fn handle_mutate_cost_choice_with_payment_mode(
     events: &mut Vec<GameEvent>,
 ) -> Result<WaitingFor, EngineError> {
     use crate::types::actions::AlternativeCastDecision;
-    // Exhaustive match so a future third decision variant is a compile error here.
-    let alt_path = match decision {
-        AlternativeCastDecision::Alternative => true,
-        AlternativeCastDecision::Normal => false,
-    };
-    if alt_path {
-        // CR 702.140a: mark the spell as mutating BEFORE preparing the cast, so
-        // the `continue_with_prepared` target-attachment branch (mirroring the
-        // Aura/Enchant path) sees the mutate form and requests the non-Human
-        // creature target. Reverted by `revert_mutate_form` on a preparation
-        // error or on an illegal target at resolution (CR 702.140b).
-        if let Some(obj) = state.objects.get_mut(&object_id) {
-            apply_mutate_form(obj);
-        }
-        let mut prepared = match prepare_spell_cast_with_variant_override(
-            state,
-            player,
-            object_id,
-            Some(CastingVariant::Mutate),
-        ) {
-            Ok(p) => p,
-            Err(e) => {
-                revert_mutate_form(state, object_id);
-                return Err(e);
+    // Exhaustive match (a future third decision variant is a compile error here).
+    match decision {
+        AlternativeCastDecision::Alternative => {
+            // CR 702.140a: mark the spell as mutating BEFORE preparing the cast,
+            // so the `continue_with_prepared` target-attachment branch (mirroring
+            // the Aura/Enchant path) sees the mutate form and requests the
+            // non-Human creature target. Reverted by `revert_mutate_form` on a
+            // preparation error or on an illegal target at resolution
+            // (CR 702.140b).
+            if let Some(obj) = state.objects.get_mut(&object_id) {
+                apply_mutate_form(obj);
             }
-        };
-        prepared.payment_mode = payment_mode;
-        return continue_with_prepared(state, player, prepared, events);
+            let mut prepared = match prepare_spell_cast_with_variant_override(
+                state,
+                player,
+                object_id,
+                Some(CastingVariant::Mutate),
+            ) {
+                Ok(p) => p,
+                Err(e) => {
+                    revert_mutate_form(state, object_id);
+                    return Err(e);
+                }
+            };
+            prepared.payment_mode = payment_mode;
+            continue_with_prepared(state, player, prepared, events)
+        }
+        AlternativeCastDecision::Normal => {
+            continue_cast_from_prepared(state, player, object_id, payment_mode, events)
+        }
     }
-    continue_cast_from_prepared(state, player, object_id, payment_mode, events)
 }
 
 /// CR 702.148a-b + CR 612: Apply the cleave text-changing effect to a hand
