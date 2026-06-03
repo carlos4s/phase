@@ -164,13 +164,14 @@ pub fn trigger_matcher(mode: TriggerMode) -> Option<TriggerMatcher> {
         | TriggerMode::Forage
         | TriggerMode::GiveGift
         | TriggerMode::Mentored
-        | TriggerMode::Mutates
         | TriggerMode::Proliferate
         | TriggerMode::SeekAll
         | TriggerMode::SetInMotion
         | TriggerMode::Trains
         | TriggerMode::VisitAttraction => match_visit_attraction,
         TriggerMode::Specializes => match_specializes,
+        // CR 702.140c-d: "Whenever this creature mutates" fires on `Mutated`.
+        TriggerMode::Mutates => match_mutates,
         // CR 603.8: State triggers are not event-based — they are checked separately
         // in the priority pipeline, not through the event-matching trigger system.
         TriggerMode::StateCondition => return None,
@@ -349,6 +350,9 @@ pub fn build_trigger_registry() -> HashMap<TriggerMode, TriggerMatcher> {
     r.insert(TriggerMode::VisitAttraction, match_visit_attraction);
     r.insert(TriggerMode::Specializes, match_specializes);
 
+    // CR 702.140c-d: "Whenever this creature mutates" fires on `Mutated`.
+    r.insert(TriggerMode::Mutates, match_mutates);
+
     // CR 309 / CR 701.49: Dungeon triggers
     r.insert(TriggerMode::DungeonCompleted, match_dungeon_completed);
     r.insert(TriggerMode::RoomEntered, match_room_entered);
@@ -423,7 +427,7 @@ pub fn build_trigger_registry() -> HashMap<TriggerMode, TriggerMatcher> {
         TriggerMode::Forage,
         TriggerMode::GiveGift,
         TriggerMode::Mentored,
-        TriggerMode::Mutates,
+        // TriggerMode::Mutates — moved to real matcher below
         TriggerMode::SeekAll,
         TriggerMode::SetInMotion,
         // TriggerMode::Specializes — moved to real matcher above
@@ -733,6 +737,8 @@ fn count_matching_trigger_event_subjects(
         | GameEvent::PermanentSacrificed { object_id, .. }
         | GameEvent::PermanentTapped { object_id, .. }
         | GameEvent::PermanentUntapped { object_id } => count_one(*object_id),
+        // CR 702.140c + CR 730.2c: the merged (surviving) permanent is the subject.
+        GameEvent::Mutated { merged_id, .. } => count_one(*merged_id),
         // Object target events yield the affected object as subject. Player
         // target events carry no object subject; player scoping lives on
         // `valid_target`.
@@ -2941,6 +2947,30 @@ pub(super) fn match_specializes(
 ) -> bool {
     if let GameEvent::Specialized { object_id, .. } = event {
         *object_id == source_id && valid_card_matches(trigger, state, source_id, source_id)
+    } else {
+        false
+    }
+}
+
+/// CR 702.140c-d + CR 730.2: "Whenever this creature mutates" (and the rarer
+/// "whenever a creature you own mutates"). Fires on a `Mutated` event. The merged
+/// permanent keeps the target creature's `ObjectId` (CR 730.2c), so the
+/// self-referential case matches when `merged_id == source_id`. A `valid_card`
+/// filter (when present) restricts which mutating permanent triggers the ability.
+///
+/// Phase 1: the event is observable and the matcher is real; downstream
+/// condition handling for "whenever a creature mutates" (CR 702.140d reflexive
+/// effects beyond the merge itself) is deferred — no Phase-1 card needs it.
+pub(super) fn match_mutates(
+    event: &GameEvent,
+    trigger: &TriggerDefinition,
+    source_id: ObjectId,
+    state: &GameState,
+) -> bool {
+    if let GameEvent::Mutated { merged_id, .. } = event {
+        // CR 730.2c: the merged permanent IS the source for "this creature
+        // mutates"; the `valid_card` filter generalizes to "a creature mutates".
+        *merged_id == source_id || valid_card_matches(trigger, state, *merged_id, source_id)
     } else {
         false
     }
