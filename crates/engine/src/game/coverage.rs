@@ -3430,9 +3430,6 @@ pub fn analyze_coverage(card_db: &CardDatabase) -> CoverageSummary {
         // Check replacements
         check_replacements(&face.replacements, &mut missing);
 
-        // Check parse warnings
-        check_parse_warnings(&face.parse_warnings, &mut missing);
-
         // Validate subtype references in AddSubtype modifications against
         // the printed-corpus lexicon. Catches parser misfires where English
         // filler words (`Gets`, `Until`, `And`) were tokenized as subtypes.
@@ -3445,6 +3442,11 @@ pub fn analyze_coverage(card_db: &CardDatabase) -> CoverageSummary {
         // Flag cards where the parser consumed Oracle text without producing
         // a corresponding parse item. Uses the parse tree computed above.
         check_silent_drops(&face.oracle_text, &parse_details, &mut missing);
+
+        let supported_before_parse_warnings = missing.is_empty();
+
+        // Check parse warnings
+        check_parse_warnings(&face.parse_warnings, &mut missing);
 
         let supported = missing.is_empty();
 
@@ -3493,7 +3495,12 @@ pub fn analyze_coverage(card_db: &CardDatabase) -> CoverageSummary {
             parse_warning_patterns
                 .entry((category, pattern))
                 .or_default()
-                .push(&face.name, supported, gap_count == 1, &legal_formats);
+                .push(
+                    &face.name,
+                    supported_before_parse_warnings,
+                    gap_count == 1,
+                    &legal_formats,
+                );
         }
 
         let printings = card_db
@@ -4149,11 +4156,11 @@ fn check_resolver_features(face: &CardFace, missing: &mut Vec<String>) {
 ///   clause, not detector noise. Folding these into the supported predicate
 ///   stops coverage from marking such cards green (umbrella issue #2243; per
 ///   detector: #2229–#2241).
+/// - `CascadeLoss` — a cascade slot was populated but did not land on the final
+///   ability definition, so the parsed card is missing load-bearing behavior.
 ///
-/// `CascadeLoss` and `IgnoredRemainder` are intentionally left on the
-/// `_ => continue` arm: they signal parser-internal defects tracked separately,
-/// not unrepresented Oracle clauses, and folding them in here is out of scope
-/// for the swallowed-clause demotion.
+/// `IgnoredRemainder` stays informational because it can be parser-internal
+/// trivia rather than a demonstrated missing semantic clause.
 fn check_parse_warnings(warnings: &[OracleDiagnostic], missing: &mut Vec<String>) {
     for warning in warnings {
         let Some(label) = parse_warning_gap_label(warning) else {
@@ -4175,7 +4182,10 @@ fn parse_warning_gap_label(warning: &OracleDiagnostic) -> Option<String> {
             }
         }
         OracleDiagnostic::SwallowedClause { detector, .. } => Some(format!("Swallow:{detector}")),
-        _ => None,
+        OracleDiagnostic::CascadeLoss { slot, .. } => {
+            Some(format!("ParseWarning:cascade-loss:{slot:?}"))
+        }
+        OracleDiagnostic::IgnoredRemainder { .. } => None,
     }
 }
 
@@ -8328,6 +8338,48 @@ mod tests {
     }
 
     #[test]
+    fn swallowed_clause_warning_counts_as_coverage_gap() {
+        let warnings = vec![
+            crate::parser::oracle_ir::diagnostic::OracleDiagnostic::SwallowedClause {
+                detector: "Condition_If".to_string(),
+                description: "If foo, draw a card.".to_string(),
+                line_index: 0,
+            },
+        ];
+        let mut missing = Vec::new();
+        check_parse_warnings(&warnings, &mut missing);
+        assert_eq!(missing, vec!["Swallow:Condition_If"]);
+    }
+
+    #[test]
+    fn cascade_loss_warning_counts_as_coverage_gap() {
+        let warnings = vec![
+            crate::parser::oracle_ir::diagnostic::OracleDiagnostic::CascadeLoss {
+                slot: crate::parser::oracle_ir::diagnostic::CascadeSlot::Condition,
+                effect_name: "DrawCards".to_string(),
+                line_index: 0,
+            },
+        ];
+        let mut missing = Vec::new();
+        check_parse_warnings(&warnings, &mut missing);
+        assert_eq!(missing, vec!["ParseWarning:cascade-loss:Condition"]);
+    }
+
+    #[test]
+    fn ignored_remainder_warning_remains_informational_for_coverage() {
+        let warnings = vec![
+            crate::parser::oracle_ir::diagnostic::OracleDiagnostic::IgnoredRemainder {
+                text: "tail".to_string(),
+                parser: "test".to_string(),
+                line_index: 0,
+            },
+        ];
+        let mut missing = Vec::new();
+        check_parse_warnings(&warnings, &mut missing);
+        assert!(missing.is_empty());
+    }
+
+    #[test]
     fn vanilla_object_has_no_unimplemented_mechanics() {
         let obj = make_obj();
         assert!(unimplemented_mechanics(&obj).is_empty());
@@ -8425,10 +8477,10 @@ mod tests {
         assert_eq!(missing, vec!["Swallow:DynamicQty".to_string()]);
     }
 
-    /// `CascadeLoss` is a parser-internal defect signal, not an unrepresented
-    /// Oracle clause — it must NOT demote the card here.
+    /// `CascadeLoss` means a cascade slot was parsed but did not land on the
+    /// final ability definition, so it must demote coverage.
     #[test]
-    fn check_parse_warnings_ignores_cascade_loss() {
+    fn check_parse_warnings_flags_cascade_loss() {
         let warnings = vec![OracleDiagnostic::CascadeLoss {
             slot: CascadeSlot::Condition,
             effect_name: "DrawCards".into(),
@@ -8436,7 +8488,7 @@ mod tests {
         }];
         let mut missing = Vec::new();
         check_parse_warnings(&warnings, &mut missing);
-        assert!(missing.is_empty());
+        assert_eq!(missing, vec!["ParseWarning:cascade-loss:Condition"]);
     }
 
     #[test]

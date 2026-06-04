@@ -2085,6 +2085,27 @@ pub fn candidate_actions_broad(state: &GameState) -> Vec<CandidateAction> {
             }
             candidates
         }
+        // CR 510.1d + CR 702.22k: A banded blocker's damage is divided by the
+        // ACTIVE player among the attackers it blocks. AI heuristic: dump the
+        // blocker's full power onto the first (lowest-ObjectId, deterministic)
+        // blocked attacker. The handler validates only total conservation and
+        // blocked-attacker membership (no lethal rule), so this is always legal.
+        WaitingFor::AssignBlockerDamage {
+            player,
+            total_damage,
+            attackers,
+            ..
+        } => {
+            let mut assignments: Vec<(crate::types::identifiers::ObjectId, u32)> = Vec::new();
+            if let Some(first) = attackers.first() {
+                assignments.push((*first, *total_damage));
+            }
+            vec![candidate(
+                GameAction::AssignBlockerDamage { assignments },
+                TacticalClass::Selection,
+                Some(*player),
+            )]
+        }
         // CR 601.2d: Distribute — even split as default.
         WaitingFor::DistributeAmong {
             player,
@@ -3051,6 +3072,8 @@ fn attacker_actions(
     let mut actions = vec![candidate(
         GameAction::DeclareAttackers {
             attacks: Vec::new(),
+            // CR 702.22c: AI does not form attacking bands in v1.
+            bands: vec![],
         },
         TacticalClass::Attack,
         Some(player),
@@ -3064,6 +3087,7 @@ fn attacker_actions(
         actions.push(candidate(
             GameAction::DeclareAttackers {
                 attacks: vec![(id, target)],
+                bands: vec![],
             },
             TacticalClass::Attack,
             Some(player),
@@ -3078,6 +3102,7 @@ fn attacker_actions(
                     .copied()
                     .map(|id| (id, target))
                     .collect(),
+                bands: vec![],
             },
             TacticalClass::Attack,
             Some(player),
@@ -4116,8 +4141,8 @@ mod tests {
         };
 
         let actions = candidate_actions(&state);
-        assert!(actions.iter().any(|a| matches!(a.action, GameAction::DeclareAttackers { ref attacks } if attacks.is_empty())));
-        assert!(actions.iter().any(|a| matches!(a.action, GameAction::DeclareAttackers { ref attacks } if attacks.len() == 2)));
+        assert!(actions.iter().any(|a| matches!(a.action, GameAction::DeclareAttackers { ref attacks, .. } if attacks.is_empty())));
+        assert!(actions.iter().any(|a| matches!(a.action, GameAction::DeclareAttackers { ref attacks, .. } if attacks.len() == 2)));
     }
 
     #[test]
