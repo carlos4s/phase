@@ -123,9 +123,10 @@ impl ContinuousModification {
                  Verify resolver dispatch in token_copy.rs / become_copy.rs."
             ),
             // CR 707.9 + CR 202.1b: The "has no mana cost" copy exception is
-            // baked into the synthesized token at copy resolution (token_copy.rs
-            // / become_copy.rs), exactly like AddCounterOnEnter — it never flows
-            // through the layer system. Reaching this arm indicates a wiring bug.
+            // consumed at copy resolution (token_copy.rs bakes it into the token;
+            // become_copy.rs strips it from the copied values), exactly like
+            // AddCounterOnEnter — it never flows through the layer system.
+            // Reaching this arm indicates a wiring bug.
             ContinuousModification::RemoveManaCost => unreachable!(
                 "RemoveManaCost is consumed at copy resolution; never layered. \
                  Verify resolver dispatch in token_copy.rs / become_copy.rs."

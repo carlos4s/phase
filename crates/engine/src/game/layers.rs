@@ -3481,8 +3481,9 @@ fn apply_continuous_effect_filtered(
                 );
             }
             // CR 707.9 + CR 202.1b: the "has no mana cost" copy exception is
-            // baked into the token at copy resolution (token_copy.rs), never via
-            // a continuous effect. Reaching this arm means a wiring bug.
+            // consumed at copy resolution (token_copy.rs bakes it into the token;
+            // become_copy.rs strips it from the copied values), never via a
+            // continuous effect. Reaching this arm means a wiring bug.
             ContinuousModification::RemoveManaCost => {
                 debug_assert!(
                     false,
