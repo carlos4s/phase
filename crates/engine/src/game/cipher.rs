@@ -189,8 +189,14 @@ fn recast_trigger(
     event: &GameEvent,
 ) -> PendingTriggerContext {
     let mut ability = ResolvedAbility::new(
+        // CR 702.99c: the encoded card is a *copy source*, not a spell target —
+        // cipher's recast is not "target". `TargetFilter::None` keeps the
+        // copy-and-cast effect off the target-slot path (the card sits in exile
+        // and is not a legal target there, which would otherwise drop the whole
+        // trigger), while the card rides in `ability.targets` for the
+        // `CastCopyOfCard` resolver to pick up as its copy source.
         Effect::CastCopyOfCard {
-            target: TargetFilter::SpecificObject { id: card_id },
+            target: TargetFilter::None,
             cost: ManaCost::zero(),
         },
         vec![TargetRef::Object(card_id)],
