@@ -115,6 +115,38 @@ fn extra_blockers_static_self_reference_stays_selfref() {
     assert_eq!(def.affected, Some(TargetFilter::SelfRef));
 }
 
+/// CR 509.1b: Copper Carapace — "Equipped creature gets +2/+2 and can't block."
+/// must decompose into BOTH the P/T grant AND a `CantBlock` static affecting the
+/// equipped creature. Previously the "can't block" drawback was dropped, making
+/// the card a strictly-better-than-printed pure pump.
+#[test]
+fn cant_block_static_splits_from_pump() {
+    let defs = parse_static_line_multi("Equipped creature gets +2/+2 and can't block.");
+    assert!(
+        defs.iter().any(|d| d.mode == StaticMode::CantBlock),
+        "expected a CantBlock static, got {:?}",
+        defs.iter().map(|d| &d.mode).collect::<Vec<_>>()
+    );
+    assert!(
+        defs.iter()
+            .any(|d| matches!(d.mode, StaticMode::Continuous)),
+        "the +2/+2 grant must be preserved"
+    );
+}
+
+/// CR 509.1b: A self-referential pump ("This creature gets +2/+2 and can't
+/// block.", e.g. Threshold downside creatures) also splits, with the `CantBlock`
+/// static affecting the source.
+#[test]
+fn cant_block_static_splits_self_reference() {
+    let defs = parse_static_line_multi("This creature gets +2/+2 and can't block.");
+    let cant = defs
+        .iter()
+        .find(|d| d.mode == StaticMode::CantBlock)
+        .expect("expected a CantBlock static");
+    assert_eq!(cant.affected, Some(TargetFilter::SelfRef));
+}
+
 /// CR 509.1b: Madcap Skills — "Enchanted creature gets +3/+0 and can't be
 /// blocked by more than one creature." must decompose into BOTH the P/T grant
 /// AND a `CantBeBlockedByMoreThan { max: 1 }` static affecting the enchanted
@@ -628,6 +660,24 @@ fn static_rancor() {
         .contains(&ContinuousModification::AddKeyword {
             keyword: Keyword::Trample
         }));
+}
+
+#[test]
+fn static_archetype_cant_have_keyword() {
+    // CR 613.1f + CR 702: Theros Archetype cycle / Arcane Lighthouse —
+    // "... can't have or gain [keyword]" must emit a Layer 6 CantHaveKeyword denial
+    // static (scoped to the same subject) alongside the keyword removal.
+    let defs = parse_static_line_multi(
+        "Creatures your opponents control lose flying and can't have or gain flying.",
+    );
+    assert!(
+        defs.iter().any(|d| matches!(
+            &d.mode,
+            StaticMode::CantHaveKeyword { keyword } if *keyword == Keyword::Flying
+        )),
+        "expected a CantHaveKeyword(Flying) denial static, got modes {:?}",
+        defs.iter().map(|d| &d.mode).collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -2754,10 +2804,31 @@ fn static_lands_you_control_have() {
 
 #[test]
 fn static_cant_be_the_target() {
+    // CR 702.11a: "can't be the target of spells or abilities your opponents
+    // control" (Sphinx of the Final Word) IS Hexproof — the permanent's controller
+    // can still target it — so it is modeled as a Hexproof keyword grant (which the
+    // targeting check already enforces with the correct controller scope) rather
+    // than a scope-less blanket static.
     let def = parse_static_line(
             "Sphinx of the Final Word can't be the target of spells or abilities your opponents control.",
         )
         .unwrap();
+    assert_eq!(def.mode, StaticMode::Continuous);
+    assert!(def
+        .modifications
+        .contains(&ContinuousModification::AddKeyword {
+            keyword: Keyword::Hexproof,
+        }));
+}
+
+#[test]
+fn static_cant_be_targeted_blanket_is_shroud_static() {
+    // CR 702.18a: the unqualified "can't be the target of spells or abilities"
+    // (no controller qualifier) is blanket Shroud — untargetable by any player,
+    // including the controller — modeled as the CantBeTargeted static and enforced
+    // in `targeting.rs::can_target`.
+    let def =
+        parse_static_line("Guardian Idol can't be the target of spells or abilities.").unwrap();
     assert_eq!(def.mode, StaticMode::CantBeTargeted);
 }
 

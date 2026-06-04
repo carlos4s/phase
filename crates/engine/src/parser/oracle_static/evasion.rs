@@ -520,6 +520,70 @@ pub(crate) fn try_split_and_can_block_additional(text: &str) -> Option<Vec<Stati
     Some(defs)
 }
 
+/// CR 509.1b: Decompose `"<continuous grant> and can't block"` into the first
+/// conjunct's static(s) plus a `CantBlock` static sharing the same `affected`
+/// (and any `condition`).
+///
+/// Without this split the trailing blocking restriction was dropped: downside
+/// pumps like Copper Carapace ("Equipped creature gets +2/+2 and can't block."),
+/// Maniacal Rage / Undying Rage, and Threshold creatures ("this creature gets
+/// +2/+2 and can't block.") parsed to only the P/T grant, so the equipped/
+/// enchanted creature could still block — the card's entire drawback vanished.
+/// Mirrors `try_split_and_can_block_additional`. A terminal-phrase guard keeps
+/// this disjoint from the already-handled "can't block alone", "can't block
+/// <filter>", and "can't block unless …" shapes.
+pub(crate) fn try_split_and_cant_block(text: &str) -> Option<Vec<StaticDefinition>> {
+    type VE<'a> = OracleError<'a>;
+    let lower = text.to_lowercase();
+
+    let (before, _matched, rest) = nom_primitives::scan_preceded(&lower, |i: &str| {
+        // Match both the ASCII and typographic U+2019 apostrophe.
+        let (i, _) = alt((
+            tag::<_, _, VE>("and can't block"),
+            tag::<_, _, VE>("and can\u{2019}t block"),
+        ))
+        .parse(i)?;
+        // Optional trailing duration phrase.
+        let (i, _) = opt(alt((
+            tag::<_, _, VE>(" each combat"),
+            tag::<_, _, VE>(" this combat"),
+            tag::<_, _, VE>(" this turn"),
+        )))
+        .parse(i)?;
+        Ok((i, ()))
+    })?;
+
+    // CR 509.1b: only the bare, terminal "can't block" is a plain CantBlock. A
+    // remaining tail ("alone", "<filter>", "unless …") is a different restriction
+    // owned by another branch — decline so we don't mis-split it.
+    if !rest.trim_start().trim_end_matches('.').trim().is_empty() {
+        return None;
+    }
+
+    let cut_end = before
+        .trim_end_matches(|ch: char| ch == ',' || ch.is_whitespace())
+        .len();
+    let line_a = format!("{}.", text[..cut_end].trim_end_matches('.'));
+    let mut defs = parse_static_line_multi(&line_a);
+    if defs.is_empty() {
+        return None;
+    }
+    for def in &mut defs {
+        def.description = Some(text.to_string());
+    }
+
+    let affected = defs[0].affected.clone()?;
+    let condition = defs[0].condition.clone();
+    let mut companion = StaticDefinition::new(StaticMode::CantBlock)
+        .affected(affected)
+        .description(text.to_string());
+    if let Some(condition) = condition {
+        companion = companion.condition(condition);
+    }
+    defs.push(companion);
+    Some(defs)
+}
+
 /// CR 509.1b: Classify a "can't be blocked …" evasion predicate (lowercased,
 /// starting with "can't be blocked") into the corresponding `StaticMode` and
 /// optional evasion condition, composing the same building blocks the standalone
