@@ -1194,15 +1194,17 @@ pub(crate) fn parse_combat_tax_static(tp: &TextPair<'_>, text: &str) -> Option<S
 
 pub(crate) fn parse_subject_combat_rule_static(text: &str) -> Option<StaticDefinition> {
     let lower = text.to_lowercase();
-    let (subject_lower, predicate, rest) =
-        nom_primitives::scan_preceded(&lower, parse_combat_rule_static_predicate_nom)?;
+    let (subject_lower, (predicate, defended), rest) = nom_primitives::scan_preceded(
+        &lower,
+        parse_combat_rule_static_predicate_with_defended_nom,
+    )?;
     let (rest, _) = opt(tag::<_, _, OracleError<'_>>(".")).parse(rest).ok()?;
     if !rest.trim().is_empty() {
         return None;
     }
     let subject = text[..subject_lower.len()].trim();
     let affected = parse_rule_static_subject_filter(subject)?;
-    Some(lower_rule_static(predicate, affected, text))
+    Some(lower_rule_static(predicate, affected, text).attack_defended(defended))
 }
 
 /// Nom 8.0 parser for the combat-tax body.

@@ -9995,6 +9995,7 @@ fn quantity_expr_is_board_state_relative(expr: &QuantityExpr) -> bool {
         QuantityExpr::Ref { qty } => quantity_ref_is_board_state_relative(qty),
         QuantityExpr::DivideRounded { inner, .. }
         | QuantityExpr::Offset { inner, .. }
+        | QuantityExpr::ClampMin { inner, .. }
         | QuantityExpr::Multiply { inner, .. } => quantity_expr_is_board_state_relative(inner),
         QuantityExpr::Sum { exprs } => exprs.iter().all(quantity_expr_is_board_state_relative),
         _ => false,
@@ -12125,6 +12126,7 @@ mod tests {
                 active_zones: vec![],
                 characteristic_defining: false,
                 description: Some("Assassin spells you cast have freerunning {B}{B}.".to_string()),
+                attack_defended: None,
             };
             obj.static_definitions = vec![def].into();
         }
@@ -17320,6 +17322,7 @@ mod tests {
                     active_zones: vec![],
                     characteristic_defining: false,
                     description: None,
+                    attack_defended: None,
                 }]
                 .into();
             }
@@ -19385,6 +19388,7 @@ mod tests {
                 description: Some(
                     "Instant and sorcery spells you cast have affinity for creatures.".to_string(),
                 ),
+                attack_defended: None,
             };
             obj.static_definitions = vec![def].into();
         }

@@ -13517,3 +13517,78 @@ fn static_homing_sliver_grants_typecycling_to_slivers_in_hand() {
         def.modifications
     );
 }
+
+#[test]
+fn eriette_charmed_apple_static_and_trigger_parse() {
+    use crate::parser::oracle_trigger::parse_trigger_line;
+    use crate::types::ability::{AttachmentKind, PlayerFilter, QuantityRef};
+
+    let static_def = parse_static_line(
+        "Each creature that's enchanted by an Aura you control can't attack you or planeswalkers you control.",
+    )
+    .expect("Eriette attack restriction must parse");
+    assert_eq!(static_def.mode, StaticMode::CantAttack);
+    assert_eq!(
+        static_def.affected,
+        Some(TargetFilter::Typed(TypedFilter::creature().properties(
+            vec![FilterProp::HasAttachment {
+                kind: AttachmentKind::Aura,
+                controller: Some(ControllerRef::You),
+                exclude_source: false,
+            }]
+        ))),
+        "affected must be creatures enchanted by an Aura you control, got {:?}",
+        static_def.affected
+    );
+    assert_eq!(
+        static_def.attack_defended.as_ref(),
+        Some(&crate::types::triggers::AttackTargetFilter::PlayerOrPlaneswalker),
+        "scoped restriction must defend player+planeswalkers, got {:?}",
+        static_def.attack_defended
+    );
+    assert_ne!(
+        static_def.affected,
+        Some(TargetFilter::SelfRef),
+        "must not fall through to SelfRef CantAttack on Eriette herself"
+    );
+
+    let trigger = parse_trigger_line(
+        "At the beginning of your end step, each opponent loses X life and you gain X life, where X is the number of Auras you control.",
+        "Eriette of the Charmed Apple",
+    );
+    let execute = trigger.execute.expect("end step execute");
+    assert_eq!(execute.player_scope, Some(PlayerFilter::Opponent));
+    match &*execute.effect {
+        Effect::LoseLife { amount, .. } => match amount {
+            QuantityExpr::Ref {
+                qty: QuantityRef::ObjectCount { filter },
+            } => {
+                let TargetFilter::Typed(tf) = filter else {
+                    panic!("expected Typed aura count filter");
+                };
+                assert_eq!(tf.controller, Some(ControllerRef::You));
+                assert!(
+                    tf.type_filters
+                        .iter()
+                        .any(|t| matches!(t, TypeFilter::Subtype(s) if s == "Aura"))
+                        || tf.properties.iter().any(|p| matches!(
+                            p,
+                            FilterProp::HasAttachment {
+                                kind: AttachmentKind::Aura,
+                                ..
+                            }
+                        ))
+                );
+            }
+            other => panic!("expected ObjectCount Auras on LoseLife, got {other:?}"),
+        },
+        other => panic!("expected LoseLife, got {other:?}"),
+    }
+    let gain = execute.sub_ability.expect("gain life sibling");
+    match &*gain.effect {
+        Effect::GainLife { amount, .. } => {
+            assert!(matches!(amount, QuantityExpr::Ref { .. }));
+        }
+        other => panic!("expected GainLife, got {other:?}"),
+    }
+}
