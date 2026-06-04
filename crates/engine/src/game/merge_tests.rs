@@ -96,12 +96,20 @@ fn merge_unions_component_abilities_per_cr_702_140e() {
 
     let survivor = state.objects.get(&host).unwrap();
     assert!(
-        survivor.base_keywords.contains(&Keyword::Flying),
+        survivor.merge_layer_effect_id.is_some(),
+        "merge is represented by a layer-1 copy effect"
+    );
+    assert!(
+        survivor.keywords.contains(&Keyword::Flying),
         "host's Flying survives the union"
     );
     assert!(
-        survivor.base_keywords.contains(&Keyword::Trample),
+        survivor.keywords.contains(&Keyword::Trample),
         "rider's Trample is unioned in"
+    );
+    assert!(
+        !survivor.base_keywords.contains(&Keyword::Trample),
+        "the merge must not bake component abilities into the survivor's base characteristics"
     );
 }
 
@@ -276,8 +284,8 @@ fn merge_survivor_reverts_to_its_own_card_on_leave() {
         "does NOT keep the rider's Trample after the merge ends"
     );
     assert!(
-        survivor.merge_self_origin.is_none(),
-        "self-origin snapshot is consumed on leave"
+        survivor.merge_layer_effect_id.is_none(),
+        "merge layer effect id is cleared on leave"
     );
     assert!(survivor.merged_components.is_empty());
     // Both components land in the graveyard (CR 730.3).
@@ -326,14 +334,68 @@ fn merge_stacking_extends_stack_and_unions_all_abilities() {
     assert_eq!(survivor.name, "Rider2");
     assert_eq!(survivor.power, Some(6));
     // CR 702.140e: union of ALL three components' abilities.
-    assert!(survivor.base_keywords.contains(&Keyword::Flying), "host's");
+    assert!(survivor.keywords.contains(&Keyword::Flying), "host's");
+    assert!(survivor.keywords.contains(&Keyword::Trample), "rider1's");
+    assert!(survivor.keywords.contains(&Keyword::Lifelink), "rider2's");
+}
+
+#[test]
+fn merge_stacking_bottom_rebuilds_layer_effect_without_rewriting_base() {
+    use crate::game::scenario::GameScenario;
+    use crate::types::keywords::Keyword;
+
+    let mut sc = GameScenario::new();
+    let host = sc.add_creature(P0, "Host", 2, 2).id();
+    let rider1 = sc.add_creature(P0, "Rider1", 4, 4).id();
+    let rider2 = sc.add_creature(P0, "Rider2", 6, 6).id();
+    let mut state = sc.state;
+    for (id, kw) in [
+        (host, Keyword::Flying),
+        (rider1, Keyword::Trample),
+        (rider2, Keyword::Lifelink),
+    ] {
+        let o = state.objects.get_mut(&id).unwrap();
+        o.base_keywords.push(kw.clone());
+        o.keywords.push(kw);
+    }
+
+    let mut events = Vec::new();
+    merge_object_onto(&mut state, rider1, host, MergeSide::Bottom, &mut events);
+    let first_effect = state
+        .objects
+        .get(&host)
+        .and_then(|obj| obj.merge_layer_effect_id)
+        .expect("first merge installs a copy effect");
+
+    merge_object_onto(&mut state, rider2, host, MergeSide::Bottom, &mut events);
+
+    let survivor = state.objects.get(&host).unwrap();
+    assert_eq!(
+        survivor.merged_components,
+        vec![host, rider1, rider2],
+        "bottom re-merge keeps the original target topmost"
+    );
+    assert_eq!(survivor.name, "Host");
+    assert_eq!(survivor.power, Some(2));
+    assert!(survivor.keywords.contains(&Keyword::Flying), "host's");
+    assert!(survivor.keywords.contains(&Keyword::Trample), "rider1's");
+    assert!(survivor.keywords.contains(&Keyword::Lifelink), "rider2's");
     assert!(
-        survivor.base_keywords.contains(&Keyword::Trample),
-        "rider1's"
+        !survivor.base_keywords.contains(&Keyword::Trample)
+            && !survivor.base_keywords.contains(&Keyword::Lifelink),
+        "component ability union must stay in layer copy values, not base characteristics"
+    );
+    assert_ne!(
+        survivor.merge_layer_effect_id,
+        Some(first_effect),
+        "re-merge rebuilds the stored layer effect instead of stacking stale merge effects"
     );
     assert!(
-        survivor.base_keywords.contains(&Keyword::Lifelink),
-        "rider2's"
+        state
+            .transient_continuous_effects
+            .iter()
+            .all(|effect| effect.id != first_effect),
+        "the prior merge copy effect is removed before installing the rebuilt one"
     );
 }
 
@@ -362,7 +424,7 @@ fn merge_stacking_leave_routes_all_components_and_restores_survivor() {
     let survivor = state.objects.get(&host).unwrap();
     assert_eq!(survivor.name, "Host", "survivor reverted to its own card");
     assert!(survivor.merged_components.is_empty());
-    assert!(survivor.merge_self_origin.is_none());
+    assert!(survivor.merge_layer_effect_id.is_none());
 }
 
 /// CR 608.2b + CR 702.140b: end-to-end / resolution-time coverage of the wired
@@ -647,8 +709,8 @@ mod cast_pipeline {
             "CR 730.2a: rider on top, target underneath"
         );
         // CR 702.140e: union of abilities (target's Flying + spell's Trample).
-        assert!(survivor.base_keywords.contains(&Keyword::Flying));
-        assert!(survivor.base_keywords.contains(&Keyword::Trample));
+        assert!(survivor.keywords.contains(&Keyword::Flying));
+        assert!(survivor.keywords.contains(&Keyword::Trample));
         // CR 730.2c: no ETB / summoning-sickness reset on the surviving object.
         assert!(
             !survivor.summoning_sick,
@@ -717,8 +779,8 @@ mod cast_pipeline {
         assert!(!state.battlefield.contains(&spell));
         let survivor = state.objects.get(&target).unwrap();
         assert_eq!(survivor.merged_components, vec![spell, target]);
-        assert!(survivor.base_keywords.contains(&Keyword::Flying));
-        assert!(survivor.base_keywords.contains(&Keyword::Trample));
+        assert!(survivor.keywords.contains(&Keyword::Flying));
+        assert!(survivor.keywords.contains(&Keyword::Trample));
     }
 
     /// CR 702.140b: full cast pipeline with the target removed in response (no

@@ -1308,10 +1308,23 @@ export type RetargetScope =
 
 // ── Log Types ────────────────────────────────────────────────────────────
 
-export type LogCategory =
-  | "Game" | "Turn" | "Stack" | "Combat" | "Zone" | "Life"
-  | "Mana" | "State" | "Token" | "Trigger" | "Special" | "Destroy"
-  | "Debug";
+export const LOG_CATEGORIES = [
+  "Game",
+  "Turn",
+  "Stack",
+  "Combat",
+  "Zone",
+  "Life",
+  "Mana",
+  "State",
+  "Token",
+  "Trigger",
+  "Special",
+  "Destroy",
+  "Debug",
+] as const;
+
+export type LogCategory = (typeof LOG_CATEGORIES)[number];
 
 export type LogSegment =
   | { type: "Text"; value: string }

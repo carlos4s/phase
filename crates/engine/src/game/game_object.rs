@@ -75,53 +75,6 @@ pub struct BestowFormState;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct MutateFormState;
 
-/// CR 730.2 + CR 702.140e: Snapshot of the surviving component's OWN intrinsic
-/// characteristics, captured the first time this object becomes a merged
-/// permanent (`merge::merge_object_onto`). The merge bakes the DERIVED form
-/// (topmost component's copiable values + the union of every component's
-/// abilities) into the survivor's live/base fields; this snapshot preserves the
-/// survivor's own identity so that:
-///   * a further mutate (CR 730.2 multi-instance stacking) can re-derive the
-///     union from scratch using each component's intrinsic abilities, and
-///   * the survivor reverts to its OWN card when the merged permanent leaves the
-///     battlefield (CR 730.3 + CR 400.7) instead of keeping the topmost
-///     component's identity.
-///
-/// `None` whenever this object is not a merged permanent. Holds exactly the
-/// fields `merge::merge_object_onto` overwrites. (A future refactor could express
-/// the merged form as a layer-1 `CopyValues` continuous effect — mirroring
-/// `effects::become_copy` — so revert/re-derive ride the layer system; this
-/// self-contained snapshot keeps the change inside the merge subsystem.)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MergeSelfOrigin {
-    pub name: String,
-    pub base_name: String,
-    pub mana_cost: ManaCost,
-    pub base_mana_cost: ManaCost,
-    pub color: Vec<ManaColor>,
-    pub base_color: Vec<ManaColor>,
-    pub card_types: CardType,
-    pub base_card_types: CardType,
-    pub power: Option<i32>,
-    pub toughness: Option<i32>,
-    pub base_power: Option<i32>,
-    pub base_toughness: Option<i32>,
-    pub loyalty: Option<u32>,
-    pub base_loyalty: Option<u32>,
-    pub printed_ref: Option<PrintedCardRef>,
-    pub base_printed_ref: Option<PrintedCardRef>,
-    pub abilities: Arc<Vec<AbilityDefinition>>,
-    pub base_abilities: Arc<Vec<AbilityDefinition>>,
-    pub trigger_definitions: Definitions<TriggerDefinition>,
-    pub base_trigger_definitions: Arc<Vec<TriggerDefinition>>,
-    pub static_definitions: Definitions<StaticDefinition>,
-    pub base_static_definitions: Arc<Vec<StaticDefinition>>,
-    pub replacement_definitions: Definitions<ReplacementDefinition>,
-    pub base_replacement_definitions: Arc<Vec<ReplacementDefinition>>,
-    pub keywords: Vec<Keyword>,
-    pub base_keywords: Vec<Keyword>,
-}
-
 /// CR 702.160a: Prototype form marker — `Some(_)` means this object was cast
 /// prototyped and should use the secondary power, toughness, and mana cost
 /// characteristics while it is a spell or permanent on the battlefield.
@@ -598,13 +551,11 @@ pub struct GameObject {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub merged_components: Vec<ObjectId>,
 
-    /// CR 730.2 + CR 702.140e: The surviving component's own intrinsic
-    /// characteristics, snapshotted the first time this object becomes a merged
-    /// permanent so its identity can be re-derived on a further mutate and
-    /// restored when the merged permanent leaves the battlefield. `None` for
-    /// non-merged objects. See [`MergeSelfOrigin`].
+    /// CR 730.2a + CR 702.140e: Stable id of the layer-1 copy effect that
+    /// represents this merged permanent's topmost copiable values plus component
+    /// ability union. `None` for non-merged objects.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub merge_self_origin: Option<Box<MergeSelfOrigin>>,
+    pub merge_layer_effect_id: Option<u64>,
 
     /// CR 702.148a-b + CR 612: `Some(_)` while this object's cleave
     /// text-changing effect is live (the spell was cast for its cleave cost).
@@ -1031,7 +982,7 @@ impl GameObject {
             prototype_form: None,
             mutate_form: None,
             merged_components: Vec::new(),
-            merge_self_origin: None,
+            merge_layer_effect_id: None,
             cleave_form: None,
             cleave_variant: None,
             unimplemented_mechanics: Vec::new(),
@@ -1220,75 +1171,11 @@ impl GameObject {
         // re-entering object is not stuck carrying stale component ids. `mutate_form`
         // (stack-only, paralleling `bestow_form`) is intentionally NOT cleared here.
         self.merged_components.clear();
-        // CR 730.3 + CR 400.7: the surviving object kept the topmost component's
-        // copiable characteristics + the union of every component's abilities
-        // while merged. On leaving the battlefield it goes to its owner's zone as
-        // its OWN card, so restore its intrinsic identity from the snapshot.
-        self.restore_merge_self_origin();
+        // CR 730.3 + CR 400.7: merge copy effects are battlefield-scoped and are
+        // pruned at the battlefield-exit seam before this reset. Clear the stored
+        // id so a re-entering object cannot point at a stale transient effect.
+        self.merge_layer_effect_id = None;
         self.room_unlocks = None;
-    }
-
-    /// CR 730.3 + CR 400.7: Restore this object's intrinsic characteristics from
-    /// the `merge_self_origin` snapshot (and clear it), reverting the merged form
-    /// baked in by `merge::merge_object_onto`. No-op when not a merged survivor.
-    pub fn restore_merge_self_origin(&mut self) {
-        let Some(origin) = self.merge_self_origin.take() else {
-            return;
-        };
-        let MergeSelfOrigin {
-            name,
-            base_name,
-            mana_cost,
-            base_mana_cost,
-            color,
-            base_color,
-            card_types,
-            base_card_types,
-            power,
-            toughness,
-            base_power,
-            base_toughness,
-            loyalty,
-            base_loyalty,
-            printed_ref,
-            base_printed_ref,
-            abilities,
-            base_abilities,
-            trigger_definitions,
-            base_trigger_definitions,
-            static_definitions,
-            base_static_definitions,
-            replacement_definitions,
-            base_replacement_definitions,
-            keywords,
-            base_keywords,
-        } = *origin;
-        self.name = name;
-        self.base_name = base_name;
-        self.mana_cost = mana_cost;
-        self.base_mana_cost = base_mana_cost;
-        self.color = color;
-        self.base_color = base_color;
-        self.card_types = card_types;
-        self.base_card_types = base_card_types;
-        self.power = power;
-        self.toughness = toughness;
-        self.base_power = base_power;
-        self.base_toughness = base_toughness;
-        self.loyalty = loyalty;
-        self.base_loyalty = base_loyalty;
-        self.printed_ref = printed_ref;
-        self.base_printed_ref = base_printed_ref;
-        self.abilities = abilities;
-        self.base_abilities = base_abilities;
-        self.trigger_definitions = trigger_definitions;
-        self.base_trigger_definitions = base_trigger_definitions;
-        self.static_definitions = static_definitions;
-        self.base_static_definitions = base_static_definitions;
-        self.replacement_definitions = replacement_definitions;
-        self.base_replacement_definitions = base_replacement_definitions;
-        self.keywords = keywords;
-        self.base_keywords = base_keywords;
     }
 
     /// Check if this object has a specific keyword, using discriminant-based matching.

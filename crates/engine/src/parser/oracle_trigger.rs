@@ -2315,6 +2315,15 @@ fn static_condition_to_trigger_condition(sc: &StaticCondition) -> Option<Trigger
             Some(TriggerCondition::ControlsType { filter: f })
         }
 
+        // CR 603.4 + CR 608.2c: Source-bound intervening-if predicates bridge
+        // directly; the trigger evaluator checks the ability source at
+        // detection and resolution.
+        StaticCondition::SourceMatchesFilter { filter } => {
+            Some(TriggerCondition::SourceMatchesFilter {
+                filter: filter.clone(),
+            })
+        }
+
         // Not combinator — handle common negation patterns.
         StaticCondition::Not { condition } => match condition.as_ref() {
             StaticCondition::DuringYourTurn => Some(TriggerCondition::Not {
@@ -2439,7 +2448,6 @@ fn static_condition_to_trigger_condition(sc: &StaticCondition) -> Option<Trigger
         | StaticCondition::SpeedGE { .. }
         | StaticCondition::RecipientHasCounters { .. }
         | StaticCondition::RecipientMatchesFilter { .. }
-        | StaticCondition::SourceMatchesFilter { .. }
         | StaticCondition::DefendingPlayerControls { .. }
         | StaticCondition::SourceAttackingAlone
         | StaticCondition::SourceIsAttacking
@@ -4147,6 +4155,9 @@ fn parse_event_verb_start(input: &str) -> OracleResult<'_, ()> {
         // CR 702.26c: "phases in" / "phase in" — phasing trigger verb.
         parse_event_phrase("phases in"),
         parse_event_phrase("phase in"),
+        // CR 702.26b: "phases out" / "phase out" — phasing-out trigger verb.
+        parse_event_phrase("phases out"),
+        parse_event_phrase("phase out"),
     ));
     let player_actions = alt((
         passive_player_actions,
@@ -5502,6 +5513,8 @@ fn try_parse_event(
                 let mut def = make_base();
                 def.mode = TriggerMode::Attacks;
                 def.valid_card = Some(subject.clone());
+                // CR 508.1a: Battalion/Pack Tactics counts any N *other* creatures
+                // (untyped head noun) → no condition-level type axis.
                 def.condition = Some(TriggerCondition::MinCoAttackers { minimum: n });
                 return Some((TriggerMode::Attacks, def));
             }
@@ -5803,6 +5816,8 @@ fn try_parse_event(
         Saddles,
         /// CR 702.26c: Permanent phases in from phased-out state.
         PhasesIn,
+        /// CR 702.26b: Permanent phases out.
+        PhasesOut,
         /// CR 701.3d: Equipment/Aura becomes unattached from a permanent.
         BecomesUnattached(Option<TargetFilter>),
         // CR 701.3a: Equipment/Aura becomes attached to a permanent.
@@ -5934,6 +5949,9 @@ fn try_parse_event(
             // CR 702.26c: "phases in" / "phase in" — phasing trigger.
             value(SimpleEvent::PhasesIn, tag("phases in")),
             value(SimpleEvent::PhasesIn, tag("phase in")),
+            // CR 702.26b: "phases out" / "phase out" — phasing-out trigger.
+            value(SimpleEvent::PhasesOut, tag("phases out")),
+            value(SimpleEvent::PhasesOut, tag("phase out")),
             // CR 701.3d: Equipment/Aura becomes unattached from a permanent.
             parse_becomes_unattached,
             // CR 701.3a: "becomes attached to [a creature / a permanent / …]" —
@@ -6079,6 +6097,11 @@ fn try_parse_event(
             SimpleEvent::PhasesIn => {
                 // CR 702.26c: Permanent phases in from phased-out state.
                 def.mode = TriggerMode::PhaseIn;
+                def.valid_card = Some(subject.clone());
+            }
+            SimpleEvent::PhasesOut => {
+                // CR 702.26b: Permanent phases out.
+                def.mode = TriggerMode::PhaseOut;
                 def.valid_card = Some(subject.clone());
             }
             SimpleEvent::BecomesUnattached(host_filter) => {
@@ -6970,6 +6993,7 @@ fn strip_attachment_relative_clause(subject: &str) -> (&str, Option<FilterProp>)
             FilterProp::HasAttachment {
                 kind: AttachmentKind::Aura,
                 controller: Some(ControllerRef::You),
+                exclude_source: false,
             },
         ),
         (
@@ -6977,6 +7001,7 @@ fn strip_attachment_relative_clause(subject: &str) -> (&str, Option<FilterProp>)
             FilterProp::HasAttachment {
                 kind: AttachmentKind::Aura,
                 controller: Some(ControllerRef::You),
+                exclude_source: false,
             },
         ),
         (
@@ -6984,6 +7009,7 @@ fn strip_attachment_relative_clause(subject: &str) -> (&str, Option<FilterProp>)
             FilterProp::HasAttachment {
                 kind: AttachmentKind::Equipment,
                 controller: Some(ControllerRef::You),
+                exclude_source: false,
             },
         ),
         (
@@ -6991,6 +7017,7 @@ fn strip_attachment_relative_clause(subject: &str) -> (&str, Option<FilterProp>)
             FilterProp::HasAttachment {
                 kind: AttachmentKind::Equipment,
                 controller: Some(ControllerRef::You),
+                exclude_source: false,
             },
         ),
     ];
@@ -7000,6 +7027,33 @@ fn strip_attachment_relative_clause(subject: &str) -> (&str, Option<FilterProp>)
         }
     }
     (subject, None)
+}
+
+/// CR 508.1a: True when `filter` narrows the attacker class beyond a bare
+/// "creature[s]" head noun — i.e. it carries a subtype/negated-type/property
+/// constraint or a non-creature type. Used to decide whether a typed
+/// attacker-COUNT trigger ("two or more Dinosaurs attack") needs the
+/// condition-level type axis on `AttackersDeclaredMin`, or whether the untyped
+/// "two or more creatures attack" path can keep `filter: None`.
+///
+/// Controller scope ("creatures you control") does NOT narrow the class for
+/// counting purposes — it is already enforced by `matching_you_attack_pairs`'
+/// attacking-player gate, and every attacker in a CR 506.2 batch shares one
+/// controller — so a bare `Creature`/`Permanent` filter with only a controller
+/// set still returns `false` here.
+fn filter_narrows_beyond_creature(filter: &TargetFilter) -> bool {
+    match filter {
+        TargetFilter::Typed(tf) => {
+            !tf.properties.is_empty()
+                || tf
+                    .type_filters
+                    .iter()
+                    .any(|t| !matches!(t, TypeFilter::Creature | TypeFilter::Permanent))
+        }
+        // Disjunctions, SelfRef, Another, etc. always carry a meaningful
+        // narrowing — count them.
+        _ => true,
+    }
 }
 
 /// Append `attachment_prop` to a `TargetFilter::Typed`'s properties if present,
@@ -7051,13 +7105,22 @@ fn try_parse_n_or_more_attacks(lower: &str) -> Option<(TriggerMode, TriggerDefin
 
         let mut def = make_base();
         def.mode = TriggerMode::YouAttack;
-        def.valid_card = Some(filter);
+        def.valid_card = Some(filter.clone());
         if attacks_player {
             def.valid_target = Some(TargetFilter::Player);
         }
         if min_count > 1 {
-            def.condition = Some(TriggerCondition::MinCoAttackers {
-                minimum: min_count - 1,
+            // CR 508.1a + CR 603.2c: the count condition must count only attackers
+            // of the SAME filtered class (e.g. Dinosaurs), not every co-attacker —
+            // otherwise "two or more Dinosaurs attack" over-fires on 1 Dinosaur +
+            // 1 unrelated attacker. This head-noun form is not source-relative,
+            // so use the AttackersDeclared batch count rather than the
+            // source-excluding MinCoAttackers condition.
+            let count_filter = filter_narrows_beyond_creature(&filter).then_some(filter);
+            def.condition = Some(TriggerCondition::AttackersDeclaredMin {
+                scope: ControllerRef::You,
+                minimum: min_count,
+                filter: count_filter,
             });
         }
         // CR 603.2c: "One or more creatures ... attack" fires once per batch of
@@ -7085,8 +7148,12 @@ fn try_parse_n_or_more_attacks(lower: &str) -> Option<(TriggerMode, TriggerDefin
 ///     known — this drives `match_you_attack`'s attacking-player filter AND
 ///     feeds `resolve_they_pronoun` so a trailing "they draw a card" resolves
 ///     to `TargetFilter::TriggeringPlayer`.
-///   - `condition = AttackersDeclaredMin { scope, minimum }` so only batches
-///     with at least N attackers from the scoped player fire the trigger.
+///   - `condition = AttackersDeclaredMin { scope, minimum, filter }` so only
+///     batches with at least N attackers from the scoped player — matching the
+///     typed `filter` when present — fire the trigger. The typed count>1 case
+///     ("attack with two or more Dinosaurs") parses the head-noun type phrase
+///     into both the matcher's `valid_card` gate and the condition's `filter`
+///     (CR 508.1), so it counts only Dinosaurs and cannot over-fire.
 fn try_parse_attack_with_n_creatures(lower: &str) -> Option<(TriggerMode, TriggerDefinition)> {
     use nom::combinator::opt;
 
@@ -7161,23 +7228,24 @@ fn try_parse_attack_with_n_creatures(lower: &str) -> Option<(TriggerMode, Trigge
         return Some((TriggerMode::YouAttack, def));
     }
 
-    // count > 1 ("two or more creatures"): byte-identical to the pre-existing
-    // behavior — hardcoded "creatures" head noun, count condition via
-    // `AttackersDeclaredMin`, no `valid_card`. Typed count>1 ("two or more Gods")
-    // is deferred — populating `valid_card` for count>1 without a condition-level
-    // type axis would over-fire (≥1 God + ≥2 any-attackers).
-    let (after_creatures, ()) = value((), tag::<_, _, OracleError<'_>>("creatures"))
-        .parse(after_or_more)
-        .ok()?;
+    // count > 1 ("two or more <TYPE> creatures"): capture the head-noun type
+    // phrase via the shared `parse_type_phrase` building block (same as the
+    // count==1 branch above), then parameterize the count condition with the
+    // condition-level type axis. The previously-deferred typed case
+    // ("two or more Gods") now counts ONLY attackers matching `filter`, so it
+    // can no longer over-fire on ≥1 God + ≥2 any-attackers. The untyped
+    // "creatures" head noun yields `filter: None` on the condition, preserving
+    // byte-identical pre-fix behavior.
+    let (filter, remainder) = parse_type_phrase(after_or_more);
     // Accept optional trailing " each turn" / " this turn" qualifier (unused here,
     // but keeps the matcher permissive for CR 603.4 timing qualifiers). Must end
     // at the condition boundary — the caller already split the effect text off,
-    // so `after_creatures` should be empty or punctuation-only.
+    // so the remainder should be empty or punctuation-only.
     let (rest, _) = opt(alt((
         tag::<_, _, OracleError<'_>>(" each turn"),
         tag(" this turn"),
     )))
-    .parse(after_creatures)
+    .parse(remainder)
     .ok()?;
     if !rest.trim().is_empty() {
         return None;
@@ -7192,9 +7260,20 @@ fn try_parse_attack_with_n_creatures(lower: &str) -> Option<(TriggerMode, Trigge
     def.valid_target = Some(TargetFilter::Typed(
         TypedFilter::default().controller(actor.clone()),
     ));
+    // CR 508.1: the per-attacker type gate the matcher reads — set only when the
+    // type phrase narrows beyond a bare "creatures" head noun, mirroring the
+    // count==1 branch which always populates `valid_card`. Counting is enforced
+    // by the condition's `filter` below; `valid_card` keeps the matcher's
+    // "≥1 matching attacker" gate aligned with the typed minimum.
+    let narrows = filter_narrows_beyond_creature(&filter);
+    if narrows {
+        def.valid_card = Some(filter.clone());
+    }
+    let count_filter = narrows.then_some(filter);
     def.condition = Some(TriggerCondition::AttackersDeclaredMin {
         scope: actor,
         minimum: n,
+        filter: count_filter,
     });
 
     Some((TriggerMode::YouAttack, def))
@@ -8205,6 +8284,15 @@ fn try_parse_player_trigger(lower: &str) -> Option<(TriggerMode, TriggerDefiniti
         def.valid_target = Some(TargetFilter::Controller);
         def.constraint = Some(TriggerConstraint::OnlyDuringYourTurn);
         return Some((TriggerMode::LifeLost, def));
+    }
+
+    // CR 107.14: "Whenever you get one or more {E}" — batched energy-counter trigger.
+    if scan_contains(lower, "you get one or more {e}") {
+        let mut def = make_base();
+        def.mode = TriggerMode::CounterPlayerAddedAll;
+        def.valid_target = Some(TargetFilter::Controller);
+        def.batched = true;
+        return Some((TriggerMode::CounterPlayerAddedAll, def));
     }
 
     fn parse_countering_spell_or_ability_line(i: &str) -> OracleResult<'_, ControllerRef> {
@@ -10650,6 +10738,18 @@ mod tests {
     }
 
     #[test]
+    fn parses_phases_out_trigger_as_phase_out_mode() {
+        // CR 702.26b: "Whenever ~ phases out, discard a card." (Teferi's Imp)
+        let def = parse_trigger_line(
+            "Whenever this creature phases out, discard a card.",
+            "Teferi's Imp",
+        );
+
+        assert_eq!(def.mode, TriggerMode::PhaseOut);
+        assert_eq!(def.valid_card, Some(TargetFilter::SelfRef));
+    }
+
+    #[test]
     fn static_condition_to_trigger_condition_source_in_battlefield() {
         // SUB-FIX B regression: the existing SourceInZone mapper must pass
         // Zone::Battlefield through unchanged so the new battlefield condition
@@ -12879,6 +12979,305 @@ mod tests {
         }
     }
 
+    /// CR 104.3e + CR 119 + CR 603.4 + CR 603.7c + CR 603.12: Ezio Auditore
+    /// da Firenze — "Whenever ~ deals combat damage to a player, you may pay
+    /// {W}{U}{B}{R}{G} if that player has 10 or less life. When you do, that
+    /// player loses the game."
+    ///
+    /// Three-defect regression for issue #1962:
+    ///
+    /// 1. The intervening-if "if that player has 10 or less life" (CR 603.4)
+    ///    used to be dropped — the trigger fired unconditionally. The new
+    ///    `parse_life_predicate` combinator in `oracle_nom::condition` must
+    ///    lift this into `TriggerCondition::QuantityComparison` on
+    ///    `LifeTotal[ScopedPlayer]`.
+    /// 2. "That player loses the game" used to lower to a bare
+    ///    `Effect::LoseTheGame` with no target — the resolver routed
+    ///    elimination to the ability controller (Ezio's controller), so the
+    ///    Ezio player eliminated *themselves*. The new
+    ///    `Effect::LoseTheGame.target` field must be
+    ///    `Some(TargetFilter::TriggeringPlayer)` (CR 603.7c — "that player"
+    ///    anaphora binds to the player named by the damage event).
+    /// 3. The reflexive "When you do" gate (CR 603.12) on the directed-loss
+    ///    sub-ability must be preserved so the loss only fires after the
+    ///    mana payment occurs.
+    #[test]
+    fn parse_ezio_damage_trigger_full_structure() {
+        use crate::types::ability::{
+            AbilityCondition, Effect, PaymentCost, PlayerScope, QuantityExpr, QuantityRef,
+        };
+        use crate::types::mana::{ManaCost, ManaCostShard};
+
+        let def = parse_trigger_line(
+            "Whenever ~ deals combat damage to a player, if that player has 10 or less life, you may pay {W}{U}{B}{R}{G}. When you do, that player loses the game.",
+            "Ezio Auditore da Firenze",
+        );
+
+        // (a) Mode + damage kind + valid_target — CR 120.3 + CR 603.7c.
+        assert!(
+            matches!(def.mode, TriggerMode::DamageDone),
+            "mode must be DamageDone, got {:?}",
+            def.mode,
+        );
+        assert!(
+            matches!(def.damage_kind, DamageKindFilter::CombatOnly),
+            "damage_kind must be CombatOnly, got {:?}",
+            def.damage_kind,
+        );
+        assert_eq!(
+            def.valid_target,
+            Some(TargetFilter::Player),
+            "valid_target must be Player (the recipient of combat damage)",
+        );
+
+        // (b) Intervening-if condition — CR 603.4 + CR 119: LifeTotal[ScopedPlayer] LE 10.
+        assert_eq!(
+            def.condition,
+            Some(TriggerCondition::QuantityComparison {
+                lhs: QuantityExpr::Ref {
+                    qty: QuantityRef::LifeTotal {
+                        player: PlayerScope::ScopedPlayer,
+                    },
+                },
+                comparator: Comparator::LE,
+                rhs: QuantityExpr::Fixed { value: 10 },
+            }),
+            "intervening-if must lift to QuantityComparison(LifeTotal[ScopedPlayer] LE 10), got {:?}",
+            def.condition,
+        );
+
+        // Outer execute is the "you may pay {WUBRG}" cost.
+        let execute = def.execute.as_ref().expect("execute must be Some");
+
+        // (c) Optional flag — the "you may" prefix on the cost (CR 609.3).
+        assert!(
+            execute.optional,
+            "execute.optional must be true (the 'you may pay' wording)",
+        );
+
+        // (d) Cost effect — PayCost { Mana { WUBRG }, payer: Controller }.
+        match &*execute.effect {
+            Effect::PayCost { cost, payer } => {
+                match cost {
+                    PaymentCost::Mana {
+                        cost: ManaCost::Cost { shards, generic },
+                    } => {
+                        assert_eq!(*generic, 0, "WUBRG cost has no generic component");
+                        let expected = [
+                            ManaCostShard::White,
+                            ManaCostShard::Blue,
+                            ManaCostShard::Black,
+                            ManaCostShard::Red,
+                            ManaCostShard::Green,
+                        ];
+                        for shard in expected {
+                            assert!(
+                                shards.contains(&shard),
+                                "cost shards must include {shard:?}, got {shards:?}",
+                            );
+                        }
+                        assert_eq!(
+                            shards.len(),
+                            5,
+                            "cost must be exactly WUBRG (5 shards), got {shards:?}",
+                        );
+                    }
+                    other => panic!("PayCost.cost must be Mana(WUBRG), got {other:?}"),
+                }
+                assert_eq!(
+                    *payer,
+                    TargetFilter::Controller,
+                    "PayCost.payer must be Controller (the trigger controller pays)",
+                );
+            }
+            other => panic!("execute.effect must be PayCost, got {other:?}"),
+        }
+
+        // (e) Reflexive sub_ability: "When you do, that player loses the game."
+        let sub = execute
+            .sub_ability
+            .as_deref()
+            .expect("sub_ability must be Some — the 'When you do' clause");
+        assert_eq!(
+            sub.condition,
+            Some(AbilityCondition::WhenYouDo),
+            "sub_ability.condition must be WhenYouDo (CR 603.12), got {:?}",
+            sub.condition,
+        );
+        assert!(
+            matches!(
+                &*sub.effect,
+                Effect::LoseTheGame { target: Some(f) } if *f == TargetFilter::TriggeringPlayer
+            ),
+            "sub_ability.effect must be LoseTheGame {{ target: Some(TriggeringPlayer) }}, got {:?}",
+            sub.effect,
+        );
+    }
+
+    /// CR 104.3e + CR 119 + CR 603.4 + CR 603.7c + CR 603.12: Ezio Auditore
+    /// da Firenze — VERBATIM printed Oracle text (post-effect `if` form):
+    /// "Whenever ~ deals combat damage to a player, you may pay
+    /// {W}{U}{B}{R}{G} if that player has 10 or less life. When you do,
+    /// that player loses the game."
+    ///
+    /// The companion test `parse_ezio_damage_trigger_full_structure` uses
+    /// the *normalized* leading-`if` form ("...if that player has 10 or
+    /// less life, you may pay...") which hoists the predicate to
+    /// `def.condition` (CR 603.4 intervening-if, detection-time gate). The
+    /// verbatim card text uses the *post-effect* `if` form, which re-homes
+    /// the predicate onto `execute.condition` (CR 608.2c, resolution-time
+    /// gate via `strip_suffix_conditional` →
+    /// `try_nom_condition_as_ability_condition`) instead.
+    ///
+    /// Issue #1962 hardening (TEST-ONLY): the real printed card text was
+    /// previously untested — a regression in the post-effect re-homer would
+    /// silently strand the life predicate (allowing the loss to fire at
+    /// any life total), but the normalized-form regression test would
+    /// continue to pass. This test locks the load-bearing invariant that
+    /// the life-total gate exists *somewhere* on the lowered ability tree,
+    /// regardless of which path the parser uses to lift it.
+    #[test]
+    fn parse_ezio_damage_trigger_verbatim_oracle_text() {
+        use crate::types::ability::{
+            AbilityCondition, Effect, PaymentCost, PlayerScope, QuantityExpr, QuantityRef,
+        };
+        use crate::types::mana::{ManaCost, ManaCostShard};
+
+        let def = parse_trigger_line(
+            "Whenever ~ deals combat damage to a player, you may pay {W}{U}{B}{R}{G} if that player has 10 or less life. When you do, that player loses the game.",
+            "Ezio Auditore da Firenze",
+        );
+
+        // (a) Mode + damage kind + valid_target — CR 120.3 + CR 603.7c.
+        // These are unchanged from the normalized form: the trigger shape
+        // itself doesn't depend on which side of the comma the `if` clause
+        // lives on.
+        assert!(
+            matches!(def.mode, TriggerMode::DamageDone),
+            "mode must be DamageDone, got {:?}",
+            def.mode,
+        );
+        assert!(
+            matches!(def.damage_kind, DamageKindFilter::CombatOnly),
+            "damage_kind must be CombatOnly, got {:?}",
+            def.damage_kind,
+        );
+        assert_eq!(
+            def.valid_target,
+            Some(TargetFilter::Player),
+            "valid_target must be Player (the recipient of combat damage)",
+        );
+
+        let execute = def.execute.as_ref().expect("execute must be Some");
+
+        // (b) Optional flag — the "you may pay" wording (CR 609.3).
+        assert!(
+            execute.optional,
+            "execute.optional must be true (the 'you may pay' wording)",
+        );
+
+        // (c) Cost effect — PayCost { Mana { WUBRG }, payer: Controller }.
+        // The cost shape must be identical to the normalized form.
+        match &*execute.effect {
+            Effect::PayCost { cost, payer } => {
+                match cost {
+                    PaymentCost::Mana {
+                        cost: ManaCost::Cost { shards, generic },
+                    } => {
+                        assert_eq!(*generic, 0, "WUBRG cost has no generic component");
+                        let expected = [
+                            ManaCostShard::White,
+                            ManaCostShard::Blue,
+                            ManaCostShard::Black,
+                            ManaCostShard::Red,
+                            ManaCostShard::Green,
+                        ];
+                        for shard in expected {
+                            assert!(
+                                shards.contains(&shard),
+                                "cost shards must include {shard:?}, got {shards:?}",
+                            );
+                        }
+                        assert_eq!(
+                            shards.len(),
+                            5,
+                            "cost must be exactly WUBRG (5 shards), got {shards:?}",
+                        );
+                    }
+                    other => panic!("PayCost.cost must be Mana(WUBRG), got {other:?}"),
+                }
+                assert_eq!(
+                    *payer,
+                    TargetFilter::Controller,
+                    "PayCost.payer must be Controller (the trigger controller pays)",
+                );
+            }
+            other => panic!("execute.effect must be PayCost, got {other:?}"),
+        }
+
+        // (d) THE KEY INVARIANT: the life-total predicate must exist
+        // *somewhere* on the lowered ability tree. The post-effect `if`
+        // form lifts it to `execute.condition` (CR 608.2c), not
+        // `def.condition` (CR 603.4) — but a regression in either path
+        // would drop the gate entirely. Accept whichever path the parser
+        // actually uses, but assert at least one is populated with the
+        // correct shape.
+        let expected_predicate = (
+            QuantityExpr::Ref {
+                qty: QuantityRef::LifeTotal {
+                    player: PlayerScope::ScopedPlayer,
+                },
+            },
+            Comparator::LE,
+            QuantityExpr::Fixed { value: 10 },
+        );
+        let trigger_condition_matches = matches!(
+            &def.condition,
+            Some(TriggerCondition::QuantityComparison { lhs, comparator, rhs })
+                if *lhs == expected_predicate.0
+                    && *comparator == expected_predicate.1
+                    && *rhs == expected_predicate.2
+        );
+        let execute_condition_matches = matches!(
+            &execute.condition,
+            Some(AbilityCondition::QuantityCheck { lhs, comparator, rhs })
+                if *lhs == expected_predicate.0
+                    && *comparator == expected_predicate.1
+                    && *rhs == expected_predicate.2
+        );
+        assert!(
+            trigger_condition_matches || execute_condition_matches,
+            "life-total gate (LifeTotal[ScopedPlayer] LE 10) must be present on either \
+             def.condition (CR 603.4 intervening-if) or execute.condition (CR 608.2c \
+             post-effect re-homer); got def.condition={:?}, execute.condition={:?}",
+            def.condition,
+            execute.condition,
+        );
+
+        // (e) Reflexive sub_ability: "When you do, that player loses the
+        // game." This is independent of which side of the comma the `if`
+        // appears on — the WhenYouDo gate + directed LoseTheGame target
+        // must always be wired through.
+        let sub = execute
+            .sub_ability
+            .as_deref()
+            .expect("sub_ability must be Some — the 'When you do' clause");
+        assert_eq!(
+            sub.condition,
+            Some(AbilityCondition::WhenYouDo),
+            "sub_ability.condition must be WhenYouDo (CR 603.12), got {:?}",
+            sub.condition,
+        );
+        assert!(
+            matches!(
+                &*sub.effect,
+                Effect::LoseTheGame { target: Some(f) } if *f == TargetFilter::TriggeringPlayer
+            ),
+            "sub_ability.effect must be LoseTheGame {{ target: Some(TriggeringPlayer) }}, got {:?}",
+            sub.effect,
+        );
+    }
+
     /// CR 603.7c + CR 120.3 + CR 119.3: Unstoppable Slasher — "Whenever this
     /// creature deals combat damage to a player, they lose half their life,
     /// rounded up." is an event-bound (non-targeted) trigger per CR 603.6f.
@@ -13112,7 +13511,11 @@ mod tests {
         // Angel never eliminates itself — directly fixing the "my own Angel
         // killed me" report.
         let execute = def.execute.as_ref().expect("execute must be Some");
-        assert_eq!(*execute.effect, Effect::LoseTheGame);
+        assert!(
+            matches!(*execute.effect, Effect::LoseTheGame { target: None }),
+            "execute effect must be LoseTheGame with no explicit target, got {:?}",
+            execute.effect,
+        );
         assert_eq!(
             execute.player_scope,
             Some(PlayerFilter::OpponentAttackedBySourceThisTurn),
@@ -14812,6 +15215,45 @@ mod tests {
         );
     }
 
+    /// Issue #551 — The Raven Man: "At the beginning of each end step, if a
+    /// player discarded a card this turn, create a 1/1 black Bird ...". The
+    /// "a player" (any player) intervening-if must be hoisted as an all-players
+    /// `CardsDiscardedThisTurn` comparison; before this fix the condition was
+    /// dropped and the bird was created every end step regardless of discards.
+    #[test]
+    fn trigger_intervening_if_a_player_discarded_this_turn() {
+        let def = parse_trigger_line(
+            "At the beginning of each end step, if a player discarded a card this turn, create a 1/1 black Bird creature token with flying.",
+            "The Raven Man",
+        );
+        assert_eq!(def.mode, TriggerMode::Phase);
+        assert_eq!(def.phase, Some(Phase::End));
+        let Some(TriggerCondition::QuantityComparison {
+            lhs,
+            comparator,
+            rhs,
+        }) = &def.condition
+        else {
+            panic!(
+                "expected QuantityComparison intervening-if, got {:?}",
+                def.condition
+            );
+        };
+        assert_eq!(*comparator, Comparator::GE);
+        assert_eq!(*rhs, QuantityExpr::Fixed { value: 1 });
+        assert_eq!(
+            *lhs,
+            QuantityExpr::Ref {
+                qty: QuantityRef::CardsDiscardedThisTurn {
+                    player: PlayerScope::AllPlayers {
+                        aggregate: AggregateFunction::Sum,
+                        exclude: None,
+                    },
+                },
+            }
+        );
+    }
+
     #[test]
     fn trigger_intervening_if_card_left_your_graveyard_this_turn() {
         let def = parse_trigger_line(
@@ -15136,6 +15578,7 @@ mod tests {
                         FilterProp::HasAttachment {
                             kind: AttachmentKind::Aura,
                             controller: Some(ControllerRef::You),
+                            ..
                         }
                     )
                 });
@@ -15538,6 +15981,17 @@ mod tests {
         assert_eq!(def.mode, TriggerMode::LifeChanged);
         assert_eq!(def.valid_target, Some(TargetFilter::Player));
         assert_eq!(def.condition, None);
+    }
+
+    #[test]
+    fn trigger_you_get_one_or_more_energy() {
+        let def = parse_trigger_line(
+            "Whenever you get one or more {E}, you get an additional {E}.",
+            "Fabrication Module",
+        );
+        assert_eq!(def.mode, TriggerMode::CounterPlayerAddedAll);
+        assert_eq!(def.valid_target, Some(TargetFilter::Controller));
+        assert!(def.batched);
     }
 
     #[test]
@@ -20427,7 +20881,8 @@ mod tests {
 
     #[test]
     fn trigger_two_or_more_creatures_attack() {
-        // CR 508.1a: "two or more" uses MinCoAttackers with minimum=1 (2-1).
+        // CR 508.1a + CR 603.2c: head-noun counts use the full attackers-declared
+        // batch, not source-relative co-attacker counting.
         let def = parse_trigger_line(
             "Whenever two or more creatures you control attack a player, draw a card.",
             "Edric, Spymaster of Trest",
@@ -20435,10 +20890,50 @@ mod tests {
         assert_eq!(def.mode, TriggerMode::YouAttack);
         assert_eq!(
             def.condition,
-            Some(TriggerCondition::MinCoAttackers { minimum: 1 })
+            Some(TriggerCondition::AttackersDeclaredMin {
+                scope: ControllerRef::You,
+                minimum: 2,
+                filter: None
+            })
         );
         assert_eq!(def.valid_target, Some(TargetFilter::Player));
         assert!(def.execute.is_some());
+    }
+
+    #[test]
+    fn trigger_two_or_more_typed_creatures_attack() {
+        let def = parse_trigger_line(
+            "Whenever two or more Dinosaurs attack, draw a card.",
+            "Test Dinosaur Lord",
+        );
+        assert_eq!(def.mode, TriggerMode::YouAttack);
+        assert!(def.batched);
+        match &def.valid_card {
+            Some(TargetFilter::Typed(tf)) => assert!(
+                tf.type_filters
+                    .iter()
+                    .any(|t| matches!(t, TypeFilter::Subtype(s) if s == "Dinosaur")),
+                "expected Dinosaur subtype in valid_card, got {:?}",
+                tf.type_filters,
+            ),
+            other => panic!("expected Typed valid_card with Dinosaur, got {other:?}"),
+        }
+        match &def.condition {
+            Some(TriggerCondition::AttackersDeclaredMin {
+                scope: ControllerRef::You,
+                minimum: 2,
+                filter: Some(TargetFilter::Typed(tf)),
+            }) => assert!(
+                tf.type_filters
+                    .iter()
+                    .any(|t| matches!(t, TypeFilter::Subtype(s) if s == "Dinosaur")),
+                "expected Dinosaur subtype in condition filter, got {:?}",
+                tf.type_filters,
+            ),
+            other => {
+                panic!("expected AttackersDeclaredMin {{ You, 2, Some(Dinosaur) }}, got {other:?}")
+            }
+        }
     }
 
     // --- Plan 03: SpellCast trigger sub-patterns ---
@@ -21315,6 +21810,17 @@ mod tests {
     fn bridge_is_present_none_filter_returns_none() {
         let sc = StaticCondition::IsPresent { filter: None };
         assert!(static_condition_to_trigger_condition(&sc).is_none());
+    }
+
+    #[test]
+    fn bridge_source_matches_filter() {
+        let filter = TargetFilter::Typed(TypedFilter::creature());
+        assert_eq!(
+            static_condition_to_trigger_condition(&StaticCondition::SourceMatchesFilter {
+                filter: filter.clone(),
+            }),
+            Some(TriggerCondition::SourceMatchesFilter { filter }),
+        );
     }
 
     #[test]
@@ -23255,14 +23761,13 @@ mod tests {
         }
     }
 
-    /// Issue #610 REV 2 GUARDRAIL (deferral lock). The actor-led count>1 form
-    /// ("two or more creatures") must remain byte-identical to pre-fix behavior:
-    /// `valid_card` UNSET and the count condition is the unchanged 2-field
-    /// `AttackersDeclaredMin { scope, minimum }`. Populating `valid_card` for
-    /// count>1 without a condition-level type axis would over-fire. This test
-    /// locks the deferral so a future edit cannot silently regress it.
+    /// CR 508.1a + CR 603.2c: the UNTYPED actor-led count>1 form
+    /// ("two or more creatures") stays byte-identical to pre-fix behavior:
+    /// `valid_card` UNSET and the count condition carries `filter: None`.
+    /// (Formerly the deferral lock — the typed count>1 form is now implemented;
+    /// see `trigger_you_attack_with_two_or_more_typed_creatures`.)
     #[test]
-    fn you_attack_with_two_or_more_creatures_defers_filter() {
+    fn you_attack_with_two_or_more_creatures_untyped_no_filter() {
         let def = parse_trigger_line(
             "Whenever you attack with two or more creatures, draw a card.",
             "Firemane Commando",
@@ -23270,15 +23775,60 @@ mod tests {
         assert_eq!(def.mode, TriggerMode::YouAttack);
         assert_eq!(
             def.valid_card, None,
-            "count>1 must NOT set valid_card (REV 2 deferral)"
+            "untyped count>1 must NOT set valid_card"
         );
         assert_eq!(
             def.condition,
             Some(TriggerCondition::AttackersDeclaredMin {
                 scope: ControllerRef::You,
                 minimum: 2,
+                filter: None,
             })
         );
+    }
+
+    /// CR 508.1a + CR 603.2c: the TYPED actor-led count>1 form
+    /// ("two or more Dinosaurs") now parses the type phrase into BOTH the
+    /// matcher's `valid_card` gate AND the condition-level type axis
+    /// (`AttackersDeclaredMin.filter`), so the count enforces ≥N *Dinosaurs*
+    /// rather than ≥N *any* attackers. This is the over-fire guard.
+    #[test]
+    fn trigger_you_attack_with_two_or_more_typed_creatures() {
+        let def = parse_trigger_line(
+            "Whenever you attack with two or more Dinosaurs, draw a card.",
+            "Test Dinosaur Lord",
+        );
+        assert_eq!(def.mode, TriggerMode::YouAttack);
+        assert!(def.batched);
+        // valid_card carries the Dinosaur subtype so the matcher's
+        // "≥1 matching attacker" gate aligns with the typed minimum.
+        match &def.valid_card {
+            Some(TargetFilter::Typed(tf)) => assert!(
+                tf.type_filters
+                    .iter()
+                    .any(|t| matches!(t, TypeFilter::Subtype(s) if s == "Dinosaur")),
+                "expected Dinosaur subtype in valid_card, got {:?}",
+                tf.type_filters,
+            ),
+            other => panic!("expected Typed valid_card with Dinosaur, got {other:?}"),
+        }
+        // The count condition carries the SAME filter as the type axis.
+        match &def.condition {
+            Some(TriggerCondition::AttackersDeclaredMin {
+                scope: ControllerRef::You,
+                minimum: 2,
+                filter: Some(TargetFilter::Typed(tf)),
+            }) => assert!(
+                tf.type_filters
+                    .iter()
+                    .any(|t| matches!(t, TypeFilter::Subtype(s) if s == "Dinosaur")),
+                "expected Dinosaur subtype in condition filter, got {:?}",
+                tf.type_filters,
+            ),
+            other => {
+                panic!("expected AttackersDeclaredMin {{ You, 2, Some(Dinosaur) }}, got {other:?}")
+            }
+        }
     }
 
     #[test]
@@ -23300,6 +23850,7 @@ mod tests {
             Some(TriggerCondition::AttackersDeclaredMin {
                 scope: ControllerRef::You,
                 minimum: 2,
+                filter: None,
             })
         );
     }
@@ -23327,6 +23878,7 @@ mod tests {
                     TriggerCondition::AttackersDeclaredMin {
                         scope: ControllerRef::Opponent,
                         minimum: 2,
+                        filter: None,
                     }
                 ));
                 assert!(matches!(
@@ -23375,6 +23927,7 @@ mod tests {
             Some(TriggerCondition::AttackersDeclaredMin {
                 scope: ControllerRef::Opponent,
                 minimum: 2,
+                filter: None,
             })
         );
         assert!(def.batched);

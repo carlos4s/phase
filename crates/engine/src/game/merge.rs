@@ -23,21 +23,19 @@
 //!
 //! Multi-instance stacking (CR 730.2) IS supported: mutating onto an
 //! already-merged permanent extends its component stack, and the merged
-//! permanent's identity is re-derived from the full stack each time. The
-//! survivor's intrinsic identity is preserved in `GameObject::merge_self_origin`
-//! so it reverts to its own card on leaving the battlefield (CR 730.3 + 400.7).
+//! permanent's layer-1 copy effect is re-derived from the full stack each time.
 //!
 //! Deferred: copy effects targeting a merged permanent, face-down/DFC
 //! components, full CR 702.140d downstream reflexive effects, and the CR 730.3a
 //! graveyard/library arrange-order UI (a deterministic order is used).
 
-use crate::game::game_object::{GameObject, MergeSelfOrigin};
-use crate::types::card::PrintedCardRef;
-use crate::types::card_type::CardType;
+use std::sync::Arc;
+
+use crate::game::printed_cards::intrinsic_copiable_values;
+use crate::types::ability::{ContinuousModification, CopiableValues, Duration, TargetFilter};
 use crate::types::events::GameEvent;
 use crate::types::game_state::GameState;
 use crate::types::identifiers::ObjectId;
-use crate::types::mana::{ManaColor, ManaCost};
 use crate::types::zones::Zone;
 
 /// CR 702.140c + CR 730.2a: Which side of the target creature the mutating
@@ -65,21 +63,18 @@ pub enum MergeSide {
 ///
 /// The target keeps its `ObjectId` (CR 730.2c); `side` only sets the topmost
 /// component. The merged permanent gains the union of all components' abilities
-/// (CR 702.140e) and the topmost component's other characteristics (CR 730.2a,
-/// snapshot into both live and base fields so a layer re-evaluation preserves
-/// them, with `layers_dirty` marked). The permanent is NOT considered to have
-/// entered the battlefield (CR 730.2b/c), so no ETB triggers fire. Emits
-/// `GameEvent::Mutated`.
+/// (CR 702.140e) and the topmost component's other characteristics (CR 730.2a)
+/// through the existing layer-1 `CopyValues` machinery. The permanent is NOT
+/// considered to have entered the battlefield (CR 730.2b/c), so no ETB triggers
+/// fire. Emits `GameEvent::Mutated`.
 ///
 /// CR 730.2 multi-instance stacking: if `target_id` is already a merged
 /// permanent, `merging_id` extends its component stack (over or under the whole
 /// stack per `side`); the identity is re-derived from the full stack. The
-/// survivor's intrinsic identity is captured into `merge_self_origin` on the
-/// first merge so the union/copiable can be recomputed from scratch and the
-/// survivor reverts to its own card on leaving the battlefield. `merging_id`'s
-/// `GameObject` is retained in `state.objects` as a component (it has left the
-/// stack in `stack::resolve_top`) so [`split_merged_permanent_on_leave`] can
-/// restore it.
+/// derived copy effect is rebuilt from the component list on each merge.
+/// `merging_id`'s `GameObject` is retained in `state.objects` as a component (it
+/// has left the stack in `stack::resolve_top`) so
+/// [`split_merged_permanent_on_leave`] can restore it.
 pub fn merge_object_onto(
     state: &mut GameState,
     merging_id: ObjectId,
@@ -105,11 +100,6 @@ pub fn merge_object_onto(
         merging.zone = Zone::Battlefield;
         merging.mutate_form = None;
     }
-
-    // CR 730.2 + 702.140e: capture the survivor's intrinsic identity the FIRST
-    // time it merges (its live/base fields will be overwritten with the derived
-    // merged form below). Idempotent — a re-merge keeps the original snapshot.
-    capture_self_origin_if_needed(state, target_id);
 
     // CR 730.2 multi-instance stacking: extend the existing stack when
     // `target_id` is already merged; otherwise start from the survivor itself.
@@ -139,21 +129,20 @@ pub fn merge_object_onto(
     };
     let topmost_id = ordered[0];
 
-    // CR 730.2a: the topmost component supplies the copiable characteristics.
-    // CR 702.140e: the merged permanent has the UNION of every component's
-    // abilities. Both re-derive from each component's INTRINSIC identity (the
-    // survivor's intrinsic comes from its snapshot, since its own fields now hold
-    // the previously-derived merged form).
-    apply_topmost_copiable(state, topmost_id, target_id);
-    union_abilities_onto(state, &ordered, target_id);
+    // Remove any previous mutate copy effect before deriving the new one, so a
+    // re-merge where the survivor remains topmost reads the survivor's intrinsic
+    // base values rather than the prior merged form.
+    remove_merge_layer_effect(state, target_id);
+
+    let Some((values, printed_ref)) = merged_copiable_values(state, &ordered, topmost_id) else {
+        return;
+    };
 
     if let Some(survivor) = state.objects.get_mut(&target_id) {
         survivor.merged_components = ordered;
     }
 
-    // CR 613.2: the merge is a copiable effect; re-run layers so any continuous
-    // effects re-derive against the merged characteristics.
-    state.layers_dirty.mark_full();
+    install_merge_layer_effect(state, target_id, controller, values, printed_ref);
 
     // CR 702.140c-d: the mutation is observable. NO ETB (CR 730.2b/c).
     events.push(GameEvent::Mutated {
@@ -163,174 +152,21 @@ pub fn merge_object_onto(
     });
 }
 
-/// CR 730.2 + 702.140e: Capture the survivor's intrinsic characteristics into
-/// `merge_self_origin` the first time it becomes a merged permanent. No-op if it
-/// is already merged (the snapshot already holds the un-merged identity).
-fn capture_self_origin_if_needed(state: &mut GameState, target_id: ObjectId) {
-    let Some(obj) = state.objects.get(&target_id) else {
-        return;
-    };
-    if obj.merge_self_origin.is_some() {
-        return;
-    }
-    let origin = MergeSelfOrigin {
-        name: obj.name.clone(),
-        base_name: obj.base_name.clone(),
-        mana_cost: obj.mana_cost.clone(),
-        base_mana_cost: obj.base_mana_cost.clone(),
-        color: obj.color.clone(),
-        base_color: obj.base_color.clone(),
-        card_types: obj.card_types.clone(),
-        base_card_types: obj.base_card_types.clone(),
-        power: obj.power,
-        toughness: obj.toughness,
-        base_power: obj.base_power,
-        base_toughness: obj.base_toughness,
-        loyalty: obj.loyalty,
-        base_loyalty: obj.base_loyalty,
-        printed_ref: obj.printed_ref.clone(),
-        base_printed_ref: obj.base_printed_ref.clone(),
-        abilities: obj.abilities.clone(),
-        base_abilities: obj.base_abilities.clone(),
-        trigger_definitions: obj.trigger_definitions.clone(),
-        base_trigger_definitions: obj.base_trigger_definitions.clone(),
-        static_definitions: obj.static_definitions.clone(),
-        base_static_definitions: obj.base_static_definitions.clone(),
-        replacement_definitions: obj.replacement_definitions.clone(),
-        base_replacement_definitions: obj.base_replacement_definitions.clone(),
-        keywords: obj.keywords.clone(),
-        base_keywords: obj.base_keywords.clone(),
-    };
-    if let Some(obj) = state.objects.get_mut(&target_id) {
-        obj.merge_self_origin = Some(Box::new(origin));
-    }
-}
-
-/// CR 707.2 copiable characteristics carried by the topmost merge component.
-struct CopiableForm {
-    name: String,
-    base_name: String,
-    mana_cost: ManaCost,
-    base_mana_cost: ManaCost,
-    color: Vec<ManaColor>,
-    base_color: Vec<ManaColor>,
-    card_types: CardType,
-    base_card_types: CardType,
-    power: Option<i32>,
-    toughness: Option<i32>,
-    base_power: Option<i32>,
-    base_toughness: Option<i32>,
-    loyalty: Option<u32>,
-    base_loyalty: Option<u32>,
-    printed_ref: Option<PrintedCardRef>,
-    base_printed_ref: Option<PrintedCardRef>,
-}
-
-impl CopiableForm {
-    fn from_object(o: &GameObject) -> Self {
-        Self {
-            name: o.name.clone(),
-            base_name: o.base_name.clone(),
-            mana_cost: o.mana_cost.clone(),
-            base_mana_cost: o.base_mana_cost.clone(),
-            color: o.color.clone(),
-            base_color: o.base_color.clone(),
-            card_types: o.card_types.clone(),
-            base_card_types: o.base_card_types.clone(),
-            power: o.power,
-            toughness: o.toughness,
-            base_power: o.base_power,
-            base_toughness: o.base_toughness,
-            loyalty: o.loyalty,
-            base_loyalty: o.base_loyalty,
-            printed_ref: o.printed_ref.clone(),
-            base_printed_ref: o.base_printed_ref.clone(),
-        }
-    }
-
-    fn from_origin(o: &MergeSelfOrigin) -> Self {
-        Self {
-            name: o.name.clone(),
-            base_name: o.base_name.clone(),
-            mana_cost: o.mana_cost.clone(),
-            base_mana_cost: o.base_mana_cost.clone(),
-            color: o.color.clone(),
-            base_color: o.base_color.clone(),
-            card_types: o.card_types.clone(),
-            base_card_types: o.base_card_types.clone(),
-            power: o.power,
-            toughness: o.toughness,
-            base_power: o.base_power,
-            base_toughness: o.base_toughness,
-            loyalty: o.loyalty,
-            base_loyalty: o.base_loyalty,
-            printed_ref: o.printed_ref.clone(),
-            base_printed_ref: o.base_printed_ref.clone(),
-        }
-    }
-
-    fn write_to(self, dst: &mut GameObject) {
-        dst.name = self.name;
-        dst.base_name = self.base_name;
-        dst.mana_cost = self.mana_cost;
-        dst.base_mana_cost = self.base_mana_cost;
-        dst.color = self.color;
-        dst.base_color = self.base_color;
-        dst.card_types = self.card_types;
-        dst.base_card_types = self.base_card_types;
-        dst.power = self.power;
-        dst.toughness = self.toughness;
-        dst.base_power = self.base_power;
-        dst.base_toughness = self.base_toughness;
-        dst.loyalty = self.loyalty;
-        dst.base_loyalty = self.base_loyalty;
-        // Display identity follows the topmost component (CR 730.2a).
-        dst.printed_ref = self.printed_ref;
-        dst.base_printed_ref = self.base_printed_ref;
-        // NOTE: keywords are NOT copied here — they are keyword ABILITIES that
-        // belong to the CR 702.140e union (`union_abilities_onto`), which reads
-        // each component's intrinsic keyword set.
-    }
-}
-
-/// CR 730.2a: Apply the topmost component's intrinsic copiable characteristics
-/// onto the surviving object. When the survivor itself is topmost (e.g. a Bottom
-/// merge), its intrinsic identity is read from its `merge_self_origin` snapshot —
-/// its own fields hold the previously-derived merged form. Writes both live and
-/// layer-7b base fields so the merged form survives a layer re-evaluation
-/// (which anchors on base values).
-fn apply_topmost_copiable(state: &mut GameState, topmost_id: ObjectId, target_id: ObjectId) {
-    let form = if topmost_id == target_id {
-        state
-            .objects
-            .get(&target_id)
-            .and_then(|o| o.merge_self_origin.as_deref())
-            .map(CopiableForm::from_origin)
-    } else {
-        state
-            .objects
-            .get(&topmost_id)
-            .map(CopiableForm::from_object)
-    };
-    let Some(form) = form else {
-        return;
-    };
-    if let Some(dst) = state.objects.get_mut(&target_id) {
-        form.write_to(dst);
-    }
-}
-
-/// CR 702.140e: A mutated permanent has all abilities of every card/token that
-/// represents it. Union each component's INTRINSIC base ability set (abilities,
-/// triggers, statics, replacements, keywords) onto the surviving object's base
-/// fields, then mirror onto the live fields so the union is visible before the
-/// next layer pass. The survivor's intrinsic contribution comes from its
-/// `merge_self_origin` snapshot (its own base fields now hold the derived union);
-/// every other component's base fields are intact. Components are read in
-/// `ordered` (topmost-first).
-fn union_abilities_onto(state: &mut GameState, ordered: &[ObjectId], target_id: ObjectId) {
-    use std::sync::Arc;
-
+/// CR 730.2a + CR 702.140e: Build the copiable values for a merged permanent:
+/// the topmost component's copiable characteristics, with the ability sets
+/// replaced by the union of every component's intrinsic abilities.
+fn merged_copiable_values(
+    state: &GameState,
+    ordered: &[ObjectId],
+    topmost_id: ObjectId,
+) -> Option<(CopiableValues, Option<crate::types::card::PrintedCardRef>)> {
+    let topmost = state.objects.get(&topmost_id)?;
+    let printed_ref = topmost
+        .base_printed_ref
+        .clone()
+        .or_else(|| topmost.printed_ref.clone());
+    let mut values = crate::game::layers::compute_current_copiable_values(state, topmost_id)
+        .unwrap_or_else(|| intrinsic_copiable_values(topmost));
     let mut abilities = Vec::new();
     let mut triggers = Vec::new();
     let mut statics = Vec::new();
@@ -346,39 +182,16 @@ fn union_abilities_onto(state: &mut GameState, ordered: &[ObjectId], target_id: 
     );
 
     for &component_id in ordered {
-        // CR 613.1: read intrinsic (base) sets so the union is independent of
-        // transient layer effects. For the survivor, its intrinsic lives in the
-        // snapshot; for every other component, in its own base fields. Clone the
-        // (cheap, `Arc`-shared) sets out first so the accumulators aren't borrowed
-        // against `state`.
-        let sets: Option<BaseSets> = if component_id == target_id {
-            state
-                .objects
-                .get(&target_id)
-                .and_then(|o| o.merge_self_origin.as_deref())
-                .map(|origin| {
-                    (
-                        origin.base_abilities.clone(),
-                        origin.base_trigger_definitions.clone(),
-                        origin.base_static_definitions.clone(),
-                        origin.base_replacement_definitions.clone(),
-                        origin.base_keywords.clone(),
-                    )
-                })
-        } else {
-            state.objects.get(&component_id).map(|obj| {
-                (
-                    obj.base_abilities.clone(),
-                    obj.base_trigger_definitions.clone(),
-                    obj.base_static_definitions.clone(),
-                    obj.base_replacement_definitions.clone(),
-                    obj.base_keywords.clone(),
-                )
-            })
-        };
-        let Some((abil, trig, stat, repl, kws)) = sets else {
+        let Some(obj) = state.objects.get(&component_id) else {
             continue;
         };
+        let (abil, trig, stat, repl, kws): BaseSets = (
+            obj.base_abilities.clone(),
+            obj.base_trigger_definitions.clone(),
+            obj.base_static_definitions.clone(),
+            obj.base_replacement_definitions.clone(),
+            obj.base_keywords.clone(),
+        );
         abilities.extend(abil.iter().cloned());
         triggers.extend(trig.iter().cloned());
         statics.extend(stat.iter().cloned());
@@ -390,21 +203,53 @@ fn union_abilities_onto(state: &mut GameState, ordered: &[ObjectId], target_id: 
         }
     }
 
-    let Some(dst) = state.objects.get_mut(&target_id) else {
+    values.abilities = Arc::new(abilities);
+    values.trigger_definitions = Arc::new(triggers);
+    values.static_definitions = Arc::new(statics);
+    values.replacement_definitions = Arc::new(replacements);
+    values.keywords = keywords;
+    Some((values, printed_ref))
+}
+
+fn remove_merge_layer_effect(state: &mut GameState, target_id: ObjectId) {
+    let effect_id = state
+        .objects
+        .get(&target_id)
+        .and_then(|obj| obj.merge_layer_effect_id);
+    let Some(effect_id) = effect_id else {
         return;
     };
-    dst.base_abilities = Arc::new(abilities.clone());
-    dst.base_trigger_definitions = Arc::new(triggers.clone());
-    dst.base_static_definitions = Arc::new(statics.clone());
-    dst.base_replacement_definitions = Arc::new(replacements.clone());
-    dst.base_keywords = keywords.clone();
-    // Mirror onto the live fields; layer evaluation will rebuild from base, but
-    // any read before the next flush sees the union.
-    dst.abilities = Arc::new(abilities);
-    dst.trigger_definitions = triggers.into();
-    dst.static_definitions = statics.into();
-    dst.replacement_definitions = replacements.into();
-    dst.keywords = keywords;
+    state
+        .transient_continuous_effects
+        .retain(|effect| effect.id != effect_id);
+    if let Some(obj) = state.objects.get_mut(&target_id) {
+        obj.merge_layer_effect_id = None;
+    }
+    crate::game::layers::mark_layers_full(state);
+}
+
+fn install_merge_layer_effect(
+    state: &mut GameState,
+    target_id: ObjectId,
+    controller: crate::types::player::PlayerId,
+    values: CopiableValues,
+    printed_ref: Option<crate::types::card::PrintedCardRef>,
+) {
+    let effect_id = state.add_transient_continuous_effect(
+        target_id,
+        controller,
+        Duration::Permanent,
+        TargetFilter::SpecificObject { id: target_id },
+        vec![ContinuousModification::CopyValues {
+            values: Box::new(values),
+            printed_ref,
+        }],
+        None,
+    );
+    if let Some(obj) = state.objects.get_mut(&target_id) {
+        obj.merge_layer_effect_id = Some(effect_id);
+    }
+    crate::game::layers::flush_layers(state);
 }
 
 /// CR 730.3: When a merged permanent leaves the battlefield, one permanent
@@ -432,6 +277,11 @@ pub fn split_merged_permanent_on_leave(
         return;
     }
     let components = survivor.merged_components.clone();
+
+    // CR 730.3 + CR 400.7: before the surviving object changes zone, drop the
+    // merge's layer-1 copy effect and flush layers so it leaves as its own card.
+    remove_merge_layer_effect(state, merged_id);
+    crate::game::layers::flush_layers(state);
 
     for component_id in components {
         // The surviving object itself rides the normal `move_to_zone` flow; only

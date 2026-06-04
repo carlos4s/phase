@@ -911,7 +911,7 @@ fn fallback_action(state: &GameState) -> Option<GameAction> {
         | WaitingFor::OptionalCostChoice { .. }
         | WaitingFor::DefilerPayment { .. }
         | WaitingFor::PayCost {
-            resume: CostResume::Spell { .. },
+            resume: CostResume::Spell { .. } | CostResume::SpellCost { .. },
             ..
         }
         | WaitingFor::BlightChoice { .. }
