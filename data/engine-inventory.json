@@ -16704,9 +16704,9 @@
           "line": 775,
           "kind": "unit",
           "field_names": [],
-          "doc": "CR 702.98a: Cipher — exile this spell encoded on a creature you control; whenever that creature deals combat damage to a player, cast a copy.",
+          "doc": "CR 702.99a: Cipher — exile this spell encoded on a creature you control; whenever that creature deals combat damage to a player, cast a copy.",
           "cr_refs": [
-            "CR 702.98a"
+            "CR 702.99a"
           ]
         },
         {

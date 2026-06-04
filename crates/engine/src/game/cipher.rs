@@ -184,8 +184,9 @@ pub fn collect_combat_damage_recast_triggers(
 
 /// CR 702.99c + CR 707.12: Build the optional "cast a copy of the encoded card
 /// without paying its mana cost" triggered ability. The encoded card is the
-/// single object target; `CastCopyOfCard` copies it in its exile zone and casts
-/// the copy for `ManaCost::zero()`, re-prompting for the copy's own targets.
+/// copy source carried in `ability.targets`; `CastCopyOfCard` copies it in its
+/// exile zone and casts the copy for `ManaCost::zero()`, re-prompting for the
+/// copy's own targets.
 fn recast_trigger(
     creature_id: ObjectId,
     controller: PlayerId,

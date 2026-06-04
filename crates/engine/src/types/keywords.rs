@@ -772,7 +772,7 @@ pub enum Keyword {
     Aftermath,
     /// CR 702.133a: Jump-start — cast from graveyard by discarding a card, then exile.
     JumpStart,
-    /// CR 702.98a: Cipher — exile this spell encoded on a creature you control;
+    /// CR 702.99a: Cipher — exile this spell encoded on a creature you control;
     /// whenever that creature deals combat damage to a player, cast a copy.
     Cipher,
     /// CR 702.52a: Transmute {cost} — discard this card and pay {cost} to search
@@ -2586,7 +2586,7 @@ fn keyword_from_tagged(variant: &str, data: &serde_json::Value) -> Result<Keywor
             })
         }
         // CR 702.47a / CR 702.166a / CR 702.43a / CR 702.72a / CR 702.149a
-        // CR 702.132a / CR 702.133a / CR 702.98a / CR 702.52a / CR 702.148a / CR 702.125a
+        // CR 702.132a / CR 702.133a / CR 702.99a / CR 702.52a / CR 702.148a / CR 702.125a
         "Splice" => Ok(Keyword::Splice(data.as_str().unwrap_or("").to_string())),
         "Bargain" => Ok(Keyword::Bargain),
         "Sunburst" => Ok(Keyword::Sunburst),
