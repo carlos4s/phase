@@ -57,11 +57,15 @@ pub fn encoded_cards_on_creature(state: &GameState, creature_id: ObjectId) -> Ve
 }
 
 /// CR 702.99a: Whether `card_id` is a resolving spell that may be encoded — it
-/// must carry Cipher, be represented by a card (not a token copy), and be a
-/// non-permanent spell (cipher only appears on instants and sorceries).
+/// must carry Cipher, be represented by a card (not a token and not a copy,
+/// CR 707.12a), and be a non-permanent spell (cipher only appears on instants
+/// and sorceries).
 pub fn spell_can_encode(state: &GameState, card_id: ObjectId) -> bool {
     state.objects.get(&card_id).is_some_and(|obj| {
-        !obj.is_token
+        // CR 702.99a: "If this spell is represented by a card …". A token or a
+        // copy (e.g. the copy cast by Cipher's own recast via `CastCopyOfCard`,
+        // CR 707.12a) is NOT represented by a card and can never be encoded.
+        obj.is_represented_by_a_card()
             && super::keywords::has_keyword(obj, &Keyword::Cipher)
             && obj
                 .card_types

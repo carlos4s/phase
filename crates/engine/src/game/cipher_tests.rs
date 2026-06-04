@@ -316,6 +316,76 @@ fn recast_trigger_resolves_into_a_cast_copy_from_exile() {
     assert_eq!(encoded_cards_on_creature(&state, host), vec![card]);
 }
 
+/// CR 702.99a + CR 707.12a: the COPY cast by Cipher's own recast is NOT
+/// represented by a card, so when it resolves it must NOT itself offer to encode.
+/// Regression: `spell_can_encode` previously gated on `!is_token`, but
+/// `CastCopyOfCard` sets `is_token = false`, so the recast copy (which inherits
+/// the source's Cipher keyword) slipped through and was wrongly offered the
+/// encode — exiling a copy that then ceases to exist / dangling the link.
+#[test]
+fn recast_copy_is_not_offered_to_encode() {
+    use super::triggers::process_triggers;
+    use crate::game::engine;
+    use crate::game::stack::resolve_top;
+    use crate::types::actions::GameAction;
+    use crate::types::game_state::StackEntryKind;
+
+    let mut state = GameState::new_two_player(1);
+    state.active_player = PlayerId(0);
+    state.phase = crate::types::phase::Phase::PostCombatMain;
+    let host = creature(&mut state, 1, PlayerId(0), "Host", Zone::Battlefield);
+    // The encoded card carries Cipher, so its copy inherits the keyword — the
+    // exact condition that made the copy wrongly eligible to re-encode.
+    let card = cipher_spell(&mut state, 42, PlayerId(0));
+    finish_encode(&mut state, card, host, &mut Vec::new());
+
+    // Encoded creature deals combat damage → recast trigger → accept → copy cast.
+    process_triggers(
+        &mut state,
+        &[GameEvent::CombatDamageDealtToPlayer {
+            player_id: PlayerId(1),
+            source_amounts: vec![(host, 2)],
+            total_damage: 2,
+        }],
+    );
+    resolve_top(&mut state, &mut Vec::new()); // optional recast trigger pauses
+    engine::apply(
+        &mut state,
+        PlayerId(0),
+        GameAction::DecideOptionalEffect { accept: true },
+    )
+    .expect("accepting the recast must succeed");
+
+    // Resolve the copy that is now on the stack.
+    let copy_id = state
+        .stack
+        .iter()
+        .find(|e| matches!(&e.kind, StackEntryKind::Spell { .. }) && e.id != card)
+        .map(|e| e.id)
+        .expect("a copy of the encoded card is on the stack");
+    resolve_top(&mut state, &mut Vec::new());
+
+    // CR 702.99a: the resolving copy must NOT pause to encode itself.
+    assert!(
+        !matches!(state.waiting_for, WaitingFor::CipherEncodeChoice { .. }),
+        "a copy is not represented by a card and must not offer to encode; got {:?}",
+        state.waiting_for
+    );
+    // Only the original card remains encoded — the copy did not create a link.
+    assert_eq!(
+        encoded_cards_on_creature(&state, host),
+        vec![card],
+        "the recast copy must not become encoded on the creature"
+    );
+    assert!(
+        state
+            .objects
+            .get(&copy_id)
+            .is_none_or(|o| o.zone != Zone::Exile),
+        "the recast copy must not be exiled (encoded)"
+    );
+}
+
 /// CR 702.99a: end-to-end — a resolving Cipher spell pauses for the encode
 /// choice via `resolve_top`, and dispatching `CipherEncode` exiles+encodes it.
 #[test]

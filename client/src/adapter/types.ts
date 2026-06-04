@@ -721,6 +721,12 @@ export interface GameObject {
    */
   is_token?: boolean;
   /**
+   * CR 707.10 / CR 707.12a: Whether this object is a copy of a card/spell and so
+   * is not "represented by a card" (mirrors the engine's `is_copy`). Present
+   * only when true; the frontend does not read it (display only).
+   */
+  is_copy?: boolean;
+  /**
    * Image-lookup routing hint from the engine. "Card" → look up the image
    * in the real-card database (default; also covers token-copies of real
    * cards like Twinflame/Helm of the Host). "Token" → look up the image
