@@ -5794,6 +5794,9 @@ pub fn synthesize_all(face: &mut CardFace) {
     synthesize_specialize(face);
     synthesize_cycling(face);
     synthesize_scavenge(face);
+    // CR 702.128a / CR 702.129a: Embalm / Eternalize graveyard-activated
+    // token-copy abilities (self-contained building block in its own module).
+    crate::database::embalm_eternalize::synthesize_embalm_eternalize(face);
     synthesize_outlast(face);
     synthesize_reinforce(face);
     synthesize_casualty(face);

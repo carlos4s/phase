@@ -11918,6 +11918,13 @@ pub enum ContinuousModification {
         /// characteristics").
         if_type: Option<CoreType>,
     },
+    /// CR 707.9 + CR 202.1b: Strip a copy's mana cost — the token "has no mana
+    /// cost" exception used by Embalm (CR 702.128a) and Eternalize
+    /// (CR 702.129a). Like `AddCounterOnEnter`, this is consumed at copy
+    /// resolution (`token_copy.rs` / `become_copy.rs` bake it into the
+    /// synthesized token) and is never evaluated through the layer system, so
+    /// `ContinuousModification::layer()` treats it as unreachable.
+    RemoveManaCost,
 }
 
 // ---------------------------------------------------------------------------
