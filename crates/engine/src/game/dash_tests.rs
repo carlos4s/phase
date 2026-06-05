@@ -106,6 +106,12 @@ fn end_step_return_resolves() {
 /// CR 702.109a + CR 400.7: if the dash permanent already left the battlefield
 /// (e.g. it died) before the end step, the return-to-hand silently no-ops — the
 /// `origin: Battlefield` zone change can't pull it out of the graveyard.
+///
+/// `DelayedTriggerCondition::AtNextPhase` keys only on the phase event + source
+/// (triggers.rs), never on the source's current zone, so the trigger *always*
+/// stacks — even from the graveyard. The no-op is therefore enforced by the
+/// `origin` guard in `process_one_zone_move` at resolution, which is exactly
+/// what this test pins: the trigger fires, resolves, and changes nothing.
 #[test]
 fn dead_creature_is_not_returned_from_graveyard() {
     let mut state = GameState::new_two_player(42);
@@ -117,11 +123,15 @@ fn dead_creature_is_not_returned_from_graveyard() {
     assert_eq!(state.objects[&id].zone, Zone::Graveyard);
 
     state.phase = Phase::End;
-    let _ = check_delayed_triggers(&mut state, &[GameEvent::PhaseChanged { phase: Phase::End }]);
-    // Resolve any stacked trigger; the origin guard makes the bounce a no-op.
-    if !state.stack.is_empty() {
-        resolve_top(&mut state, &mut Vec::new());
-    }
+    let stacked =
+        check_delayed_triggers(&mut state, &[GameEvent::PhaseChanged { phase: Phase::End }]);
+    // The delayed trigger still fires from the graveyard (it keys on the phase,
+    // not the source's zone); resolving it must be a no-op via the origin guard.
+    assert!(
+        !stacked.is_empty(),
+        "the end-step return still stacks even after the creature left the battlefield"
+    );
+    resolve_top(&mut state, &mut Vec::new());
 
     assert_eq!(
         state.objects[&id].zone,
