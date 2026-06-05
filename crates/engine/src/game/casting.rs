@@ -19940,7 +19940,7 @@ mod tests {
         );
     }
 
-    /// CR 702.152a–c: End-to-end — casting a creature for its blitz cost drives a
+    /// CR 702.152a: End-to-end — casting a creature for its blitz cost drives a
     /// full cast → resolution, and the stack resolution hook installs the riders:
     /// the permanent resolves onto the battlefield with haste and a scheduled
     /// next-end-step sacrifice. This is the load-bearing guard that the
@@ -19996,7 +19996,7 @@ mod tests {
             "blitz creature must resolve onto the battlefield"
         );
 
-        // Riders installed by the resolution hook (CR 702.152b–c).
+        // Riders installed by the resolution hook (CR 702.152a).
         crate::game::layers::evaluate_layers(&mut state);
         assert!(
             crate::game::keywords::has_haste(&state.objects[&spell]),

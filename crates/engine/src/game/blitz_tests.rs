@@ -55,7 +55,7 @@ fn stock_library(state: &mut GameState, owner: PlayerId, n: usize) {
     }
 }
 
-/// CR 702.152b: the blitz permanent gains haste.
+/// CR 702.152a: the blitz permanent gains haste.
 #[test]
 fn install_grants_haste() {
     let mut state = GameState::new_two_player(42);
@@ -67,7 +67,7 @@ fn install_grants_haste() {
     );
 }
 
-/// CR 702.152b: the blitz permanent has "When this is put into a graveyard from
+/// CR 702.152a: the blitz permanent has "When this is put into a graveyard from
 /// the battlefield, draw a card" — granted into its trigger set.
 #[test]
 fn install_grants_dies_draw_trigger() {
@@ -87,7 +87,7 @@ fn install_grants_dies_draw_trigger() {
     assert!(has_dies_draw, "dies-draw trigger must be granted");
 }
 
-/// CR 702.152c: the blitz permanent is scheduled to be sacrificed at the
+/// CR 702.152a: the blitz permanent is scheduled to be sacrificed at the
 /// beginning of the next end step (one-shot delayed trigger).
 #[test]
 fn install_schedules_next_end_step_sacrifice() {
@@ -115,7 +115,7 @@ fn install_schedules_next_end_step_sacrifice() {
     );
 }
 
-/// CR 702.152c: at the next end step the delayed trigger sacrifices the
+/// CR 702.152a: at the next end step the delayed trigger sacrifices the
 /// permanent (it ends up in its owner's graveyard).
 #[test]
 fn end_step_sacrifice_resolves() {
@@ -133,7 +133,7 @@ fn end_step_sacrifice_resolves() {
     assert!(!state.battlefield.contains(&id));
 }
 
-/// CR 702.152b: when the blitz permanent dies, its controller draws a card.
+/// CR 702.152a: when the blitz permanent dies, its controller draws a card.
 #[test]
 fn dies_draw_trigger_draws_on_death() {
     let mut state = GameState::new_two_player(42);

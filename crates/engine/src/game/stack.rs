@@ -1144,7 +1144,7 @@ pub fn resolve_top(state: &mut GameState, events: &mut Vec<GameEvent>) {
                 }
             }
 
-            // CR 702.152a–c: a blitz-cast permanent gains haste and a dies-draw
+            // CR 702.152a: a blitz-cast permanent gains haste and a dies-draw
             // trigger, and is sacrificed at the beginning of the next end step.
             if casting_variant == CastingVariant::Blitz {
                 crate::game::blitz::install_blitz_riders(state, entry.id, entry.controller);
