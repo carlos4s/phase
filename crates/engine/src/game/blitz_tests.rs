@@ -133,6 +133,50 @@ fn end_step_sacrifice_resolves() {
     assert!(!state.battlefield.contains(&id));
 }
 
+/// CR 702.152a + CR 514.2: a creature blitzed DURING the end step is sacrificed
+/// at the beginning of the NEXT end step, not the current one. In real play the
+/// current end step's `PhaseChanged{End}` is dispatched before the blitz spell
+/// resolves, so by the time the delayed trigger exists that event has already
+/// passed; it then fires only on the next fresh `End` phase. This models that
+/// timeline: the trigger ignores intervening (non-End) phase changes and fires
+/// on the next `End` event. (Contrast a naive test that re-injects `End`
+/// immediately after install — `AtNextPhase{End}` fires on *any* `End` event, so
+/// that would assert the wrong thing.)
+#[test]
+fn blitz_during_end_step_sacrifices_at_the_next_end_step() {
+    let mut state = GameState::new_two_player(42);
+    state.active_player = PlayerId(0);
+    // The end step is already underway (its `PhaseChanged{End}` has fired) when
+    // the blitz creature resolves and installs its riders.
+    state.phase = Phase::End;
+    let id = blitz_creature_on_battlefield(&mut state);
+
+    // The rest of the turn passes (e.g. an intervening upkeep). A non-End phase
+    // change must NOT fire the end-step sacrifice; it stays pending.
+    let stacked = check_delayed_triggers(
+        &mut state,
+        &[GameEvent::PhaseChanged {
+            phase: Phase::Upkeep,
+        }],
+    );
+    assert!(
+        stacked.is_empty(),
+        "the sacrifice must not fire during the end step it was created in / on a non-End phase"
+    );
+    assert!(
+        state.delayed_triggers.iter().any(|dt| dt.source_id == id),
+        "the delayed sacrifice stays pending until the next end step"
+    );
+
+    // The next end step begins (a fresh `End` event): now the sacrifice fires.
+    let stacked_next =
+        check_delayed_triggers(&mut state, &[GameEvent::PhaseChanged { phase: Phase::End }]);
+    assert!(
+        !stacked_next.is_empty(),
+        "the sacrifice fires at the beginning of the next end step (CR 514.2)"
+    );
+}
+
 /// CR 702.152a: when the blitz permanent dies, its controller draws a card.
 #[test]
 fn dies_draw_trigger_draws_on_death() {
