@@ -1393,6 +1393,17 @@ pub(super) fn strip_optional_effect_prefix(
                 (None, Some(PlayerFilter::TriggeringPlayer)),
                 tag("the first player may "),
             ),
+            // CR 608.2d: "Target opponent may have ~ deal … to them" (Risk Factor).
+            value(
+                (None, Some(PlayerFilter::Opponent)),
+                tag("target opponent may "),
+            ),
+            // CR 608.2d: "That creature's controller may have this artifact deal …"
+            // (Requiem Monolith) — the targeted creature's controller chooses.
+            value(
+                (None, Some(PlayerFilter::ParentObjectTargetController)),
+                tag("that creature's controller may "),
+            ),
         ))
         .parse(input)
     }) {
@@ -3380,7 +3391,13 @@ pub(super) fn try_parse_distribute_damage(lower: &str, text: &str) -> Option<Par
         })?;
     let target_text = target_tp.original.trim();
 
-    // CR 115.1d: Detect "any number of" quantifier before the target phrase.
+    // CR 115.1d: Detect the target-count quantifier before the target phrase.
+    // "any number of" is capped by the distribution pool (each chosen target must
+    // receive at least one — CR 601.2d), while "up to N target ..." carries an
+    // explicit printed cap of N independent of the divided amount (Shatterskull
+    // Smashing: "X damage divided ... among up to two target creatures and/or
+    // planeswalkers"). `strip_optional_target_prefix` surfaces the latter as
+    // MultiTargetSpec { min: 0, max: N }.
     let target_lower = target_text.to_lowercase();
     let (stripped_target_text, multi_target) = if let Ok((rest, _)) =
         tag::<_, _, OracleError<'_>>("any number of ").parse(target_lower.as_str())
@@ -3391,7 +3408,7 @@ pub(super) fn try_parse_distribute_damage(lower: &str, text: &str) -> Option<Par
             Some(multi_target_for_distribute_among(&amount)),
         )
     } else {
-        (target_text, None)
+        strip_optional_target_prefix(target_text)
     };
     let (target, _) = parse_target(stripped_target_text);
 
