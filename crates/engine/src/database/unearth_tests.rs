@@ -70,7 +70,7 @@ fn static_grants_haste_to_self(effect: &Effect) -> bool {
     })
 }
 
-/// CR 702.84a/b: a synthesized Unearth ability is a sorcery-speed
+/// CR 702.84a: a synthesized Unearth ability is a sorcery-speed
 /// graveyard-activated mana-cost reanimation chain: return self to the
 /// battlefield, gain haste, exile at the next end step, and an "exile if it
 /// would leave the battlefield" replacement — all bound to `SelfRef`.
@@ -153,7 +153,7 @@ fn synthesize_unearth_builds_graveyard_activated_sorcery_chain() {
         other => panic!("third step must be a delayed exile trigger, got {other:?}"),
     }
 
-    // (4) CR 702.84b: if it would leave the battlefield, exile it instead.
+    // (4) CR 702.84a: if it would leave the battlefield, exile it instead.
     match effects[3] {
         Effect::AddTargetReplacement {
             replacement,
@@ -327,7 +327,7 @@ fn unearth_creature_exiled_at_next_end_step() {
     assert!(!state.battlefield.contains(&source));
 }
 
-/// CR 702.84b: the "if it would leave the battlefield, exile it instead"
+/// CR 702.84a: the "if it would leave the battlefield, exile it instead"
 /// replacement is installed on the returned permanent — `Moved` event,
 /// `valid_card: SelfRef`, no destination restriction (any exit), redirecting to
 /// exile. (The redirect application itself is owned and covered by the

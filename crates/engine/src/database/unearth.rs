@@ -17,7 +17,7 @@
 //! 3. an `Effect::CreateDelayedTrigger` that exiles the card at the next end
 //!    step (CR 702.84a), and
 //! 4. an `Effect::AddTargetReplacement` installing the "if it would leave the
-//!    battlefield, exile it instead" replacement (CR 702.84b / CR 614.1a).
+//!    battlefield, exile it instead" replacement (CR 702.84a / CR 614.1a).
 //!
 //! Steps 2–4 are chained as `sub_ability` continuation steps (CR 608.2c) of the
 //! primary `ChangeZone`, so they resolve as one action.
@@ -135,7 +135,7 @@ fn delayed_exile_step() -> AbilityDefinition {
     AbilityDefinition::new(
         AbilityKind::Spell,
         Effect::CreateDelayedTrigger {
-            // CR 514.2: "the beginning of the next end step."
+            // CR 513: "the beginning of the next end step."
             condition: DelayedTriggerCondition::AtNextPhase { phase: Phase::End },
             effect: Box::new(AbilityDefinition::new(
                 AbilityKind::Spell,
@@ -147,7 +147,7 @@ fn delayed_exile_step() -> AbilityDefinition {
     .description("Exile it at the beginning of the next end step.".to_string())
 }
 
-/// CR 702.84b / CR 614.1a: "If it would leave the battlefield, exile it instead
+/// CR 702.84a / CR 614.1a: "If it would leave the battlefield, exile it instead
 /// of putting it anywhere else." Installs a `Moved` replacement on the returned
 /// permanent (`target: SelfRef`); `valid_card: SelfRef` binds the replacement to
 /// its own host so it fires only for that object, redirecting any
@@ -173,7 +173,7 @@ fn leaves_battlefield_exile_step() -> AbilityDefinition {
     )
 }
 
-/// CR 702.84a/b: the shared "exile this permanent from the battlefield" move,
+/// CR 702.84a: the shared "exile this permanent from the battlefield" move,
 /// used both by the delayed end-step trigger and by the leaves-battlefield
 /// replacement's redirect. Targets `SelfRef` (the returned permanent).
 fn exile_self_from_battlefield_effect() -> Effect {
