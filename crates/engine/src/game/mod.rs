@@ -18,6 +18,10 @@ pub mod commander;
 pub mod companion;
 pub mod cost_payability;
 pub mod coverage;
+pub mod dash;
+#[cfg(test)]
+#[path = "dash_tests.rs"]
+mod dash_tests;
 pub mod day_night;
 pub mod deck_loading;
 pub mod deck_validation;

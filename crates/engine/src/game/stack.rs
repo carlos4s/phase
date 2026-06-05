@@ -1143,6 +1143,12 @@ pub fn resolve_top(state: &mut GameState, events: &mut Vec<GameEvent>) {
                     );
                 }
             }
+
+            // CR 702.109a: a dash-cast permanent gains haste and is returned to
+            // its owner's hand at the beginning of the next end step.
+            if casting_variant == CastingVariant::Dash {
+                crate::game::dash::install_dash_riders(state, entry.id, entry.controller);
+            }
         }
     }
     // Activated abilities: source stays where it is, no zone movement

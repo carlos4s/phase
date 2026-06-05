@@ -2468,6 +2468,18 @@ fn casting_variant_candidates(
         candidates.push(CastingVariant::Evoke);
     }
 
+    // CR 702.109a: Dash is an opt-in alternative cost from hand; surface it as a
+    // candidate so the gate offers it (and so it is reachable when the printed
+    // cost is unaffordable).
+    if obj.zone == Zone::Hand
+        && obj
+            .keywords
+            .iter()
+            .any(|k| matches!(k, crate::types::keywords::Keyword::Dash(_)))
+    {
+        candidates.push(CastingVariant::Dash);
+    }
+
     candidates
 }
 
@@ -2673,6 +2685,17 @@ fn prepare_spell_cast_with_variant_override_inner(
     let warp_cost = if obj.zone == Zone::Hand {
         obj.keywords.iter().find_map(|k| match k {
             crate::types::keywords::Keyword::Warp(cost) => Some(cost.clone()),
+            _ => None,
+        })
+    } else {
+        None
+    };
+
+    // CR 702.109a: Dash — when casting from hand with Keyword::Dash, the dash
+    // mana cost replaces the printed cost (opt-in via `variant_override`).
+    let dash_cost = if obj.zone == Zone::Hand {
+        obj.keywords.iter().find_map(|k| match k {
+            crate::types::keywords::Keyword::Dash(cost) => Some(cost.clone()),
             _ => None,
         })
     } else {
@@ -3095,6 +3118,12 @@ fn prepare_spell_cast_with_variant_override_inner(
     } else {
         None
     };
+    // CR 702.109a: substitute the dash mana cost only on the dash path (opt-in).
+    let effective_dash_cost_for_path = if casting_variant == CastingVariant::Dash {
+        dash_cost
+    } else {
+        None
+    };
     let effective_escape_cost_for_path = if casting_variant == CastingVariant::Escape {
         escape_cost
     } else {
@@ -3146,6 +3175,7 @@ fn prepare_spell_cast_with_variant_override_inner(
             .or(effective_web_slinging_cost_for_path)
             .or(alt_cost_from_exile)
             .or(effective_warp_cost_for_path)
+            .or(effective_dash_cost_for_path)
             .or(freerunning_cost)
             .unwrap_or_else(|| obj.mana_cost.clone())
     };
@@ -5289,6 +5319,37 @@ pub fn handle_evoke_cost_choice_with_payment_mode(
     continue_cast_from_prepared(state, player, object_id, payment_mode, events)
 }
 
+/// CR 702.109a: Resolve the player's Dash cost choice. Mirrors
+/// `handle_evoke_cost_choice_with_payment_mode` — `Alternative` opts into
+/// `CastingVariant::Dash` (which substitutes the dash mana cost and installs the
+/// resolution riders), `Normal` casts for the printed cost.
+pub fn handle_dash_cost_choice_with_payment_mode(
+    state: &mut GameState,
+    player: PlayerId,
+    object_id: ObjectId,
+    _card_id: CardId,
+    decision: crate::types::actions::AlternativeCastDecision,
+    payment_mode: CastPaymentMode,
+    events: &mut Vec<GameEvent>,
+) -> Result<WaitingFor, EngineError> {
+    use crate::types::actions::AlternativeCastDecision;
+    let alt_path = match decision {
+        AlternativeCastDecision::Alternative => true,
+        AlternativeCastDecision::Normal => false,
+    };
+    if alt_path {
+        let mut prepared = prepare_spell_cast_with_variant_override(
+            state,
+            player,
+            object_id,
+            Some(CastingVariant::Dash),
+        )?;
+        prepared.payment_mode = payment_mode;
+        return continue_with_prepared(state, player, prepared, events);
+    }
+    continue_cast_from_prepared(state, player, object_id, payment_mode, events)
+}
+
 /// Shared continuation: call prepare_spell_cast and run the standard casting
 /// pipeline (modal → targeting → payment). Extracted so handle_warp_cost_choice
 /// and handle_cast_spell can share the same post-prepare logic.
@@ -6246,6 +6307,55 @@ pub fn handle_cast_spell_with_payment_mode(
                 if !normal_affordable && evoke_affordable {
                     // Only evoke is payable — proceed via the evoke path.
                     return handle_evoke_cost_choice_with_payment_mode(
+                        state,
+                        player,
+                        object_id,
+                        card_id,
+                        crate::types::actions::AlternativeCastDecision::Alternative,
+                        payment_mode,
+                        events,
+                    );
+                }
+                // Otherwise (normal-only or neither): fall through to normal cast.
+            }
+        }
+    }
+
+    // CR 702.109a + CR 118.9: Dash — opt-in pure-mana alternative cost. When a
+    // hand card has Keyword::Dash and both the printed and dash costs are
+    // affordable, present the choice; auto-route when only dash is payable.
+    if let Some(obj) = state.objects.get(&object_id) {
+        if obj.zone == Zone::Hand {
+            if let Some(dash_cost) = obj.keywords.iter().find_map(|k| match k {
+                crate::types::keywords::Keyword::Dash(cost) => Some(cost.clone()),
+                _ => None,
+            }) {
+                // CR 601.2f: affordability and displayed costs reflect active
+                // cost modifiers, applied to both the printed and dash costs.
+                let normal_cost =
+                    apply_cost_modifiers_to_base(state, player, object_id, obj.mana_cost.clone())
+                        .unwrap_or_else(|| obj.mana_cost.clone());
+                let dash_eff =
+                    apply_cost_modifiers_to_base(state, player, object_id, dash_cost.clone())
+                        .unwrap_or(dash_cost);
+                let normal_affordable =
+                    can_pay_cost_after_auto_tap(state, player, object_id, &normal_cost);
+                let dash_affordable =
+                    can_pay_cost_after_auto_tap(state, player, object_id, &dash_eff);
+                if normal_affordable && dash_affordable {
+                    return Ok(WaitingFor::AlternativeCastChoice {
+                        player,
+                        object_id,
+                        card_id,
+                        payment_mode,
+                        keyword: crate::types::game_state::AlternativeCastKeyword::Dash,
+                        normal_cost,
+                        alternative_cost: Some(dash_eff),
+                        alternative_additional_cost: None,
+                    });
+                }
+                if !normal_affordable && dash_affordable {
+                    return handle_dash_cost_choice_with_payment_mode(
                         state,
                         player,
                         object_id,
@@ -19786,6 +19896,110 @@ mod tests {
         assert!(
             !state.battlefield.contains(&spell),
             "sacrificed permanent must not remain on the battlefield; {diag}"
+        );
+    }
+
+    /// CR 702.109a: A creature with Dash in hand, with mana for both the printed
+    /// and the (cheaper) dash cost, surfaces the Dash alternative-cast option.
+    #[test]
+    fn dash_creature_offers_dash_variant() {
+        use crate::types::keywords::Keyword;
+
+        let mut state = setup_game_at_main_phase();
+        add_mana(&mut state, PlayerId(0), ManaType::Colorless, 5);
+
+        let spell = create_object(
+            &mut state,
+            CardId(9201),
+            PlayerId(0),
+            "Zurgo Bellstriker".to_string(),
+            Zone::Hand,
+        );
+        {
+            let obj = state.objects.get_mut(&spell).unwrap();
+            obj.card_types.core_types.push(CoreType::Creature);
+            obj.base_card_types.core_types.push(CoreType::Creature);
+            obj.mana_cost = ManaCost::generic(4);
+            obj.base_mana_cost = ManaCost::generic(4);
+            obj.keywords.push(Keyword::Dash(ManaCost::generic(1)));
+        }
+
+        assert!(
+            can_cast_object_now(&state, PlayerId(0), spell),
+            "a dash creature with affordable cost must be castable"
+        );
+        let choices = casting_variant_choice_set(&state, PlayerId(0), spell);
+        assert!(
+            choices
+                .options
+                .iter()
+                .any(|o| o.variant == CastingVariant::Dash),
+            "choice set must include the Dash option; got {:?}",
+            choices.options
+        );
+    }
+
+    /// CR 702.109a: End-to-end — casting a creature for its dash cost drives a
+    /// full cast → resolution, and the stack resolution hook installs the riders:
+    /// the permanent resolves onto the battlefield with haste and a scheduled
+    /// next-end-step return to hand.
+    #[test]
+    fn dash_full_cast_installs_riders_on_resolution() {
+        use super::super::engine::apply_as_current;
+        use crate::types::keywords::Keyword;
+
+        let mut state = setup_game_at_main_phase();
+        // Only the dash {1} is affordable (printed {4} is not) ⇒ auto-route to dash.
+        add_mana(&mut state, PlayerId(0), ManaType::Colorless, 1);
+
+        let spell = create_object(
+            &mut state,
+            CardId(9301),
+            PlayerId(0),
+            "Zurgo Bellstriker".to_string(),
+            Zone::Hand,
+        );
+        {
+            let obj = state.objects.get_mut(&spell).unwrap();
+            obj.card_types.core_types.push(CoreType::Creature);
+            obj.base_card_types.core_types.push(CoreType::Creature);
+            obj.mana_cost = ManaCost::generic(4);
+            obj.base_mana_cost = ManaCost::generic(4);
+            obj.keywords.push(Keyword::Dash(ManaCost::generic(1)));
+        }
+
+        apply_as_current(
+            &mut state,
+            GameAction::CastSpell {
+                object_id: spell,
+                card_id: CardId(9301),
+                targets: vec![],
+            },
+        )
+        .unwrap();
+        assert_eq!(state.stack.len(), 1, "dash spell is on the stack");
+
+        for _ in 0..6 {
+            if state.battlefield.contains(&spell) {
+                break;
+            }
+            if apply_as_current(&mut state, GameAction::PassPriority).is_err() {
+                break;
+            }
+        }
+        assert!(
+            state.battlefield.contains(&spell),
+            "dash creature must resolve onto the battlefield"
+        );
+
+        crate::game::layers::evaluate_layers(&mut state);
+        assert!(
+            crate::game::keywords::has_haste(&state.objects[&spell]),
+            "dash creature must have haste"
+        );
+        assert!(
+            state.delayed_triggers.iter().any(|d| d.source_id == spell),
+            "dash creature must have a scheduled next-end-step return to hand"
         );
     }
 
