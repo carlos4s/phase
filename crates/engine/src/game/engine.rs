@@ -1605,6 +1605,17 @@ fn apply_action(
                         &mut events,
                     )?
                 }
+                AlternativeCastKeyword::Blitz => {
+                    casting::handle_blitz_cost_choice_with_payment_mode(
+                        state,
+                        *player,
+                        *object_id,
+                        *card_id,
+                        choice,
+                        *payment_mode,
+                        &mut events,
+                    )?
+                }
                 AlternativeCastKeyword::Overload => {
                     casting::handle_overload_cost_choice_with_payment_mode(
                         state,

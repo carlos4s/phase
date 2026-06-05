@@ -2468,6 +2468,18 @@ fn casting_variant_candidates(
         candidates.push(CastingVariant::Evoke);
     }
 
+    // CR 702.152a: Blitz is an opt-in alternative cost from hand; surface it as a
+    // candidate so the gate offers it (and so it is reachable when the printed
+    // cost is unaffordable).
+    if obj.zone == Zone::Hand
+        && obj
+            .keywords
+            .iter()
+            .any(|k| matches!(k, crate::types::keywords::Keyword::Blitz(_)))
+    {
+        candidates.push(CastingVariant::Blitz);
+    }
+
     candidates
 }
 
@@ -2671,6 +2683,17 @@ fn prepare_spell_cast_with_variant_override_inner(
     let warp_cost = if obj.zone == Zone::Hand {
         obj.keywords.iter().find_map(|k| match k {
             crate::types::keywords::Keyword::Warp(cost) => Some(cost.clone()),
+            _ => None,
+        })
+    } else {
+        None
+    };
+
+    // CR 702.152a: Blitz — when casting from hand with Keyword::Blitz, the blitz
+    // mana cost replaces the printed cost (opt-in via `variant_override`).
+    let blitz_cost = if obj.zone == Zone::Hand {
+        obj.keywords.iter().find_map(|k| match k {
+            crate::types::keywords::Keyword::Blitz(cost) => Some(cost.clone()),
             _ => None,
         })
     } else {
@@ -3093,6 +3116,12 @@ fn prepare_spell_cast_with_variant_override_inner(
     } else {
         None
     };
+    // CR 702.152a: substitute the blitz mana cost only on the blitz path (opt-in).
+    let effective_blitz_cost_for_path = if casting_variant == CastingVariant::Blitz {
+        blitz_cost
+    } else {
+        None
+    };
     let effective_escape_cost_for_path = if casting_variant == CastingVariant::Escape {
         escape_cost
     } else {
@@ -3144,6 +3173,7 @@ fn prepare_spell_cast_with_variant_override_inner(
             .or(effective_web_slinging_cost_for_path)
             .or(alt_cost_from_exile)
             .or(effective_warp_cost_for_path)
+            .or(effective_blitz_cost_for_path)
             .or(freerunning_cost)
             .unwrap_or_else(|| obj.mana_cost.clone())
     };
@@ -5287,6 +5317,37 @@ pub fn handle_evoke_cost_choice_with_payment_mode(
     continue_cast_from_prepared(state, player, object_id, payment_mode, events)
 }
 
+/// CR 702.152a: Resolve the player's Blitz cost choice. Mirrors
+/// `handle_evoke_cost_choice_with_payment_mode` — `Alternative` opts into
+/// `CastingVariant::Blitz` (which substitutes the blitz mana cost and installs
+/// the resolution riders), `Normal` casts for the printed cost.
+pub fn handle_blitz_cost_choice_with_payment_mode(
+    state: &mut GameState,
+    player: PlayerId,
+    object_id: ObjectId,
+    _card_id: CardId,
+    decision: crate::types::actions::AlternativeCastDecision,
+    payment_mode: CastPaymentMode,
+    events: &mut Vec<GameEvent>,
+) -> Result<WaitingFor, EngineError> {
+    use crate::types::actions::AlternativeCastDecision;
+    let alt_path = match decision {
+        AlternativeCastDecision::Alternative => true,
+        AlternativeCastDecision::Normal => false,
+    };
+    if alt_path {
+        let mut prepared = prepare_spell_cast_with_variant_override(
+            state,
+            player,
+            object_id,
+            Some(CastingVariant::Blitz),
+        )?;
+        prepared.payment_mode = payment_mode;
+        return continue_with_prepared(state, player, prepared, events);
+    }
+    continue_cast_from_prepared(state, player, object_id, payment_mode, events)
+}
+
 /// Shared continuation: call prepare_spell_cast and run the standard casting
 /// pipeline (modal → targeting → payment). Extracted so handle_warp_cost_choice
 /// and handle_cast_spell can share the same post-prepare logic.
@@ -6244,6 +6305,55 @@ pub fn handle_cast_spell_with_payment_mode(
                 if !normal_affordable && evoke_affordable {
                     // Only evoke is payable — proceed via the evoke path.
                     return handle_evoke_cost_choice_with_payment_mode(
+                        state,
+                        player,
+                        object_id,
+                        card_id,
+                        crate::types::actions::AlternativeCastDecision::Alternative,
+                        payment_mode,
+                        events,
+                    );
+                }
+                // Otherwise (normal-only or neither): fall through to normal cast.
+            }
+        }
+    }
+
+    // CR 702.152a + CR 118.9: Blitz — opt-in pure-mana alternative cost. When a
+    // hand card has Keyword::Blitz and both the printed and blitz costs are
+    // affordable, present the choice; auto-route when only blitz is payable.
+    if let Some(obj) = state.objects.get(&object_id) {
+        if obj.zone == Zone::Hand {
+            if let Some(blitz_cost) = obj.keywords.iter().find_map(|k| match k {
+                crate::types::keywords::Keyword::Blitz(cost) => Some(cost.clone()),
+                _ => None,
+            }) {
+                // CR 601.2f: affordability and displayed costs reflect active
+                // cost modifiers, applied to both the printed and blitz costs.
+                let normal_cost =
+                    apply_cost_modifiers_to_base(state, player, object_id, obj.mana_cost.clone())
+                        .unwrap_or_else(|| obj.mana_cost.clone());
+                let blitz_eff =
+                    apply_cost_modifiers_to_base(state, player, object_id, blitz_cost.clone())
+                        .unwrap_or(blitz_cost);
+                let normal_affordable =
+                    can_pay_cost_after_auto_tap(state, player, object_id, &normal_cost);
+                let blitz_affordable =
+                    can_pay_cost_after_auto_tap(state, player, object_id, &blitz_eff);
+                if normal_affordable && blitz_affordable {
+                    return Ok(WaitingFor::AlternativeCastChoice {
+                        player,
+                        object_id,
+                        card_id,
+                        payment_mode,
+                        keyword: crate::types::game_state::AlternativeCastKeyword::Blitz,
+                        normal_cost,
+                        alternative_cost: Some(blitz_eff),
+                        alternative_additional_cost: None,
+                    });
+                }
+                if !normal_affordable && blitz_affordable {
+                    return handle_blitz_cost_choice_with_payment_mode(
                         state,
                         player,
                         object_id,
@@ -19670,6 +19780,47 @@ mod tests {
         }
     }
 
+    /// CR 702.152a: A creature with Blitz in hand, with mana for both the printed
+    /// and the (cheaper) blitz cost, surfaces the Blitz alternative-cast option —
+    /// the casting-side wiring (candidate + offer) that drives `CastingVariant::Blitz`.
+    #[test]
+    fn blitz_creature_offers_blitz_variant() {
+        use crate::types::keywords::Keyword;
+
+        let mut state = setup_game_at_main_phase();
+        add_mana(&mut state, PlayerId(0), ManaType::Colorless, 5);
+
+        let spell = create_object(
+            &mut state,
+            CardId(9001),
+            PlayerId(0),
+            "Riveteers Bruiser".to_string(),
+            Zone::Hand,
+        );
+        {
+            let obj = state.objects.get_mut(&spell).unwrap();
+            obj.card_types.core_types.push(CoreType::Creature);
+            obj.base_card_types.core_types.push(CoreType::Creature);
+            obj.mana_cost = ManaCost::generic(4);
+            obj.base_mana_cost = ManaCost::generic(4);
+            obj.keywords.push(Keyword::Blitz(ManaCost::generic(2)));
+        }
+
+        assert!(
+            can_cast_object_now(&state, PlayerId(0), spell),
+            "a blitz creature with affordable cost must be castable"
+        );
+        let choices = casting_variant_choice_set(&state, PlayerId(0), spell);
+        assert!(
+            choices
+                .options
+                .iter()
+                .any(|o| o.variant == CastingVariant::Blitz),
+            "choice set must include the Blitz option; got {:?}",
+            choices.options
+        );
+    }
+
     /// CR 702.74a + CR 604.1: End-to-end composition of the two evoke work items.
     /// Ashling grants evoke {4} to an Elemental permanent spell in hand; casting
     /// it for the granted evoke cost (only {4} available, printed {6} unaffordable)
@@ -19773,6 +19924,74 @@ mod tests {
         assert!(
             !state.battlefield.contains(&spell),
             "sacrificed permanent must not remain on the battlefield; {diag}"
+        );
+    }
+
+    /// CR 702.152a–c: End-to-end — casting a creature for its blitz cost drives a
+    /// full cast → resolution, and the stack resolution hook installs the riders:
+    /// the permanent resolves onto the battlefield with haste and a scheduled
+    /// next-end-step sacrifice. This is the load-bearing guard that the
+    /// `CastingVariant::Blitz` resolution path actually calls `install_blitz_riders`.
+    #[test]
+    fn blitz_full_cast_installs_riders_on_resolution() {
+        use super::super::engine::apply_as_current;
+        use crate::types::keywords::Keyword;
+
+        let mut state = setup_game_at_main_phase();
+        // Only the blitz {2} is affordable (printed {4} is not) ⇒ auto-route to blitz.
+        add_mana(&mut state, PlayerId(0), ManaType::Colorless, 2);
+
+        let spell = create_object(
+            &mut state,
+            CardId(9101),
+            PlayerId(0),
+            "Riveteers Bruiser".to_string(),
+            Zone::Hand,
+        );
+        {
+            let obj = state.objects.get_mut(&spell).unwrap();
+            obj.card_types.core_types.push(CoreType::Creature);
+            obj.base_card_types.core_types.push(CoreType::Creature);
+            obj.mana_cost = ManaCost::generic(4);
+            obj.base_mana_cost = ManaCost::generic(4);
+            obj.keywords.push(Keyword::Blitz(ManaCost::generic(2)));
+        }
+
+        apply_as_current(
+            &mut state,
+            GameAction::CastSpell {
+                object_id: spell,
+                card_id: CardId(9101),
+                targets: vec![],
+            },
+        )
+        .unwrap();
+        assert_eq!(state.stack.len(), 1, "blitz spell is on the stack");
+
+        // Resolve onto the battlefield (stop before the turn reaches the end step,
+        // which would sacrifice it).
+        for _ in 0..6 {
+            if state.battlefield.contains(&spell) {
+                break;
+            }
+            if apply_as_current(&mut state, GameAction::PassPriority).is_err() {
+                break;
+            }
+        }
+        assert!(
+            state.battlefield.contains(&spell),
+            "blitz creature must resolve onto the battlefield"
+        );
+
+        // Riders installed by the resolution hook (CR 702.152b–c).
+        crate::game::layers::evaluate_layers(&mut state);
+        assert!(
+            crate::game::keywords::has_haste(&state.objects[&spell]),
+            "blitz creature must have haste"
+        );
+        assert!(
+            state.delayed_triggers.iter().any(|d| d.source_id == spell),
+            "blitz creature must have a scheduled next-end-step sacrifice"
         );
     }
 
