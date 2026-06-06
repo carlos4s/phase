@@ -2464,6 +2464,25 @@ pub(super) fn check_additional_cost_or_pay_with_distribute(
         return pay_additional_cost(state, player, retrace_discard_land_cost(), pending, events);
     }
 
+    // CR 702.133a: Jump-start requires discarding a card (any card) as an
+    // additional cost, then paying the card's normal mana cost.
+    if casting_variant == CastingVariant::JumpStart {
+        let mut pending = PendingCast::new(object_id, card_id, ability, cost.clone());
+        pending.base_cost = base_cost.clone();
+        pending.casting_variant = casting_variant;
+        pending.cast_timing_permission = cast_timing_permission;
+        pending.distribute = distribute;
+        pending.origin_zone = origin_zone;
+        pending.payment_mode = payment_mode;
+        return pay_additional_cost(
+            state,
+            player,
+            jumpstart_discard_card_cost(),
+            pending,
+            events,
+        );
+    }
+
     // CR 702.34a + CR 118.8: Flashback with a non-mana additional cost (Battle
     // Screech's "tap three white creatures") or a compound cost (Deep Analysis's
     // "{1}{U}, Pay 3 life") routes the residual non-mana sub-cost through
@@ -3510,6 +3529,26 @@ pub(super) fn can_pay_retrace_additional_cost(
     let land_filter = TargetFilter::Typed(TypedFilter::land());
     !super::casting::find_eligible_discard_targets(state, player, object_id, Some(&land_filter))
         .is_empty()
+}
+
+/// CR 702.133a: Jump-start's additional cost is "discard a card" — any card,
+/// unlike Retrace's land restriction.
+pub(super) fn jumpstart_discard_card_cost() -> AbilityCost {
+    AbilityCost::Discard {
+        count: QuantityExpr::Fixed { value: 1 },
+        filter: None,
+        random: false,
+        self_ref: false,
+    }
+}
+
+pub(super) fn can_pay_jumpstart_additional_cost(
+    state: &GameState,
+    player: PlayerId,
+    object_id: ObjectId,
+) -> bool {
+    // CR 702.133a: any card in hand can be discarded for the jump-start cost.
+    !super::casting::find_eligible_discard_targets(state, player, object_id, None).is_empty()
 }
 
 #[allow(clippy::too_many_arguments)]
