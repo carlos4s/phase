@@ -20,7 +20,7 @@
 //!    library) handles the look + interactive selection + "rest on the bottom"
 //!    via the fully-wired `WaitingFor::DigChoice` flow. The kept card's
 //!    destination is `Exile`; the `DigChoice` resolution binds the chosen
-//!    (exiled) card onto the continuation's targets (CR 401.2).
+//!    (exiled) card onto the continuation's targets.
 //! 2. `Effect::HideawayConceal` (chained as a `sub_ability`, CR 608.2c) takes
 //!    that exiled card — `TargetFilter::ParentTarget` — and turns it face down
 //!    while linking it to the source via the `exile_links` pool, so the
@@ -83,7 +83,7 @@ fn hideaway_trigger(n: u32) -> TriggerDefinition {
             filter: TargetFilter::Any,
             // CR 702.75a: "put the rest on the bottom of your library."
             rest_destination: Some(Zone::Library),
-            // CR 701.16a: the cards are looked at privately, not revealed.
+            // CR 701.20e: the cards are looked at privately, not revealed.
             reveal: false,
         },
     )
