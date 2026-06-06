@@ -2,18 +2,23 @@
 //! `database/mod.rs` so the implementation module (`encore.rs`) and the resolver
 //! (`game/effects/encore.rs`) stay free of inline test scaffolding.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use super::encore::synthesize_encore;
 use crate::database::mtgjson::{AtomicCard, AtomicIdentifiers};
 use crate::game::casting::{can_activate_ability_now, handle_activate_ability};
 use crate::game::stack::resolve_top;
+use crate::game::triggers::check_delayed_triggers;
 use crate::game::zones::create_object;
 use crate::types::ability::{
-    AbilityCost, AbilityKind, ContinuousModification, DelayedTriggerCondition, Effect, TargetFilter,
+    AbilityCost, AbilityKind, ContinuousModification, DelayedTriggerCondition, Effect,
+    TargetFilter, TargetRef,
 };
 use crate::types::card::CardFace;
 use crate::types::card_type::CoreType;
+use crate::types::events::GameEvent;
+use crate::types::format::FormatConfig;
 use crate::types::game_state::GameState;
 use crate::types::identifiers::{CardId, ObjectId};
 use crate::types::keywords::Keyword;
@@ -239,12 +244,6 @@ fn dt_targets_contain(dt: &crate::types::game_state::DelayedTrigger, id: ObjectI
 /// sacrifice, when the end step arrives, actually removes both tokens.
 #[test]
 fn encore_three_player_one_token_per_opponent_then_sacrificed_at_end_step() {
-    use crate::game::triggers::check_delayed_triggers;
-    use crate::types::ability::TargetRef;
-    use crate::types::events::GameEvent;
-    use crate::types::format::FormatConfig;
-    use std::collections::BTreeSet;
-
     let mut state = GameState::new(FormatConfig::free_for_all(), 3, 42);
     state.active_player = PlayerId(0);
     state.phase = Phase::PreCombatMain;
