@@ -4904,6 +4904,7 @@ mod tests {
         let copy = Effect::CopySpell {
             target: TargetFilter::SelfRef,
             retarget: CopyRetargetPermission::KeepOriginalTargets,
+            copier: None,
         };
         let result = parse_followup_continuation_ast(
             "may choose a new target for that copy",
@@ -4932,6 +4933,7 @@ mod tests {
             Effect::CopySpell {
                 target: TargetFilter::SelfRef,
                 retarget: CopyRetargetPermission::KeepOriginalTargets,
+                copier: None,
             },
         )));
 
