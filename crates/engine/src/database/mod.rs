@@ -4,6 +4,7 @@ pub mod embalm_eternalize;
 pub mod encore;
 #[cfg(feature = "forge")]
 pub mod forge;
+pub mod haunt;
 pub mod hideaway;
 pub mod legality;
 pub mod mtgjson;

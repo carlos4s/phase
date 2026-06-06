@@ -669,6 +669,17 @@ pub enum ExileLinkKind {
     /// creature leaves the battlefield (`zones.rs` battlefield-exit, since this
     /// is not an `UntilSourceLeaves` link) — exactly CR 702.99c's lifetime.
     Cipher,
+    /// CR 702.55b: Haunt — the exiled card (`exiled_id`) "haunts" the creature
+    /// (`source_id`) targeted by its haunt ability. The link drives the card's
+    /// haunt-payoff trigger, which fires from the exile zone when the haunted
+    /// creature dies (CR 702.55c). Unlike `Cipher`, this link is **preserved**
+    /// when the haunted creature leaves the battlefield (`zones.rs` battlefield
+    /// exit) — the haunted creature's death is exactly when the payoff must read
+    /// the link. The card "haunts the creature it haunts regardless of whether
+    /// or not that object is still a creature" (CR 702.55b), so the link is
+    /// pruned only when the haunting card itself leaves exile (`zones.rs`
+    /// exile-exit), not when the creature changes or dies.
+    Haunt,
     /// CR 702.75a: Hideaway — the card (`exiled_id`) was exiled face down by the
     /// permanent (`source_id`). Like `TrackedBySource` it tracks the card so the
     /// companion "you may play the exiled card" ability (`TargetFilter::
