@@ -232,6 +232,120 @@ fn dt_targets_contain(dt: &crate::types::game_state::DelayedTrigger, id: ObjectI
         .any(|t| matches!(t, crate::types::ability::TargetRef::Object(obj) if *obj == id))
 }
 
+/// CR 702.141a end-to-end (THREE players — the per-opponent case the dedicated
+/// resolver exists for): activating Encore creates one haste-bearing copy token
+/// PER opponent, each bound via `MustAttackPlayer` to the *distinct* opponent it
+/// was created for, all collected into one next-end-step sacrifice — and that
+/// sacrifice, when the end step arrives, actually removes both tokens.
+#[test]
+fn encore_three_player_one_token_per_opponent_then_sacrificed_at_end_step() {
+    use crate::game::triggers::check_delayed_triggers;
+    use crate::types::ability::TargetRef;
+    use crate::types::events::GameEvent;
+    use crate::types::format::FormatConfig;
+    use std::collections::BTreeSet;
+
+    let mut state = GameState::new(FormatConfig::free_for_all(), 3, 42);
+    state.active_player = PlayerId(0);
+    state.phase = Phase::PreCombatMain;
+    let source = setup_graveyard_source(&mut state, ManaCost::default());
+
+    let mut events = Vec::new();
+    handle_activate_ability(&mut state, PlayerId(0), source, 0, &mut events)
+        .expect("activation must succeed");
+    assert_eq!(state.objects[&source].zone, Zone::Exile);
+    resolve_top(&mut state, &mut Vec::new());
+
+    // The resolver collects every created token into the delayed sacrifice's
+    // explicit targets (`last_created_token_ids` only holds the LAST opponent's
+    // token, so read the tokens from there).
+    let delayed = state
+        .delayed_triggers
+        .iter()
+        .find(|dt| {
+            matches!(
+                dt.condition,
+                DelayedTriggerCondition::AtNextPhase { phase: Phase::End }
+            ) && matches!(dt.ability.effect, Effect::Sacrifice { .. })
+        })
+        .expect("a next-end-step sacrifice must be scheduled")
+        .clone();
+    let tokens: Vec<ObjectId> = delayed
+        .ability
+        .targets
+        .iter()
+        .filter_map(|t| match t {
+            TargetRef::Object(id) => Some(*id),
+            _ => None,
+        })
+        .collect();
+
+    // CR 702.141a: "For each opponent, create a token …" — two opponents → two tokens.
+    assert_eq!(
+        tokens.len(),
+        2,
+        "one copy token per opponent (3 players → 2 tokens)"
+    );
+
+    // Each token is a haste-bearing copy bound to a DISTINCT opponent's
+    // `MustAttackPlayer` requirement (the whole reason the dedicated resolver
+    // exists — generic ForceAttack can't bind "that opponent").
+    let mut bound_opponents = BTreeSet::new();
+    for &token in &tokens {
+        let tok = &state.objects[&token];
+        assert!(state.battlefield.contains(&token), "token on battlefield");
+        assert!(tok.is_token, "created object is a token");
+        assert!(
+            tok.keywords.contains(&Keyword::Haste),
+            "each token gains haste"
+        );
+        let player = state
+            .transient_continuous_effects
+            .iter()
+            .filter(|ce| ce.affected == (TargetFilter::SpecificObject { id: token }))
+            .find_map(|ce| {
+                ce.modifications.iter().find_map(|m| match m {
+                    ContinuousModification::AddStaticMode {
+                        mode: StaticMode::MustAttackPlayer { player },
+                    } => Some(*player),
+                    _ => None,
+                })
+            })
+            .expect("token must carry a MustAttackPlayer requirement");
+        bound_opponents.insert(player);
+    }
+    let expected: BTreeSet<PlayerId> = [PlayerId(1), PlayerId(2)].into_iter().collect();
+    assert_eq!(
+        bound_opponents, expected,
+        "each token must be bound to a distinct opponent, not all to the same one"
+    );
+
+    // CR 702.141a + CR 603.7d: at the next end step the sacrifice fires and removes
+    // BOTH tokens (drives the resolution end-to-end, not just the scheduling).
+    state.phase = Phase::End;
+    let stacked =
+        check_delayed_triggers(&mut state, &[GameEvent::PhaseChanged { phase: Phase::End }]);
+    assert!(!stacked.is_empty(), "the end-step sacrifice must fire");
+    resolve_top(&mut state, &mut Vec::new());
+
+    for &token in &tokens {
+        assert!(
+            !state.battlefield.contains(&token),
+            "every encore token is sacrificed at the next end step"
+        );
+    }
+    assert!(
+        !state.delayed_triggers.iter().any(|dt| matches!(
+            dt.condition,
+            DelayedTriggerCondition::AtNextPhase { phase: Phase::End }
+        ) && matches!(
+            dt.ability.effect,
+            Effect::Sacrifice { .. }
+        )),
+        "the one-shot end-step sacrifice is consumed after firing"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Real-pipeline integration (MTGJSON -> parse -> synthesize)
 // ---------------------------------------------------------------------------
