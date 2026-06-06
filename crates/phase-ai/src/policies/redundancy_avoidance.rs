@@ -384,6 +384,10 @@ fn redundancy_delta(
         // CR 702.141a: Encore makes per-opponent copy tokens — like Myriad, it is
         // not a "redundant if already controlled" effect.
         | Effect::Encore
+        // CR 702.75a: HideawayConceal is an internal continuation step of the
+        // Hideaway ETB trigger (turn the just-exiled card face down + link it);
+        // it is never independently chosen, so it carries no redundancy signal.
+        | Effect::HideawayConceal { .. }
         | Effect::CopyTokenBlockingAttacker { .. }
         | Effect::BecomeCopy { .. }
         | Effect::ChooseCard { .. }

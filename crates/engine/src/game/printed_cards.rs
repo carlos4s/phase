@@ -720,6 +720,7 @@ fn walk_effect(effect: &Effect, out: &mut Vec<String>) {
         | Effect::CopyTokenOf { .. }
         | Effect::Myriad
         | Effect::Encore
+        | Effect::HideawayConceal { .. }
         | Effect::CopyTokenBlockingAttacker { .. }
         | Effect::BecomeCopy { .. }
         | Effect::ChooseCard { .. }

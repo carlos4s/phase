@@ -669,6 +669,18 @@ pub enum ExileLinkKind {
     /// creature leaves the battlefield (`zones.rs` battlefield-exit, since this
     /// is not an `UntilSourceLeaves` link) — exactly CR 702.99c's lifetime.
     Cipher,
+    /// CR 702.75a: Hideaway — the card (`exiled_id`) was exiled face down by the
+    /// permanent (`source_id`). Like `TrackedBySource` it tracks the card so the
+    /// companion "you may play the exiled card" ability (`TargetFilter::
+    /// ExiledBySource`, which is kind-agnostic) can later find it — but it
+    /// additionally grants a *look-permission*: the player who controls the
+    /// exiling permanent "may look at this card in the exile zone". Visibility
+    /// keys the controller's face-down look-through on this kind specifically, so
+    /// plain `TrackedBySource` face-down exiles that grant no such permission
+    /// (Bomat Courier's "(You can't look at it.)", Necropotence, Asmodeus) stay
+    /// redacted. Pruned on exile-exit / source-exit like `Cipher` (not an
+    /// `UntilSourceLeaves` link, so no automatic return).
+    HideawayLookable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -7748,6 +7748,9 @@ pub fn synthesize_all(face: &mut CardFace) {
     // (haste, must-attack that opponent, sacrifice at the next end step) —
     // self-contained building block.
     crate::database::encore::synthesize_encore(face);
+    // CR 702.75a: Hideaway ETB look-and-exile-face-down — self-contained
+    // building block (Dig + conceal continuation).
+    crate::database::hideaway::synthesize_hideaway(face);
     synthesize_outlast(face);
     synthesize_reinforce(face);
     synthesize_casualty(face);

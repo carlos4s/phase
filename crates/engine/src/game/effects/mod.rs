@@ -91,6 +91,7 @@ pub mod gift_delivery;
 pub mod goad;
 pub mod grant_extra_loyalty_activations;
 pub mod grant_permission;
+pub mod hideaway;
 pub mod incubate;
 pub mod investigate;
 pub mod learn;
@@ -1847,6 +1848,7 @@ pub fn resolve_effect(
         Effect::CopyTokenOf { .. } => token_copy::resolve(state, ability, events),
         Effect::Myriad => myriad::resolve(state, ability, events),
         Effect::Encore => encore::resolve(state, ability, events),
+        Effect::HideawayConceal { .. } => hideaway::resolve(state, ability, events),
         Effect::CopyTokenBlockingAttacker { .. } => {
             copy_token_blocking::resolve(state, ability, events)
         }
