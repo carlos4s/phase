@@ -1103,7 +1103,7 @@ export type WaitingFor =
   | { type: "DefilerPayment"; data: { player: PlayerId; life_cost: number; mana_reduction: ManaCost; pending_cast: PendingCast } }
   | { type: "CastOffer"; data: { player: PlayerId; kind: CastOfferKind } }
   | { type: "ModalFaceChoice"; data: { player: PlayerId; object_id: ObjectId; card_id: CardId } }
-  | { type: "AlternativeCastChoice"; data: { player: PlayerId; object_id: ObjectId; card_id: CardId; payment_mode?: CastPaymentMode; keyword: { type: "Warp" } | { type: "Evoke" } | { type: "Dash" } | { type: "Overload" } | { type: "Bestow" } | { type: "Awaken" } | { type: "Cleave" } | { type: "MoreThanMeetsTheEye" } | { type: "Mutate" }; normal_cost: ManaCost; alternative_cost: ManaCost | null; alternative_additional_cost: SerializedAbilityCost | null } }
+  | { type: "AlternativeCastChoice"; data: { player: PlayerId; object_id: ObjectId; card_id: CardId; payment_mode?: CastPaymentMode; keyword: { type: "Warp" } | { type: "Evoke" } | { type: "Dash" } | { type: "Overload" } | { type: "Bestow" } | { type: "Awaken" } | { type: "Cleave" } | { type: "MoreThanMeetsTheEye" } | { type: "Mutate" } | { type: "Blitz" }; normal_cost: ManaCost; alternative_cost: ManaCost | null; alternative_additional_cost: SerializedAbilityCost | null } }
   // CR 702.140c + CR 730.2a: mutating creature spell resolving with a legal
   // target — controller chooses to put it on top of or under the target creature.
   | { type: "MutateMergeChoice"; data: { player: PlayerId; merging_id: ObjectId; target_id: ObjectId } }
@@ -1972,6 +1972,17 @@ export interface SubmitResult {
 }
 
 /** Bundles legal actions with the engine's auto-pass recommendation. */
+/**
+ * Engine-owned non-fatal diagnostic (an engine-level progress wedge, not a
+ * rules outcome): an owed decision has no legal action for any authorized
+ * submitter, i.e. a wedged game. Display-only — the frontend surfaces it as a
+ * toast so a hung game informs the user.
+ */
+export interface StuckDecisionDiagnostic {
+  waitingForKind: string;
+  stuckPlayers: number[];
+}
+
 export interface LegalActionsResult {
   actions: GameAction[];
   autoPassRecommended: boolean;
@@ -1984,6 +1995,8 @@ export interface LegalActionsResult {
    * availability from objects.
    */
   legalActionsByObject?: Record<string, GameAction[]>;
+  /** Engine progress-wedge diagnostic: present only when the current decision is wedged. */
+  stuckDiagnostic?: StuckDecisionDiagnostic;
 }
 
 /**
@@ -2000,6 +2013,14 @@ export interface ViewerSnapshot {
   autoPassRecommended: boolean;
   spellCosts?: Record<string, ManaCost>;
   legalActionsByObject?: Record<string, GameAction[]>;
+  /**
+   * Engine progress-wedge diagnostic, mirrored from `LegalActionsResult` for
+   * shape parity. Currently inert on this path: the store's `stuckDiagnostic`
+   * slice is fed exclusively via `legalResultState` (the `LegalActionsResult`
+   * path), and the P2P broadcast wire format (`LegalActionsWire`) does not
+   * carry this field, so the snapshot copy is a deliberate parity placeholder.
+   */
+  stuckDiagnostic?: StuckDecisionDiagnostic;
 }
 
 export interface BatchResolveResult {

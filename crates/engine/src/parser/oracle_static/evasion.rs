@@ -66,8 +66,44 @@ pub(crate) fn classify_block_exception(filter_text: &str) -> BlockExceptionKind 
     if let Ok((_, min)) = parse_min_blockers_phrase(trimmed) {
         BlockExceptionKind::MinBlockers { min }
     } else {
-        BlockExceptionKind::Quality(parse_target(trimmed).0)
+        let normalized = strip_redundant_block_exception_by(trimmed);
+        BlockExceptionKind::Quality(parse_target(&normalized).0)
     }
+}
+
+/// CR 509.1b: The "except by <filter>" evasion grammar repeats the "by"
+/// preposition before each disjunct — "except by Vehicles or by creatures with
+/// haste" (Fast // Furious), mirroring the CR's own "and/or" exception wording.
+/// `parse_target`'s disjunction recursion expects a bare type word after the
+/// connector ("or creatures"), not a second "by", so the repeated preposition
+/// truncates the union to its first disjunct. Strip the redundant "by " that
+/// immediately follows a disjunction connector ("or by", "and by", "and/or by")
+/// so the full union parses. Combinator-scanned, not string-replaced: the "by "
+/// is only removed when it sits right after a recognized connector, never inside
+/// a filter word.
+fn strip_redundant_block_exception_by(filter_text: &str) -> Cow<'_, str> {
+    type VE<'a> = OracleError<'a>;
+
+    // Scan for "<connector> by " at any word boundary; the combinator emits the
+    // connector span so it can be re-inserted while only the redundant "by " is
+    // dropped. `before` is the prefix up to (but not including) the connector.
+    let scan = nom_primitives::scan_preceded(filter_text, |i: &str| {
+        let (after_conn, connector) = alt((
+            tag::<_, _, VE<'_>>("and/or "),
+            tag::<_, _, VE<'_>>("or "),
+            tag::<_, _, VE<'_>>("and "),
+        ))
+        .parse(i)?;
+        let (after_by, _) = tag::<_, _, VE<'_>>("by ").parse(after_conn)?;
+        Ok((after_by, connector))
+    });
+    let Some((before, connector, after)) = scan else {
+        return Cow::Borrowed(filter_text);
+    };
+    // Re-join with the connector preserved but the redundant "by " removed, then
+    // recurse to handle any further "or by" repetitions.
+    let joined = format!("{before}{connector}{after}");
+    Cow::Owned(strip_redundant_block_exception_by(&joined).into_owned())
 }
 
 /// CR 603.2d: Extract the source-restriction filter from a trigger-doubler's
@@ -794,6 +830,125 @@ pub(crate) fn try_split_and_cant_be_attached(text: &str) -> Option<Vec<StaticDef
                 .description(text.to_string()),
         );
     }
+    Some(defs)
+}
+
+/// CR 602.5 + CR 603.2a: Decompose `"<grant or restriction> and [its] activated
+/// abilities can't be activated"` into the first conjunct's static(s) plus a
+/// `CantBeActivated` static. The companion's `source_filter` is the first
+/// conjunct's host filter (e.g. `EnchantedBy`) — see the inline note below.
+///
+/// Without this split the trailing activation prohibition was dropped: Viper's
+/// Kiss ("Enchanted creature gets -1/-1, and its activated abilities can't be
+/// activated.") parsed to only the -1/-1 grant, so the enchanted creature's
+/// activated abilities still worked. Mirrors `try_split_and_cant_block`.
+/// The "can't attack/block, and activated abilities can't be activated" compound
+/// (Arrest, Faith's Fetters) is handled by its own earlier branch.
+pub(crate) fn try_split_and_cant_activate_abilities(text: &str) -> Option<Vec<StaticDefinition>> {
+    type VE<'a> = OracleError<'a>;
+    let lower = text.to_lowercase();
+
+    let (before, _matched, _rest) = nom_primitives::scan_preceded(&lower, |i: &str| {
+        // Compose the two independent axes rather than enumerating the product:
+        // an optional possessive "its " and the ASCII / U+2019 apostrophe form.
+        let (i, _) = tag::<_, _, VE>("and ").parse(i)?;
+        let (i, _) = opt(tag::<_, _, VE>("its ")).parse(i)?;
+        let (i, _) = alt((
+            tag::<_, _, VE>("activated abilities can't be activated"),
+            tag::<_, _, VE>("activated abilities can\u{2019}t be activated"),
+        ))
+        .parse(i)?;
+        Ok((i, ()))
+    })?;
+
+    let cut_end = before
+        .trim_end_matches(|ch: char| ch == ',' || ch.is_whitespace())
+        .len();
+    let line_a = format!("{}.", text[..cut_end].trim_end_matches('.'));
+    let mut defs = parse_static_line_multi(&line_a);
+    if defs.is_empty() {
+        return None;
+    }
+    for def in &mut defs {
+        def.description = Some(text.to_string());
+    }
+
+    // CR 602.5 + CR 603.2a: the prohibition applies to the same subject as the
+    // grant (the enchanted/equipped creature). `CantBeActivated` is a
+    // data-carrying static with no layer-pipeline handler — it is NOT re-homed
+    // onto the host the way `Continuous`/`GrantStaticAbility` modifications are.
+    // `is_blocked_by_cant_be_activated` (game/casting.rs) matches `source_filter`
+    // against the activating permanent from the static SOURCE's perspective
+    // (`FilterContext::from_source(static_owner)`), ignoring `affected`. The
+    // static lives on the Aura/Equipment, so `source_filter` must be the host
+    // filter (e.g. `EnchantedBy`) to resolve to the enchanted/equipped creature.
+    // A `SelfRef` `source_filter` would resolve to the Aura/Equipment itself and
+    // silently block nothing. For a self-referential grant ("this creature gets
+    // … and its activated abilities …") the first conjunct's filter is already
+    // `SelfRef`, so threading it through is correct in every case.
+    let affected = defs[0].affected.clone()?;
+    defs.push(
+        StaticDefinition::new(StaticMode::CantBeActivated {
+            who: ProhibitionScope::AllPlayers,
+            source_filter: affected.clone(),
+            exemption: parse_cant_be_activated_exemption_in_text(&lower),
+        })
+        .affected(affected)
+        .description(text.to_string()),
+    );
+    Some(defs)
+}
+
+/// CR 701.21: Decompose `"<grant or restriction> and can't be sacrificed"` into
+/// the first conjunct's static(s) plus an `Other("CantBeSacrificed")` static
+/// sharing the same `affected` set.
+///
+/// Without this split the trailing sacrifice prohibition was dropped: Assault
+/// Suit ("Equipped creature gets +2/+2, has haste, can't attack you or
+/// planeswalkers you control, and can't be sacrificed.") parsed without the
+/// `CantBeSacrificed` static, so the equipped creature could still be
+/// sacrificed — defeating the Equipment's political lock. Mirrors
+/// `try_split_and_cant_block`; `CantBeSacrificed` is a `StaticMode::Other(..)`
+/// host-prohibition (runtime-enforced in `game::sacrifice`), not a
+/// `ContinuousModification`, so the continuous-grant default drops it.
+pub(crate) fn try_split_and_cant_be_sacrificed(text: &str) -> Option<Vec<StaticDefinition>> {
+    type VE<'a> = OracleError<'a>;
+    let lower = text.to_lowercase();
+
+    let (before, _matched, rest) = nom_primitives::scan_preceded(&lower, |i: &str| {
+        // Match both the ASCII and typographic U+2019 apostrophe.
+        alt((
+            tag::<_, _, VE>("and can't be sacrificed"),
+            tag::<_, _, VE>("and can\u{2019}t be sacrificed"),
+        ))
+        .parse(i)
+    })?;
+
+    // Only the bare, terminal "can't be sacrificed" is a plain prohibition. A
+    // remaining tail ("unless …", "to …") is a qualified restriction owned by
+    // another branch — decline so we don't mis-split it.
+    if !rest.trim_start().trim_end_matches('.').trim().is_empty() {
+        return None;
+    }
+
+    let cut_end = before
+        .trim_end_matches(|ch: char| ch == ',' || ch.is_whitespace())
+        .len();
+    let line_a = format!("{}.", text[..cut_end].trim_end_matches('.'));
+    let mut defs = parse_static_line_multi(&line_a);
+    if defs.is_empty() {
+        return None;
+    }
+    for def in &mut defs {
+        def.description = Some(text.to_string());
+    }
+
+    let affected = defs[0].affected.clone()?;
+    defs.push(
+        StaticDefinition::new(StaticMode::Other("CantBeSacrificed".to_string()))
+            .affected(affected)
+            .description(text.to_string()),
+    );
     Some(defs)
 }
 
