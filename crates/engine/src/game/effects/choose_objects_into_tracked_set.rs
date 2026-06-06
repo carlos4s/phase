@@ -44,16 +44,31 @@ pub fn resolve(
         return Ok(());
     };
 
-    // Evaluate `filter` against the chooser's battlefield permanents. The
-    // filter's "they control" controller constraint resolves against the
-    // ability controller, so bind the filter context controller to the
-    // chooser (mirrors `pay.rs`'s payer-rebinding pattern).
+    // Evaluate `filter` against the eligible objects. The filter's "they
+    // control" controller constraint resolves against the ability controller,
+    // so bind the filter context controller to the chooser (mirrors `pay.rs`'s
+    // payer-rebinding pattern).
     let ctx = FilterContext::from_ability_with_controller(ability, chooser);
-    let eligible: Vec<TargetRef> = state
-        .battlefield
+    // CR 608.2c: scan the zone(s) the filter explicitly names; default to the
+    // battlefield. A hand-zone filter (Amplify's "reveal any number of cards
+    // from your hand that share a creature type with it", CR 702.38a) selects
+    // from the chooser's hand instead of the battlefield.
+    let zones = crate::game::targeting::extract_explicit_zones(&filter);
+    let candidate_ids: Vec<crate::types::identifiers::ObjectId> = if zones
         .iter()
-        .filter(|&&obj_id| matches_target_filter(state, obj_id, &filter, &ctx))
-        .map(|&obj_id| TargetRef::Object(obj_id))
+        .any(|z| *z != crate::types::zones::Zone::Battlefield)
+    {
+        zones
+            .iter()
+            .flat_map(|zone| crate::game::targeting::zone_object_ids(state, *zone))
+            .collect()
+    } else {
+        state.battlefield.iter().copied().collect()
+    };
+    let eligible: Vec<TargetRef> = candidate_ids
+        .into_iter()
+        .filter(|&obj_id| matches_target_filter(state, obj_id, &filter, &ctx))
+        .map(TargetRef::Object)
         .collect();
 
     // CR 608.2c: Surface the interactive selection. Even with an empty

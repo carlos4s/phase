@@ -1,3 +1,4 @@
+pub mod amplify;
 pub mod bracket_lists;
 pub mod card_db;
 pub mod embalm_eternalize;
@@ -13,6 +14,8 @@ pub mod search;
 pub mod synthesis;
 pub mod unearth;
 
+#[cfg(test)]
+mod amplify_tests;
 #[cfg(test)]
 mod embalm_eternalize_tests;
 #[cfg(test)]

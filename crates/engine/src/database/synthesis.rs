@@ -8109,6 +8109,9 @@ pub fn synthesize_all(face: &mut CardFace) {
     // this permanent currently having a +1/+1 counter. Each instance
     // functions independently.
     synthesize_graft(face);
+    // CR 702.38a: Amplify N — ETB reveal-any-number-from-hand (sharing a
+    // creature type) then enter with N counters per revealed card.
+    crate::database::amplify::synthesize_amplify(face);
     // CR 702.54a + CR 702.54b + CR 702.54c: Bloodthirst N/X —
     // ETB-with-P1P1 replacement. Each instance functions independently.
     synthesize_bloodthirst(face);
