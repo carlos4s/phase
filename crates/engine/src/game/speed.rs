@@ -111,7 +111,10 @@ pub fn decrease_speed(
 pub fn controls_start_your_engines(state: &GameState, player: PlayerId) -> bool {
     state.battlefield.iter().any(|id| {
         state.objects.get(id).is_some_and(|obj| {
-            obj.controller == player && obj.has_keyword(&Keyword::StartYourEngines)
+            // CR 702.26b: a phased-out permanent is treated as though it does not exist.
+            obj.controller == player
+                && obj.is_phased_in()
+                && obj.has_keyword(&Keyword::StartYourEngines)
         })
     })
 }
