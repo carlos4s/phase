@@ -141,6 +141,10 @@ pub(crate) fn resolve_offer(
         .ok_or_else(|| EngineError::InvalidAction("Splice card object missing".to_string()))?;
     let (_, splice_cost) = splice_grant(obj)
         .ok_or_else(|| EngineError::InvalidAction("Splice card lost its keyword".to_string()))?;
+    let def = combined_spell_ability_def(obj).ok_or_else(|| {
+        EngineError::InvalidAction("Splice card has no spell ability to copy".to_string())
+    })?;
+    let card_name = obj.name.clone();
 
     // CR 702.47b: the splice cost is an additional cost. Spliced cards never
     // carry {X}, so folding the fixed mana into both the working cost and the
@@ -153,13 +157,10 @@ pub(crate) fn resolve_offer(
     // CR 702.47c: copy the card's text box onto the host spell. The cloned
     // ability is sourced to the host spell object and controlled by the caster
     // so its effects resolve as part of that spell.
-    if let Some(def) = combined_spell_ability_def(obj) {
-        let spliced = build_resolved_from_def(&def, pending.object_id, player);
-        append_to_sub_chain(&mut pending.ability, spliced);
-    }
+    let spliced = build_resolved_from_def(&def, pending.object_id, player);
+    append_to_sub_chain(&mut pending.ability, spliced);
 
     // CR 702.47a: the card is revealed and stays in hand.
-    let card_name = obj.name.clone();
     events.push(GameEvent::CardsRevealed {
         player,
         card_ids: vec![card],

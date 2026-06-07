@@ -7691,12 +7691,11 @@ fn continue_with_prepared(
         }
     }
 
-    // CR 702.119a-c + CR 601.2b/h: Emerge requires choosing which creature to
     // CR 702.47a–e + CR 601.2b: Splice onto [subtype] is announced as the spell
-    // is cast, before targets are chosen and before the total cost is locked. If
-    // the caster holds any card that can be spliced onto this spell, offer the
-    // reveal-and-merge choice now; accepting merges the spliced text box into
-    // `resolved` so the deferred-target step below collects its targets too.
+    // is cast on the same pre-target declaration axis as Emerge/Casualty/etc.
+    // It runs after the host ability is built and before later additional-cost
+    // prompts because accepting merges text that may add targets to collect in
+    // CR 601.2c and cost inputs to lock in CR 601.2f.
     let splice_eligible = splice::eligible_splice_cards(state, player, prepared.object_id);
     if !splice_eligible.is_empty() {
         return Ok(splice::begin_offer(
@@ -7718,6 +7717,7 @@ fn continue_with_prepared(
         ));
     }
 
+    // CR 702.119a-c + CR 601.2b/h: Emerge requires choosing which creature to
     // sacrifice as the player chooses to pay the emerge cost, then sacrificing
     // it as that cost is paid. Route this before any target selection so the
     // required sacrifice is declared on the CR 601.2b axis.
