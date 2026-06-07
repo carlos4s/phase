@@ -43,6 +43,7 @@ use super::mana_payment;
 use super::quantity::resolve_quantity;
 use super::restrictions;
 use super::speed::{effective_speed, set_speed};
+use super::splice;
 use super::stack;
 use super::targeting;
 
@@ -7691,6 +7692,32 @@ fn continue_with_prepared(
     }
 
     // CR 702.119a-c + CR 601.2b/h: Emerge requires choosing which creature to
+    // CR 702.47a–e + CR 601.2b: Splice onto [subtype] is announced as the spell
+    // is cast, before targets are chosen and before the total cost is locked. If
+    // the caster holds any card that can be spliced onto this spell, offer the
+    // reveal-and-merge choice now; accepting merges the spliced text box into
+    // `resolved` so the deferred-target step below collects its targets too.
+    let splice_eligible = splice::eligible_splice_cards(state, player, prepared.object_id);
+    if !splice_eligible.is_empty() {
+        return Ok(splice::begin_offer(
+            prepared.object_id,
+            prepared.card_id,
+            resolved,
+            prepared.mana_cost.clone(),
+            prepared.base_mana_cost.clone(),
+            prepared.casting_variant,
+            prepared.cast_timing_permission,
+            prepared
+                .ability_def
+                .as_ref()
+                .and_then(|a| a.distribute.clone()),
+            prepared.origin_zone,
+            prepared.payment_mode,
+            player,
+            splice_eligible,
+        ));
+    }
+
     // sacrifice as the player chooses to pay the emerge cost, then sacrificing
     // it as that cost is paid. Route this before any target selection so the
     // required sacrifice is declared on the CR 601.2b axis.
