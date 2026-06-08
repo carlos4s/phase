@@ -4,7 +4,6 @@
 use super::intensify::resolve;
 use crate::game::printed_cards::apply_card_face_to_object;
 use crate::game::zones::create_object;
-use crate::parser::oracle_effect::parse_effect;
 use crate::types::ability::{Effect, IntensityScope, QuantityExpr, ResolvedAbility};
 use crate::types::card::CardFace;
 use crate::types::identifiers::{CardId, ObjectId};
@@ -156,37 +155,4 @@ fn starting_intensity_is_stamped_from_the_keyword_once() {
         obj.intensity, 5,
         "re-stamping the face must not reset intensity"
     );
-}
-
-#[test]
-fn parser_maps_intensify_clauses_to_the_right_scope() {
-    assert!(matches!(
-        parse_effect("this creature intensifies by 2."),
-        Effect::Intensify {
-            scope: IntensityScope::Source,
-            amount: QuantityExpr::Fixed { value: 2 },
-        }
-    ));
-    // No "by N" → amount 1.
-    assert!(matches!(
-        parse_effect("it intensifies."),
-        Effect::Intensify {
-            scope: IntensityScope::Source,
-            amount: QuantityExpr::Fixed { value: 1 },
-        }
-    ));
-    assert!(matches!(
-        parse_effect("cards you own named Arek, False Goldwarden intensify by 1."),
-        Effect::Intensify {
-            scope: IntensityScope::OwnedSameName,
-            ..
-        }
-    ));
-    match parse_effect("all Chorus cards you own intensify by 1.") {
-        Effect::Intensify {
-            scope: IntensityScope::OwnedSubtype { subtype },
-            ..
-        } => assert_eq!(subtype, "Chorus"),
-        other => panic!("expected OwnedSubtype, got {other:?}"),
-    }
 }

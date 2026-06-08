@@ -1021,17 +1021,6 @@ pub(crate) fn parse_keyword_from_oracle(text: &str) -> Option<Keyword> {
         return Some(Keyword::Renown(n));
     }
 
-    // Digital-only Alchemy: "Starting intensity N" — the card's initial intensity.
-    if let Ok((_, (_, _, n))) = all_consuming((
-        tag::<_, _, OracleError<'_>>("starting intensity"),
-        space1,
-        nom_primitives::parse_number,
-    ))
-    .parse(text)
-    {
-        return Some(Keyword::StartingIntensity(n));
-    }
-
     // CR 702.68a: Frenzy N — parameterized keyword from Oracle/reminder/grant text.
     // MTGJSON's keyword list carries only "Frenzy"; the Oracle line supplies N.
     if let Ok((_, (_, _, n))) = all_consuming((

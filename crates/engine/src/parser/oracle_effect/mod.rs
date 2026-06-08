@@ -91,13 +91,12 @@ use crate::types::ability::{
     ChooseFromZoneConstraint, Chooser, CombatDamageScope, Comparator, ConjureCard,
     ContinuousModification, ControllerRef, DamageModification, DamageSource,
     DelayedTriggerCondition, DoubleTarget, Duration, Effect, FilterProp, GameRestriction,
-    IntensityScope, IterationKindBinding, ManaProduction, ManaSpendPermission, MultiTargetSpec,
-    ObjectProperty, ObjectScope, PaymentCost, PlayerFilter, PlayerRelation, PlayerScope,
-    PreventionAmount, PreventionScope, ProhibitedActivity, QuantityExpr, QuantityRef,
-    ReplacementDefinition, RestrictionExpiry, RestrictionPlayerScope, RoundingMode,
-    StaticCondition, StaticDefinition, StepSkipTarget, SubAbilityLink, TargetFilter,
-    TargetSelectionMode, TriggerCondition, TriggerDefinition, TypeFilter, TypedFilter,
-    UnlessPayModifier, UntilCondition, ZoneOwner,
+    IterationKindBinding, ManaProduction, ManaSpendPermission, MultiTargetSpec, ObjectProperty,
+    ObjectScope, PaymentCost, PlayerFilter, PlayerRelation, PlayerScope, PreventionAmount,
+    PreventionScope, ProhibitedActivity, QuantityExpr, QuantityRef, ReplacementDefinition,
+    RestrictionExpiry, RestrictionPlayerScope, RoundingMode, StaticCondition, StaticDefinition,
+    StepSkipTarget, SubAbilityLink, TargetFilter, TargetSelectionMode, TriggerCondition,
+    TriggerDefinition, TypeFilter, TypedFilter, UnlessPayModifier, UntilCondition, ZoneOwner,
 };
 #[cfg(test)]
 use crate::types::ability::{AttackScope, AttackSubject};
@@ -4361,11 +4360,6 @@ fn parse_effect_clause_inner(text: &str, ctx: &mut ParseContext) -> ParsedEffect
         return redirected;
     }
 
-    // Digital-only Alchemy: "[scope] intensif[y/ies] by N" — the Intensify action.
-    if let Some(effect) = try_parse_intensify(tp) {
-        return parsed_clause(effect);
-    }
-
     // Digital-only: "conjure a card named X into/onto zone" — Conjure keyword action.
     if let Some(effect) = try_parse_conjure(tp) {
         return parsed_clause(effect);
@@ -4373,126 +4367,6 @@ fn parse_effect_clause_inner(text: &str, ctx: &mut ParseContext) -> ParsedEffect
 
     let ast = parse_clause_ast(text, ctx);
     lower_clause_ast(ast, ctx)
-}
-
-/// Digital-only Alchemy keyword action: parse "intensify" clauses into
-/// `Effect::Intensify`. The scope comes from the subject:
-/// * self ("~ / this creature / this artifact / … / it intensifies [by N]") →
-///   [`IntensityScope::Source`];
-/// * "cards you own named [self] intensify [by N]" → [`IntensityScope::OwnedSameName`];
-/// * "all [subtype] cards you own intensify [by N]" → [`IntensityScope::OwnedSubtype`].
-///
-/// The amount defaults to 1 when "by N" is absent. The clause tail must be fully
-/// consumed (bare or with a sentence period) — otherwise `None` is returned so
-/// an unmodeled variant falls through to `Unimplemented` instead of dropping a
-/// rider.
-fn try_parse_intensify(tp: TextPair) -> Option<Effect> {
-    fn tail_done(tail: &str) -> bool {
-        tail.is_empty() || tail == "."
-    }
-    // Consume the verb ("intensify"/"intensifies") and the optional "by N",
-    // returning the amount and the remaining tail.
-    fn verb_and_amount(rest: &str) -> Option<(QuantityExpr, &str)> {
-        let (rest, _) = alt((
-            tag::<_, _, OracleError<'_>>("intensifies"),
-            tag::<_, _, OracleError<'_>>("intensify"),
-        ))
-        .parse(rest)
-        .ok()?;
-        // "by N" — a fixed amount.
-        if let Ok((rest, (_, n))) = (
-            tag::<_, _, OracleError<'_>>(" by "),
-            nom_primitives::parse_number,
-        )
-            .parse(rest)
-        {
-            return Some((QuantityExpr::Fixed { value: n as i32 }, rest));
-        }
-        // "by X[, where X is …]" — a variable amount. The trailing "where X is …"
-        // binding is consumed here so the clause is fully modeled; binding X to
-        // its value (e.g. "that creature's power") is a follow-up, but emitting a
-        // Variable amount keeps the whole clause supported instead of dropping it.
-        if let Ok((after, _)) = tag::<_, _, OracleError<'_>>(" by x").parse(rest) {
-            if after.is_empty()
-                || after == "."
-                || tag::<_, _, OracleError<'_>>(", where x is ")
-                    .parse(after)
-                    .is_ok()
-            {
-                return Some((
-                    QuantityExpr::Ref {
-                        qty: QuantityRef::Variable {
-                            name: "X".to_string(),
-                        },
-                    },
-                    "",
-                ));
-            }
-            return None;
-        }
-        // No "by …" clause — intensifies by 1.
-        Some((QuantityExpr::Fixed { value: 1 }, rest))
-    }
-
-    let lower = tp.lower;
-
-    // Name-scoped: "cards you own named [self] intensify[ by N]".
-    if let Ok((rest, _)) = tag::<_, _, OracleError<'_>>("cards you own named ").parse(lower) {
-        let (rest, _) = take_until::<_, _, OracleError<'_>>("intensif")
-            .parse(rest)
-            .ok()?;
-        let (amount, rest) = verb_and_amount(rest)?;
-        return tail_done(rest).then_some(Effect::Intensify {
-            scope: IntensityScope::OwnedSameName,
-            amount,
-        });
-    }
-
-    // Subtype-scoped: "all [subtype] cards you own intensify[ by N]".
-    if let Ok((rest, _)) = tag::<_, _, OracleError<'_>>("all ").parse(lower) {
-        if let Ok((after, subtype_lower)) =
-            take_until::<_, _, OracleError<'_>>(" cards you own intensif").parse(rest)
-        {
-            let (after, _) = tag::<_, _, OracleError<'_>>(" cards you own ")
-                .parse(after)
-                .ok()?;
-            let (amount, after) = verb_and_amount(after)?;
-            if tail_done(after) {
-                return Some(Effect::Intensify {
-                    scope: IntensityScope::OwnedSubtype {
-                        subtype: crate::parser::oracle_quantity::capitalize_first(
-                            subtype_lower.trim(),
-                        ),
-                    },
-                    amount,
-                });
-            }
-            return None;
-        }
-    }
-
-    // Self-scoped: a self-reference subject directly before the verb.
-    let after_subject = [
-        "~ ",
-        "it ",
-        "this creature ",
-        "this artifact ",
-        "this enchantment ",
-        "this equipment ",
-        "this card ",
-    ]
-    .iter()
-    .find_map(|subject| {
-        tag::<_, _, OracleError<'_>>(*subject)
-            .parse(lower)
-            .ok()
-            .map(|(rest, _)| rest)
-    })?;
-    let (amount, rest) = verb_and_amount(after_subject)?;
-    tail_done(rest).then_some(Effect::Intensify {
-        scope: IntensityScope::Source,
-        amount,
-    })
 }
 
 /// Digital-only keyword action: Parse "conjure [quantity] card(s) named {Name} into/onto {zone}"
