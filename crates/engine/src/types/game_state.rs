@@ -5790,6 +5790,13 @@ pub struct GameState {
     #[serde(default, skip_serializing_if = "HashSet::is_empty")]
     pub city_blessing: HashSet<PlayerId>,
 
+    /// CR 702.50b: Players locked out of casting spells by a resolved Epic
+    /// spell they control. Set when an Epic spell resolves and never cleared —
+    /// the lock lasts for the rest of the game. Checked during cast legality;
+    /// activated/triggered abilities and spell copies remain legal.
+    #[serde(default, skip_serializing_if = "HashSet::is_empty")]
+    pub epic_locked_players: HashSet<PlayerId>,
+
     /// Active game-level restrictions (e.g., damage prevention disabled).
     /// Checked by relevant game systems; expired entries cleaned up at phase transitions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -6377,6 +6384,7 @@ impl GameState {
             exiled_from_hand_this_resolution: 0,
             monarch: None,
             city_blessing: HashSet::new(),
+            epic_locked_players: HashSet::new(),
             restrictions: Vec::new(),
             pending_damage_replacements: Vec::new(),
             pending_step_end_mana_handlers: Vec::new(),

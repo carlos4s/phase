@@ -452,6 +452,25 @@ pub fn resolve_top(state: &mut GameState, events: &mut Vec<GameEvent>) {
         false
     };
 
+    // CR 702.50a-b: Epic — on-resolve hook. If the resolving spell carries
+    // `Keyword::Epic` and is not a token, lock its controller out of casting
+    // spells for the rest of the game (CR 702.50b) and arm a RECURRING delayed
+    // triggered ability that copies the spell at the beginning of each of the
+    // controller's upkeeps (CR 702.50a). The Epic card itself takes the normal
+    // graveyard destination below (no override); the graveyard object is the
+    // prototype the upkeep copies clone.
+    // CR 704.5d: tokens cease to exist off the battlefield — gate `!is_token`.
+    if is_spell {
+        let has_epic = state.objects.get(&entry.id).is_some_and(|o| {
+            !o.is_token && super::keywords::has_keyword(o, &crate::types::keywords::Keyword::Epic)
+        });
+        if has_epic {
+            if let Some(spell_ability) = ability.clone() {
+                super::effects::epic::arm_epic(state, entry.id, entry.controller, spell_ability);
+            }
+        }
+    }
+
     // CR 608.3: Determine destination zone for spells.
     if is_spell {
         let end_procedure_exiles_resolving_object = ability.as_ref().is_some_and(|ability| {
