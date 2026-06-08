@@ -65,6 +65,7 @@ impl CardMetadata {
             && self.forge_replacements == 0
             && self.related_token_ids.is_empty()
             && self.source_printing_ids.is_empty()
+            && self.spellbook.is_empty()
     }
 }
 

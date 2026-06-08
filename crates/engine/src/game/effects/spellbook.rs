@@ -55,7 +55,8 @@ pub fn resolve(
         return Ok(());
     }
 
-    // CR 609.7 analog: pause for the controller to choose one card from the list.
+    // Digital-only Alchemy spellbook choice: pause for the controller to choose
+    // one card from the list.
     state.waiting_for = WaitingFor::SpellbookDraft {
         player: ability.controller,
         source_id: ability.source_id,

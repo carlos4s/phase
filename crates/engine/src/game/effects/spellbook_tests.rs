@@ -1,10 +1,11 @@
 //! Tests for the Alchemy spellbook draft (`Effect::DraftFromSpellbook`).
 //! Declared from `effects/mod.rs` so `spellbook.rs` stays implementation-only.
 
+use super::resolve_ability_chain;
 use super::spellbook::{complete_draft, resolve};
 use crate::game::zones::create_object;
 use crate::parser::oracle_effect::parse_effect;
-use crate::types::ability::{Effect, ResolvedAbility};
+use crate::types::ability::{Effect, QuantityExpr, ResolvedAbility, TargetFilter};
 use crate::types::game_state::{GameState, WaitingFor};
 use crate::types::identifiers::CardId;
 use crate::types::player::PlayerId;
@@ -78,6 +79,47 @@ fn resolve_is_a_noop_when_the_source_has_no_spellbook() {
     assert!(
         !matches!(state.waiting_for, WaitingFor::SpellbookDraft { .. }),
         "an empty spellbook must not pause on a choice"
+    );
+}
+
+#[test]
+fn resolve_chain_stashes_spellbook_continuation_until_choice_resolves() {
+    let mut state = GameState::new_two_player(42);
+    let source = source_with_spellbook(&mut state, &["Fireshrieker"]);
+    create_object(
+        &mut state,
+        CardId(2),
+        PlayerId(0),
+        "Drawn Card".to_string(),
+        Zone::Library,
+    );
+
+    let draw_tail = ResolvedAbility::new(
+        Effect::Draw {
+            count: QuantityExpr::Fixed { value: 1 },
+            target: TargetFilter::Controller,
+        },
+        Vec::new(),
+        source,
+        PlayerId(0),
+    );
+    let ability = draft_ability(source, Zone::Hand).sub_ability(draw_tail);
+
+    let mut events = Vec::new();
+    resolve_ability_chain(&mut state, &ability, &mut events, 0).expect("resolves to choice");
+
+    assert!(matches!(
+        state.waiting_for,
+        WaitingFor::SpellbookDraft { .. }
+    ));
+    assert!(
+        state.pending_continuation.is_some(),
+        "the Draw tail must wait until the spellbook choice is submitted"
+    );
+    assert_eq!(
+        state.players[0].hand.len(),
+        0,
+        "the tail must not run before the spellbook choice resolves"
     );
 }
 
