@@ -82,6 +82,8 @@ pub mod epic;
 #[path = "epic_tests.rs"]
 mod epic_tests;
 pub mod exchange_control;
+// Tests for `intensify` live in a sibling file (declared here, not in
+// `intensify.rs`, so `intensify.rs` stays implementation-only).
 pub mod exchange_life;
 pub mod exile_from_top_until;
 pub mod exile_top;
@@ -101,6 +103,10 @@ pub mod grant_extra_loyalty_activations;
 pub mod grant_permission;
 pub mod hideaway;
 pub mod incubate;
+pub mod intensify;
+#[cfg(test)]
+#[path = "intensify_tests.rs"]
+mod intensify_tests;
 pub mod investigate;
 pub mod learn;
 pub mod life;
@@ -2072,6 +2078,7 @@ pub fn resolve_effect(
         }
         Effect::ProcessRadCounters => rad_counters::resolve(state, ability, events),
         Effect::Conjure { .. } => conjure::resolve(state, ability, events),
+        Effect::Intensify { .. } => intensify::resolve(state, ability, events),
         Effect::ChooseOneOf { .. } => choose_one_of::resolve(state, ability, events),
         Effect::Unimplemented { name, .. } => {
             // Log warning and return Ok (no-op) for unimplemented effects

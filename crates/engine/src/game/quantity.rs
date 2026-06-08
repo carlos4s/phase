@@ -274,6 +274,7 @@ fn quantity_ref_uses_object_count(qty: &QuantityRef) -> bool {
         | QuantityRef::PlayerCounter { .. }
         | QuantityRef::Variable { .. }
         | QuantityRef::Power { .. }
+        | QuantityRef::Intensity { .. }
         | QuantityRef::Toughness { .. }
         | QuantityRef::ObjectManaValue { .. }
         | QuantityRef::ObjectColorCount { .. }
@@ -442,6 +443,7 @@ fn entered_object_perturbs_quantity_ref(
         | QuantityRef::PlayerCounter { .. }
         | QuantityRef::Variable { .. }
         | QuantityRef::Power { .. }
+        | QuantityRef::Intensity { .. }
         | QuantityRef::Toughness { .. }
         | QuantityRef::ObjectManaValue { .. }
         | QuantityRef::ObjectColorCount { .. }
@@ -1272,6 +1274,19 @@ fn resolve_ref(
             ability,
             |obj| obj.power,
             |lki| lki.power,
+        ),
+        // Digital-only Alchemy: read the object's current intensity. The reader
+        // is the source itself (a spell on the stack or a permanent reading its
+        // own intensity), so the live object carries it; LKI does not track
+        // intensity, so it has no fallback.
+        QuantityRef::Intensity { scope } => resolve_object_pt(
+            state,
+            *scope,
+            ctx,
+            targets,
+            ability,
+            |obj| Some(i32::try_from(obj.intensity).unwrap_or(i32::MAX)),
+            |_lki| None,
         ),
         QuantityRef::Toughness { scope } => resolve_object_pt(
             state,

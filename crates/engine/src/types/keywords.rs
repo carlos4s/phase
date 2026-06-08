@@ -459,6 +459,9 @@ pub enum Keyword {
     Infect,
     /// CR 702.130a: "Afflict N" — when blocked, defending player loses N life.
     Afflict(u32),
+    /// Digital-only Alchemy (no CR entry): "Starting intensity N" — the card's
+    /// initial intensity value, stamped onto the object at creation.
+    StartingIntensity(u32),
 
     // Triggered abilities
     Prowess,
@@ -990,6 +993,7 @@ impl Keyword {
             Keyword::Wither => KeywordKind::Wither,
             Keyword::Infect => KeywordKind::Infect,
             Keyword::Afflict(_) => KeywordKind::Afflict,
+            Keyword::StartingIntensity(_) => KeywordKind::Unknown,
             Keyword::Prowess => KeywordKind::Prowess,
             Keyword::Undying => KeywordKind::Undying,
             Keyword::Persist => KeywordKind::Persist,
@@ -2322,6 +2326,7 @@ fn keyword_from_tagged(variant: &str, data: &serde_json::Value) -> Result<Keywor
         "Wither" => Ok(Keyword::Wither),
         "Infect" => Ok(Keyword::Infect),
         "Afflict" => Ok(Keyword::Afflict(uint(data).max(1))),
+        "StartingIntensity" => Ok(Keyword::StartingIntensity(uint(data))),
         "Prowess" => Ok(Keyword::Prowess),
         "Undying" => Ok(Keyword::Undying),
         "Persist" => Ok(Keyword::Persist),

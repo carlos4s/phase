@@ -968,6 +968,7 @@ fn fmt_quantity_ref(qty: &QuantityRef) -> String {
             None => format!("counters on {}", fmt_target(filter)),
         },
         QuantityRef::Variable { name } => name.clone(),
+        QuantityRef::Intensity { .. } => "intensity".into(),
         QuantityRef::Power { scope } => match scope {
             ObjectScope::Source | ObjectScope::Anaphoric | ObjectScope::Demonstrative => {
                 "self power".into()
@@ -1700,6 +1701,7 @@ fn effect_details(effect: &Effect) -> Vec<(String, String)> {
         }
         // CR 702.50a: EpicCopy's parameters live in its snapshotted ability.
         Effect::EpicCopy { .. } => {}
+        Effect::Intensify { .. } => {}
         Effect::DestroyAll { target, .. }
         | Effect::TapAll { target }
         | Effect::UntapAll { target }
@@ -5360,6 +5362,7 @@ fn quantity_ref_feature(qref: &QuantityRef) -> (&'static str, FeatureSupport) {
         QuantityRef::ObjectCountBySharedQuality { .. } => ("ObjectCountBySharedQuality", Handled),
         QuantityRef::PlayerCount { .. } => ("PlayerCount", Handled),
         QuantityRef::CountersOn { .. } => ("CountersOn", Handled),
+        QuantityRef::Intensity { .. } => ("Intensity", Handled),
         QuantityRef::CountersOnObjects { .. } => ("CountersOnObjects", Handled),
         QuantityRef::Variable { .. } => ("Variable", Handled),
         QuantityRef::Power { scope } => match scope {

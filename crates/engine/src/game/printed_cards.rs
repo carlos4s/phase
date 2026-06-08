@@ -171,6 +171,19 @@ pub fn apply_card_face_to_object(obj: &mut GameObject, card_face: &CardFace) {
         obj.class_level = Some(1);
     }
 
+    // Digital-only Alchemy: stamp "Starting intensity N" onto the object exactly
+    // once, at first characteristic application — intensity then persists across
+    // zones and accumulates via `Effect::Intensify`, so re-stamping (transform,
+    // rehydrate) must not reset it.
+    if !was_initialized {
+        if let Some(n) = card_face.keywords.iter().find_map(|k| match k {
+            crate::types::keywords::Keyword::StartingIntensity(n) => Some(*n),
+            _ => None,
+        }) {
+            obj.intensity = n;
+        }
+    }
+
     // CR 306.5c + CR 310.4c: Rehydration must not clobber live counter-tracked
     // loyalty/defense. `rehydrate_game_from_card_db` re-applies printed faces
     // mid-game (multiplayer sync); the counter map is authoritative on the
@@ -602,6 +615,7 @@ fn walk_cost(cost: &AbilityCost, out: &mut Vec<String>) {
 /// those cases — extend it whenever a carrier is added.
 fn walk_effect(effect: &Effect, out: &mut Vec<String>) {
     match effect {
+        Effect::Intensify { .. } => {}
         Effect::Conjure { cards, .. } => {
             for conjure_card in cards {
                 out.push(conjure_card.name.clone());
