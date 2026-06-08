@@ -1251,6 +1251,10 @@ pub struct EpicEffect {
     pub spell: Box<ResolvedAbility>,
 }
 
+fn default_copy_retarget_effect_kind() -> EffectKind {
+    EffectKind::CopySpell
+}
+
 /// CR 601.2g-h: Whether the engine may auto-pay an unambiguous spell mana cost
 /// or must pause after announcement so the player can activate mana abilities
 /// manually before committing payment.
@@ -3476,6 +3480,11 @@ pub enum WaitingFor {
         player: PlayerId,
         copy_id: ObjectId,
         target_slots: Vec<CopyTargetSlot>,
+        /// Effect metadata emitted when this retarget choice completes.
+        #[serde(default = "default_copy_retarget_effect_kind")]
+        effect_kind: EffectKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effect_source_id: Option<ObjectId>,
         /// Index of the slot currently awaiting a ChooseTarget action.
         #[serde(default)]
         current_slot: usize,
@@ -6704,6 +6713,7 @@ impl PartialEq for GameState {
             && self.exile_links == other.exile_links
             && self.paradigm_primed == other.paradigm_primed
             && self.delayed_triggers == other.delayed_triggers
+            && self.epic_effects == other.epic_effects
             && self.tracked_object_sets == other.tracked_object_sets
             && self.next_tracked_set_id == other.next_tracked_set_id
             && self.chain_tracked_set_id == other.chain_tracked_set_id

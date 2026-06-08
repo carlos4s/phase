@@ -26,7 +26,7 @@
 //! new targets" is an optional permission whose default — keeping the original
 //! (still-legal) targets — is itself a legal choice.
 
-use crate::game::effects::copy_spell::set_resolved_source_recursive;
+use crate::game::effects::copy_spell::{open_copy_retarget_choice, set_resolved_source_recursive};
 use crate::types::ability::{
     DelayedTriggerCondition, Effect, EffectError, EffectKind, ResolvedAbility,
 };
@@ -147,7 +147,7 @@ pub(crate) fn resolve(
         controller,
         kind: StackEntryKind::Spell {
             card_id,
-            ability: Some(copy_ability),
+            ability: Some(copy_ability.clone()),
             casting_variant: CastingVariant::default(),
             actual_mana_spent: 0,
         },
@@ -162,6 +162,24 @@ pub(crate) fn resolve(
         object_id: copy_id,
         original_id: prototype_id,
     });
+
+    // CR 702.50a + CR 707.10c: Epic grants "you may choose new targets for the
+    // copy." Reuse the same CopyRetarget choice path as other spell-copy
+    // effects so the player may keep the old targets or choose legal new ones.
+    let copy_targets = copy_ability.targets.clone();
+    if !copy_targets.is_empty() {
+        open_copy_retarget_choice(
+            state,
+            controller,
+            copy_id,
+            &copy_targets,
+            &copy_ability,
+            EffectKind::EpicCopy,
+            ability.source_id,
+        );
+        // EffectResolved is deferred until the retarget choice completes.
+        return Ok(());
+    }
 
     events.push(GameEvent::EffectResolved {
         kind: EffectKind::from(&ability.effect),
