@@ -55,6 +55,8 @@ pub(crate) use self::token::parse_token_description;
 use std::str::FromStr;
 
 use crate::parser::oracle_nom::error::OracleError;
+#[cfg(test)]
+use crate::parser::oracle_trigger::parse_trigger_line;
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_until};
 use nom::character::complete::{anychar, multispace1};
@@ -43977,4 +43979,27 @@ mod snapshot_tests {
             Some(ChoiceType::CardType)
         ));
     }
+}
+
+#[test]
+fn issue_2402_hazel_copy_target_token_trigger_parses() {
+    let def = parse_trigger_line(
+        "At the beginning of your end step, create a token that's a copy of target token you control. If that token is a Squirrel, instead create two tokens that are copies of it.",
+        "Hazel of the Rootbloom",
+    );
+    let execute = def.execute.as_ref().expect("trigger execute");
+    let Effect::CopyTokenOf { target, .. } = execute.effect.as_ref() else {
+        panic!(
+            "expected CopyTokenOf trigger effect, got {:?}",
+            execute.effect
+        );
+    };
+    let TargetFilter::Typed(tf) = target else {
+        panic!("expected typed target token filter, got {target:?}");
+    };
+    assert_eq!(tf.controller, Some(ControllerRef::You));
+    assert!(tf
+        .properties
+        .iter()
+        .any(|prop| matches!(prop, FilterProp::Token)));
 }
