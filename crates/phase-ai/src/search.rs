@@ -2008,7 +2008,9 @@ mod tests {
     use super::*;
     use engine::ai_support::{ActionMetadata, AiDecisionContext, CandidateAction, TacticalClass};
     use engine::game::zones::create_object;
-    use engine::types::ability::{CategoryChooserScope, TargetFilter, TargetRef, TypedFilter};
+    use engine::types::ability::{
+        CategoryChooserScope, EffectKind, TargetFilter, TargetRef, TypedFilter,
+    };
     use engine::types::card_type::CoreType;
     use engine::types::identifiers::{CardId, ObjectId};
     use engine::types::mana::{ManaType, ManaUnit};
@@ -2819,6 +2821,8 @@ mod tests {
                 current: Some(original_target),
                 legal_alternatives: vec![TargetRef::Object(ObjectId(11))],
             }],
+            effect_kind: EffectKind::CopySpell,
+            effect_source_id: Some(ObjectId(20)),
             current_slot: 0,
         };
 
@@ -2845,6 +2849,8 @@ mod tests {
                     legal_alternatives: vec![TargetRef::Object(ObjectId(12))],
                 },
             ],
+            effect_kind: EffectKind::CopySpell,
+            effect_source_id: Some(ObjectId(20)),
             current_slot: 0,
         };
 
@@ -2871,6 +2877,8 @@ mod tests {
                 current: None,
                 legal_alternatives: vec![first_target.clone(), TargetRef::Object(ObjectId(11))],
             }],
+            effect_kind: EffectKind::CopySpell,
+            effect_source_id: Some(ObjectId(20)),
             current_slot: 0,
         };
 

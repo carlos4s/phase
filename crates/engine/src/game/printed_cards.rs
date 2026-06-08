@@ -751,6 +751,7 @@ fn walk_effect(effect: &Effect, out: &mut Vec<String>) {
         | Effect::Clash
         | Effect::SwitchPT { .. }
         | Effect::CopySpell { .. }
+        | Effect::EpicCopy { .. }
         | Effect::CastCopyOfCard { .. }
         | Effect::CopyTokenOf { .. }
         | Effect::Myriad
