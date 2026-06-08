@@ -34,18 +34,31 @@ pub fn resolve(
     };
 
     let by = resolve_quantity_with_targets(state, &amount, ability).max(0) as u32;
+    let mut changed = false;
     if by > 0 {
         for id in objects_in_scope(state, ability.source_id, ability.controller, &scope) {
             if let Some(obj) = state.objects.get_mut(&id) {
                 obj.intensity = obj.intensity.saturating_add(by);
+                // Emit per affected card so triggers/animation see exactly which
+                // cards intensified (CR-less Alchemy event).
+                events.push(GameEvent::ObjectIntensified {
+                    object_id: id,
+                    amount: by,
+                });
+                changed = true;
             }
         }
     }
 
-    events.push(GameEvent::EffectResolved {
-        kind: EffectKind::from(&ability.effect),
-        source_id: ability.source_id,
-    });
+    // No-op contract: a zero-amount intensify (or empty scope) publishes no
+    // resolution event, so event-counting/trigger-index consumers aren't
+    // perturbed by a draft that changed nothing.
+    if changed {
+        events.push(GameEvent::EffectResolved {
+            kind: EffectKind::from(&ability.effect),
+            source_id: ability.source_id,
+        });
+    }
     Ok(())
 }
 

@@ -4399,16 +4399,39 @@ fn try_parse_intensify(tp: TextPair) -> Option<Effect> {
         ))
         .parse(rest)
         .ok()?;
+        // "by N" — a fixed amount.
         if let Ok((rest, (_, n))) = (
             tag::<_, _, OracleError<'_>>(" by "),
             nom_primitives::parse_number,
         )
             .parse(rest)
         {
-            Some((QuantityExpr::Fixed { value: n as i32 }, rest))
-        } else {
-            Some((QuantityExpr::Fixed { value: 1 }, rest))
+            return Some((QuantityExpr::Fixed { value: n as i32 }, rest));
         }
+        // "by X[, where X is …]" — a variable amount. The trailing "where X is …"
+        // binding is consumed here so the clause is fully modeled; binding X to
+        // its value (e.g. "that creature's power") is a follow-up, but emitting a
+        // Variable amount keeps the whole clause supported instead of dropping it.
+        if let Ok((after, _)) = tag::<_, _, OracleError<'_>>(" by x").parse(rest) {
+            if after.is_empty()
+                || after == "."
+                || tag::<_, _, OracleError<'_>>(", where x is ")
+                    .parse(after)
+                    .is_ok()
+            {
+                return Some((
+                    QuantityExpr::Ref {
+                        qty: QuantityRef::Variable {
+                            name: "X".to_string(),
+                        },
+                    },
+                    "",
+                ));
+            }
+            return None;
+        }
+        // No "by …" clause — intensifies by 1.
+        Some((QuantityExpr::Fixed { value: 1 }, rest))
     }
 
     let lower = tp.lower;

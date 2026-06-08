@@ -547,6 +547,7 @@ fn keys_from_event(event: &GameEvent, state: &GameState) -> Keys {
         GameEvent::SpellCountered { .. } => {}
         GameEvent::CounterAdded { .. } => push(TriggerEventKey::CounterAdded),
         GameEvent::Evolved { .. } => {}
+        GameEvent::ObjectIntensified { .. } => {}
         GameEvent::CounterRemoved { .. } => push(TriggerEventKey::CounterRemoved),
         GameEvent::TokenCreated { .. } | GameEvent::ObjectConjured { .. } => {
             push(TriggerEventKey::TokenCreated);

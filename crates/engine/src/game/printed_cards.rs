@@ -171,11 +171,11 @@ pub fn apply_card_face_to_object(obj: &mut GameObject, card_face: &CardFace) {
         obj.class_level = Some(1);
     }
 
-    // Digital-only Alchemy: stamp "Starting intensity N" onto the object exactly
-    // once, at first characteristic application — intensity then persists across
-    // zones and accumulates via `Effect::Intensify`, so re-stamping (transform,
-    // rehydrate) must not reset it.
-    if !was_initialized {
+    // Digital-only Alchemy: stamp "Starting intensity N" onto the object. Gated
+    // on `intensity == 0` (not `!was_initialized`) so a DFC whose starting
+    // intensity lives on the back face still picks it up on transform, while
+    // re-stamping a card that has already accumulated intensity never resets it.
+    if obj.intensity == 0 {
         if let Some(n) = card_face.keywords.iter().find_map(|k| match k {
             crate::types::keywords::Keyword::StartingIntensity(n) => Some(*n),
             _ => None,

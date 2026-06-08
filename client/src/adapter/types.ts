@@ -1636,6 +1636,7 @@ export type GameEvent =
   | { type: "DamageDealt"; data: { source_id: ObjectId; target: TargetRef; amount: number; is_combat: boolean; excess?: number } }
   | { type: "SpellCountered"; data: { object_id: ObjectId; countered_by: ObjectId } }
   | { type: "CounterAdded"; data: { object_id: ObjectId; counter_type: string; count: number } }
+  | { type: "ObjectIntensified"; data: { object_id: ObjectId; amount: number } }
   | { type: "CounterRemoved"; data: { object_id: ObjectId; counter_type: string; count: number } }
   | { type: "TokenCreated"; data: { object_id: ObjectId; name: string } }
   | { type: "CreatureDestroyed"; data: { object_id: ObjectId } }

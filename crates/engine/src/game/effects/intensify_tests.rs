@@ -137,9 +137,11 @@ fn owned_subtype_intensifies_every_matching_card() {
 fn starting_intensity_is_stamped_from_the_keyword_once() {
     // apply_card_face_to_object reads `Keyword::StartingIntensity` and sets it
     // on first application, then never resets it.
-    let mut face = CardFace::default();
-    face.name = "Great Desert Hellion".to_string();
-    face.keywords.push(Keyword::StartingIntensity(1));
+    let face = CardFace {
+        name: "Great Desert Hellion".to_string(),
+        keywords: vec![Keyword::StartingIntensity(1)],
+        ..CardFace::default()
+    };
 
     let mut state = crate::types::game_state::GameState::new_two_player(42);
     let id = card(&mut state, "Great Desert Hellion", Zone::Battlefield);
