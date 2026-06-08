@@ -369,6 +369,7 @@ pub fn guard_game_action_payload(action: &GameAction) -> Result<(), String> {
         | GameAction::ChooseBranch { .. }
         | GameAction::ChooseDamageSource { .. }
         | GameAction::DecideOptionalCost { .. }
+        | GameAction::SubmitSpellbookDraft { .. }
         | GameAction::RespondToSpliceOffer { .. }
         | GameAction::ChooseAdventureFace { .. }
         | GameAction::ChooseModalFace { .. }

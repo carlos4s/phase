@@ -4360,6 +4360,11 @@ fn parse_effect_clause_inner(text: &str, ctx: &mut ParseContext) -> ParsedEffect
         return redirected;
     }
 
+    // Digital-only Alchemy: "draft a card from [X]'s spellbook [+ destination]".
+    if let Some(effect) = try_parse_spellbook_draft(tp) {
+        return parsed_clause(effect);
+    }
+
     // Digital-only: "conjure a card named X into/onto zone" — Conjure keyword action.
     if let Some(effect) = try_parse_conjure(tp) {
         return parsed_clause(effect);
@@ -4367,6 +4372,47 @@ fn parse_effect_clause_inner(text: &str, ctx: &mut ParseContext) -> ParsedEffect
 
     let ast = parse_clause_ast(text, ctx);
     lower_clause_ast(ast, ctx)
+}
+
+/// Digital-only Alchemy keyword action: parse "draft a card from [X]'s spellbook"
+/// with its destination. The source name between "from " and "spellbook" is the
+/// card's own name (or "this creature/artifact/…") and is irrelevant to the
+/// effect — the resolver reads the spellbook list from the source object. The
+/// destination defaults to the hand; "and put it onto the battlefield" routes to
+/// the battlefield and "and exile it" to exile. Riders after a comma (", then
+/// exile it", ", then discard a card") are separate clauses handled by the
+/// effect chain.
+fn try_parse_spellbook_draft(tp: TextPair) -> Option<Effect> {
+    let (rest, _) = tag::<_, _, OracleError<'_>>("draft a card from ")
+        .parse(tp.lower)
+        .ok()?;
+    // Consume the (irrelevant) source-card name up to "spellbook".
+    let (after_book, _src) = take_until::<_, _, OracleError<'_>>("spellbook")
+        .parse(rest)
+        .ok()?;
+    let (after_book, _) = tag::<_, _, OracleError<'_>>("spellbook")
+        .parse(after_book)
+        .ok()?;
+
+    let destination = if tag::<_, _, OracleError<'_>>(" and put it onto the battlefield")
+        .parse(after_book)
+        .is_ok()
+    {
+        Zone::Battlefield
+    } else if tag::<_, _, OracleError<'_>>(" and exile it")
+        .parse(after_book)
+        .is_ok()
+    {
+        Zone::Exile
+    } else {
+        // Drafting a card creates it in the controller's hand by default.
+        Zone::Hand
+    };
+
+    Some(Effect::DraftFromSpellbook {
+        destination,
+        tapped: false,
+    })
 }
 
 /// Digital-only keyword action: Parse "conjure [quantity] card(s) named {Name} into/onto {zone}"

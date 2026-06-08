@@ -50,6 +50,11 @@ pub struct CardMetadata {
     /// Used only as future-facing image/catalog metadata.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_printing_ids: Vec<String>,
+    /// Alchemy "spellbook" — the fixed list of card names this card can draft
+    /// from (MTGJSON `relatedCards.spellbook`). Copied onto a game object's
+    /// `spellbook` so the `DraftFromSpellbook` resolver can present the list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spellbook: Vec<String>,
 }
 
 impl CardMetadata {
