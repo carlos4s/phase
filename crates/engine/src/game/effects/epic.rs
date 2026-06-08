@@ -7,12 +7,20 @@
 //!   the spell except for its epic ability, optionally choosing new targets.
 //!
 //! This module mirrors Rebound (`game/effects/rebound.rs`): an on-resolution
-//! arming hook installs a delayed triggered ability keyed on the controller's
-//! upkeep. The differences are that (1) the trigger is **recurring**
-//! (`one_shot = false`), so it fires every upkeep for the rest of the game, and
-//! (2) its body is an [`Effect::EpicCopy`] carrying a snapshot of the Epic
-//! spell's resolved ability — when that body resolves it puts a copy of the
-//! spell onto the stack (CR 707.10).
+//! arming hook records the effect and an upkeep-keyed trigger replays it. Two
+//! differences make it Epic:
+//!
+//! 1. **Persistence.** Epic lasts "for the rest of the game", so the record is
+//!    stored in the persistent `GameState::epic_effects` collection (never
+//!    purged at cleanup, like `city_blessing`) rather than as a stored
+//!    `DelayedTrigger` — those are removed at end-of-turn cleanup (`turns.rs`
+//!    keeps only `one_shot && !WhenNextEvent`), which would delete a recurring
+//!    rest-of-game trigger before its first upkeep ever arrived.
+//! 2. **Synthesized firing.** At the beginning of each of the controller's
+//!    upkeeps, [`epic_upkeep_trigger`] synthesizes an [`Effect::EpicCopy`]
+//!    triggered ability from the stored snapshot, fired through the normal
+//!    delayed-trigger path (`triggers::check_delayed_triggers`). Resolving that
+//!    body puts a copy of the spell onto the stack (CR 707.10).
 //!
 //! The copy keeps the snapshot's declared targets: CR 702.50a's "you may choose
 //! new targets" is an optional permission whose default — keeping the original
@@ -24,7 +32,7 @@ use crate::types::ability::{
 };
 use crate::types::events::GameEvent;
 use crate::types::game_state::{
-    CastingVariant, DelayedTrigger, GameState, StackEntry, StackEntryKind,
+    CastingVariant, DelayedTrigger, EpicEffect, GameState, StackEntry, StackEntryKind,
 };
 use crate::types::identifiers::ObjectId;
 use crate::types::keywords::Keyword;
@@ -32,54 +40,58 @@ use crate::types::phase::Phase;
 use crate::types::player::PlayerId;
 use crate::types::zones::Zone;
 
-/// CR 702.50b: Whether `player` has resolved an Epic spell they control and is
-/// therefore locked out of casting spells for the rest of the game.
+/// CR 702.50b: Whether `player` controls a resolved Epic effect and is therefore
+/// locked out of casting spells for the rest of the game. Derived from
+/// `epic_effects` so the lock and the upkeep copies share one source of truth.
 pub(crate) fn is_epic_locked(state: &GameState, player: PlayerId) -> bool {
-    state.epic_locked_players.contains(&player)
+    state.epic_effects.iter().any(|e| e.controller == player)
 }
 
 /// CR 702.50a-b: On-resolution arming hook for a spell carrying `Keyword::Epic`.
 /// Called from `stack.rs::resolve_top` once it has confirmed the resolving
-/// object is a non-token spell with `Keyword::Epic`.
-///
-/// * CR 702.50b — locks `controller` out of casting spells for the rest of the
-///   game (the Epic card itself still goes to the graveyard normally).
-/// * CR 702.50a — pushes a recurring delayed triggered ability keyed on the
-///   controller's upkeep whose body ([`Effect::EpicCopy`]) copies the spell.
-///   `source_id` is the resolved Epic card, whose characteristics the copy
-///   clones; `spell_ability` is the snapshot the copy resolves.
+/// object is a non-token spell with `Keyword::Epic`. Records a rest-of-game
+/// [`EpicEffect`]: its presence locks `controller` out of casting (CR 702.50b)
+/// and drives the recurring upkeep copies (CR 702.50a). `source_id` is the
+/// resolved Epic card whose characteristics each copy clones; `spell_ability`
+/// is the snapshot each copy resolves.
 pub(crate) fn arm_epic(
     state: &mut GameState,
     source_id: ObjectId,
     controller: PlayerId,
     spell_ability: ResolvedAbility,
 ) {
-    // CR 702.50b: the controller can no longer cast spells.
-    state.epic_locked_players.insert(controller);
-
-    // CR 702.50a: the recurring upkeep copy. The body carries the spell's
-    // resolved-ability snapshot, re-sourced to each copy at resolution time.
-    let body = ResolvedAbility::new(
-        Effect::EpicCopy {
-            spell: Box::new(spell_ability),
-        },
-        Vec::new(),
-        source_id,
+    state.epic_effects.push(EpicEffect {
         controller,
-    );
+        prototype_id: source_id,
+        spell: Box::new(spell_ability),
+    });
+}
 
-    state.delayed_triggers.push(DelayedTrigger {
-        // CR 702.50a: "at the beginning of each of your upkeeps".
+/// CR 702.50a: Build the recurring upkeep trigger for `effect`, fired through
+/// the normal delayed-trigger path. Keyed on the controller's upkeep with an
+/// [`Effect::EpicCopy`] body carrying a fresh clone of the stored snapshot.
+/// The returned trigger is synthesized on demand each upkeep — it is never
+/// stored in `delayed_triggers`, so cleanup can't purge it.
+pub(crate) fn epic_upkeep_trigger(effect: &EpicEffect) -> DelayedTrigger {
+    DelayedTrigger {
         condition: DelayedTriggerCondition::AtNextPhaseForPlayer {
             phase: Phase::Upkeep,
-            player: controller,
+            player: effect.controller,
         },
-        ability: body,
-        controller,
-        source_id,
-        // CR 702.50a: "for the rest of the game" — recurring, never removed.
-        one_shot: false,
-    });
+        ability: ResolvedAbility::new(
+            Effect::EpicCopy {
+                spell: effect.spell.clone(),
+            },
+            Vec::new(),
+            effect.prototype_id,
+            effect.controller,
+        ),
+        controller: effect.controller,
+        source_id: effect.prototype_id,
+        // Synthesized fresh each upkeep; the one-shot flag is irrelevant because
+        // it is never stored — `epic_effects` is the persistent generator.
+        one_shot: true,
+    }
 }
 
 /// CR 702.50a + CR 707.10: Resolve [`Effect::EpicCopy`] — put a copy of the

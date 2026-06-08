@@ -1232,6 +1232,25 @@ pub struct DelayedTrigger {
     pub one_shot: bool,
 }
 
+/// CR 702.50a: A rest-of-game Epic effect, created when an Epic spell resolves.
+/// Held in `GameState::epic_effects` (never purged) and used to (a) lock its
+/// controller out of casting spells (CR 702.50b) and (b) synthesize an
+/// `Effect::EpicCopy` triggered ability at the beginning of each of the
+/// controller's upkeeps that copies the spell minus its epic ability.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EpicEffect {
+    /// The player who controlled the resolved Epic spell — locked from casting
+    /// and the recipient of the recurring upkeep copies.
+    pub controller: PlayerId,
+    /// The resolved Epic card (now in the graveyard) whose characteristics each
+    /// upkeep copy clones. `None`-equivalent handling lives in the resolver:
+    /// if the object has left the game the copy is a no-op (last-known-info).
+    pub prototype_id: ObjectId,
+    /// Snapshot of the Epic spell's resolved ability, replayed as the body of
+    /// each upkeep copy.
+    pub spell: Box<ResolvedAbility>,
+}
+
 /// CR 601.2g-h: Whether the engine may auto-pay an unambiguous spell mana cost
 /// or must pause after announcement so the player can activate mana abilities
 /// manually before committing payment.
@@ -5790,12 +5809,17 @@ pub struct GameState {
     #[serde(default, skip_serializing_if = "HashSet::is_empty")]
     pub city_blessing: HashSet<PlayerId>,
 
-    /// CR 702.50b: Players locked out of casting spells by a resolved Epic
-    /// spell they control. Set when an Epic spell resolves and never cleared —
-    /// the lock lasts for the rest of the game. Checked during cast legality;
-    /// activated/triggered abilities and spell copies remain legal.
-    #[serde(default, skip_serializing_if = "HashSet::is_empty")]
-    pub epic_locked_players: HashSet<PlayerId>,
+    /// CR 702.50a-b: Active Epic effects — one per resolved Epic spell. Each
+    /// entry is a rest-of-game record: its controller can't cast spells
+    /// (CR 702.50b, derived via `epic::is_epic_locked`) and, at the beginning of
+    /// each of that player's upkeeps, the engine synthesizes an `EpicCopy`
+    /// triggered ability from the stored snapshot (CR 702.50a, fired through the
+    /// normal delayed-trigger path in `check_delayed_triggers`). Persistent —
+    /// never cleared, never purged at cleanup — so the effect lasts the whole
+    /// game. Mirrors the rest-of-game collections `city_blessing` /
+    /// `paradigm_primed`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub epic_effects: Vec<EpicEffect>,
 
     /// Active game-level restrictions (e.g., damage prevention disabled).
     /// Checked by relevant game systems; expired entries cleaned up at phase transitions.
@@ -6384,7 +6408,7 @@ impl GameState {
             exiled_from_hand_this_resolution: 0,
             monarch: None,
             city_blessing: HashSet::new(),
-            epic_locked_players: HashSet::new(),
+            epic_effects: Vec::new(),
             restrictions: Vec::new(),
             pending_damage_replacements: Vec::new(),
             pending_step_end_mana_handlers: Vec::new(),

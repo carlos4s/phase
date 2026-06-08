@@ -69,15 +69,15 @@ pub mod double;
 pub mod draw;
 pub mod drawn_this_turn_choice;
 pub mod effect;
-pub mod epic;
-// Tests for `epic` live in a sibling file (declared here, not in `epic.rs`, so
-// `epic.rs` stays implementation-only).
 pub mod encore;
 pub mod end_combat_phase;
 pub(super) mod end_phase;
 pub mod end_the_turn;
 pub mod endure;
 pub mod energy;
+pub mod epic;
+// Tests for `epic` live in a sibling file (declared here, not in `epic.rs`, so
+// `epic.rs` stays implementation-only).
 #[cfg(test)]
 #[path = "epic_tests.rs"]
 mod epic_tests;
