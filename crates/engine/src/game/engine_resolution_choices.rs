@@ -2505,9 +2505,7 @@ pub(super) fn handle_resolution_choice(
                 events,
             )
             .map_err(|e| EngineError::InvalidAction(format!("spellbook draft: {e:?}")))?;
-            set_priority(state, player);
-            effects::drain_pending_continuation(state, events);
-            ResolutionChoiceOutcome::WaitingFor(state.waiting_for.clone())
+            ResolutionChoiceOutcome::WaitingFor(finish_with_continuation(state, player, events))
         }
         (
             WaitingFor::DamageSourceChoice {

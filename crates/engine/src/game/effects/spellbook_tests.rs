@@ -133,27 +133,59 @@ fn complete_draft_rejects_a_card_not_in_the_offered_list() {
 #[test]
 fn parser_maps_draft_clauses_to_the_right_destination() {
     // Default → hand; "put it onto the battlefield" → battlefield; "exile it" → exile.
+    // Trailing periods (as cards actually print) must still match.
     assert!(matches!(
-        parse_effect("draft a card from Big Spender's spellbook"),
+        parse_effect("draft a card from Big Spender's spellbook."),
         Effect::DraftFromSpellbook {
             destination: Zone::Hand,
-            ..
+            tapped: false,
         }
     ));
     assert!(matches!(
         parse_effect(
-            "draft a card from Adaptive Armorer's spellbook and put it onto the battlefield"
+            "draft a card from Adaptive Armorer's spellbook and put it onto the battlefield."
         ),
         Effect::DraftFromSpellbook {
             destination: Zone::Battlefield,
-            ..
+            tapped: false,
         }
     ));
     assert!(matches!(
-        parse_effect("draft a card from this creature's spellbook and exile it"),
+        parse_effect("draft a card from this creature's spellbook and exile it."),
         Effect::DraftFromSpellbook {
             destination: Zone::Exile,
-            ..
+            tapped: false,
         }
     ));
+}
+
+#[test]
+fn parser_honours_the_tapped_rider() {
+    // CR-correct battlefield state: "...onto the battlefield tapped." sets tapped.
+    assert!(matches!(
+        parse_effect(
+            "draft a card from this creature's spellbook and put it onto the battlefield tapped."
+        ),
+        Effect::DraftFromSpellbook {
+            destination: Zone::Battlefield,
+            tapped: true,
+        }
+    ));
+}
+
+#[test]
+fn parser_rejects_unmodeled_riders_as_unimplemented() {
+    // "exile it face down", "twice, then …", and other unmodeled tails must NOT
+    // collapse to a wrong effect — they fall through to a clean Unimplemented so
+    // the coverage tooling flags them (and no clause is silently swallowed).
+    for text in [
+        "draft a card from this creature's spellbook and exile it face down.",
+        "draft a card from this creature's spellbook twice, then put those cards onto the battlefield.",
+        "draft a card from this creature's spellbook twice, then put one of those cards onto the battlefield tapped.",
+    ] {
+        assert!(
+            !matches!(parse_effect(text), Effect::DraftFromSpellbook { .. }),
+            "unmodeled spellbook rider must not parse to DraftFromSpellbook: {text:?}"
+        );
+    }
 }

@@ -4377,12 +4377,23 @@ fn parse_effect_clause_inner(text: &str, ctx: &mut ParseContext) -> ParsedEffect
 /// Digital-only Alchemy keyword action: parse "draft a card from [X]'s spellbook"
 /// with its destination. The source name between "from " and "spellbook" is the
 /// card's own name (or "this creature/artifact/…") and is irrelevant to the
-/// effect — the resolver reads the spellbook list from the source object. The
-/// destination defaults to the hand; "and put it onto the battlefield" routes to
-/// the battlefield and "and exile it" to exile. Riders after a comma (", then
-/// exile it", ", then discard a card") are separate clauses handled by the
-/// effect chain.
+/// effect — the resolver reads the spellbook list from the source object.
+///
+/// To avoid silently dropping unmodeled riders (which the coverage tooling
+/// counts as swallowed clauses), the clause tail must be **fully consumed**:
+/// the bare draft goes to the hand; "and put it onto the battlefield[ tapped]"
+/// goes to the battlefield (honouring the tapped rider); "and exile it" goes to
+/// exile. Anything else — "and exile it face down", "twice, then …", or a
+/// trailing "then …" continuation not split off by the effect chain — returns
+/// `None` so the card falls through to `Unimplemented` rather than parsing to a
+/// subtly wrong effect.
 fn try_parse_spellbook_draft(tp: TextPair) -> Option<Effect> {
+    /// The clause tail is fully consumed when nothing (or just a sentence
+    /// period) remains.
+    fn tail_done(tail: &str) -> bool {
+        tail.is_empty() || tail == "."
+    }
+
     let (rest, _) = tag::<_, _, OracleError<'_>>("draft a card from ")
         .parse(tp.lower)
         .ok()?;
@@ -4394,25 +4405,40 @@ fn try_parse_spellbook_draft(tp: TextPair) -> Option<Effect> {
         .parse(after_book)
         .ok()?;
 
-    let destination = if tag::<_, _, OracleError<'_>>(" and put it onto the battlefield")
-        .parse(after_book)
-        .is_ok()
-    {
-        Zone::Battlefield
-    } else if tag::<_, _, OracleError<'_>>(" and exile it")
-        .parse(after_book)
-        .is_ok()
-    {
-        Zone::Exile
-    } else {
-        // Drafting a card creates it in the controller's hand by default.
-        Zone::Hand
-    };
+    // Default: a bare "draft a card from X's spellbook" creates it in hand.
+    if tail_done(after_book) {
+        return Some(Effect::DraftFromSpellbook {
+            destination: Zone::Hand,
+            tapped: false,
+        });
+    }
 
-    Some(Effect::DraftFromSpellbook {
-        destination,
-        tapped: false,
-    })
+    // "… and put it onto the battlefield[ tapped]".
+    if let Ok((tail, _)) =
+        tag::<_, _, OracleError<'_>>(" and put it onto the battlefield").parse(after_book)
+    {
+        let (tail, tapped) = match tag::<_, _, OracleError<'_>>(" tapped").parse(tail) {
+            Ok((tail, _)) => (tail, true),
+            Err(_) => (tail, false),
+        };
+        return tail_done(tail).then_some(Effect::DraftFromSpellbook {
+            destination: Zone::Battlefield,
+            tapped,
+        });
+    }
+
+    // "… and exile it" — but not "and exile it face down" (face-down exile is
+    // not modeled yet), which leaves an unconsumed tail and is rejected.
+    if let Ok((tail, _)) = tag::<_, _, OracleError<'_>>(" and exile it").parse(after_book) {
+        return tail_done(tail).then_some(Effect::DraftFromSpellbook {
+            destination: Zone::Exile,
+            tapped: false,
+        });
+    }
+
+    // Unmodeled tail ("twice, then …", a trailing chained clause, …) — leave it
+    // to `Unimplemented` rather than dropping the rider.
+    None
 }
 
 /// Digital-only keyword action: Parse "conjure [quantity] card(s) named {Name} into/onto {zone}"
