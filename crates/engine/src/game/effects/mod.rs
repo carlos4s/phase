@@ -157,6 +157,12 @@ pub mod skip_next_turn;
 pub mod solve_case;
 pub mod specialize;
 pub mod speed_effects;
+pub mod spellbook;
+// Tests for `spellbook` live in a sibling file (declared here, not in
+// `spellbook.rs`, so `spellbook.rs` stays implementation-only).
+#[cfg(test)]
+#[path = "spellbook_tests.rs"]
+mod spellbook_tests;
 pub mod surveil;
 pub mod suspect;
 pub mod switch_pt;
@@ -1034,6 +1040,9 @@ fn waits_for_resolution_choice(waiting_for: &WaitingFor) -> bool {
             | WaitingFor::DrawnThisTurnTopdeckChoice { .. }
             | WaitingFor::CategoryChoice { .. }
             | WaitingFor::LearnChoice { .. }
+            // Digital-only Alchemy spellbook choice pauses resolution; stash
+            // the printed tail until SubmitSpellbookDraft resumes the chain.
+            | WaitingFor::SpellbookDraft { .. }
             | WaitingFor::PopulateChoice { .. }
     )
 }
@@ -2079,6 +2088,7 @@ pub fn resolve_effect(
         Effect::ProcessRadCounters => rad_counters::resolve(state, ability, events),
         Effect::Conjure { .. } => conjure::resolve(state, ability, events),
         Effect::Intensify { .. } => intensify::resolve(state, ability, events),
+        Effect::DraftFromSpellbook { .. } => spellbook::resolve(state, ability, events),
         Effect::ChooseOneOf { .. } => choose_one_of::resolve(state, ability, events),
         Effect::Unimplemented { name, .. } => {
             // Log warning and return Ok (no-op) for unimplemented effects
