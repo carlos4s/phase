@@ -379,24 +379,11 @@ fn put_component_into_zone(
         obj.zone = dest;
     }
 
-    // CR 700.11: a player has "descended this turn" when a permanent card has been
-    // put into their graveyard from anywhere this turn. Mirror `move_to_zone`'s
-    // descend bookkeeping: a nontoken permanent card put into its owner's
-    // graveyard counts as having descended this turn.
+    // CR 700.11: a nontoken permanent card put into its owner's graveyard from
+    // anywhere counts as having descended this turn — shared single authority
+    // with `move_to_zone`.
     if dest == Zone::Graveyard {
-        let is_permanent_card = state.objects.get(&component_id).is_some_and(|obj| {
-            !obj.is_token
-                && obj
-                    .card_types
-                    .core_types
-                    .iter()
-                    .any(|ct| ct.is_permanent_type())
-        });
-        if is_permanent_card {
-            if let Some(player) = state.players.iter_mut().find(|p| p.id == owner) {
-                player.descended_this_turn = true;
-            }
-        }
+        crate::game::zones::record_descend_on_graveyard_arrival(state, component_id, owner);
     }
 
     crate::game::restrictions::record_zone_change(state, record.clone());
