@@ -379,8 +379,10 @@ fn put_component_into_zone(
         obj.zone = dest;
     }
 
-    // Mirror `move_to_zone`'s descend bookkeeping: a nontoken permanent card put
-    // into its owner's graveyard counts as having descended this turn.
+    // CR 700.11: a player has "descended this turn" when a permanent card has been
+    // put into their graveyard from anywhere this turn. Mirror `move_to_zone`'s
+    // descend bookkeeping: a nontoken permanent card put into its owner's
+    // graveyard counts as having descended this turn.
     if dest == Zone::Graveyard {
         let is_permanent_card = state.objects.get(&component_id).is_some_and(|obj| {
             !obj.is_token
