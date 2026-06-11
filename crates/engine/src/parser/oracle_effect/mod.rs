@@ -5,6 +5,7 @@ pub(crate) mod counter;
 pub(crate) mod imperative;
 pub(super) mod lower;
 pub(crate) mod mana;
+pub(crate) mod meld;
 mod search;
 pub(crate) mod sequence;
 pub(crate) mod subject;
@@ -14621,6 +14622,35 @@ fn clause_has_anaphoric_control_condition(clause: &ClauseIr) -> bool {
 /// parsing, continuation recognition — producing a flat `Vec<AbilityDefinition>`
 /// (pre-assembled defs). Post-loop assembly (demoting Dig, sub_ability chaining,
 /// anaphoric resolution, etc.) is handled by [`lower_effect_chain_ir`].
+/// CR 701.42a: Build the single `ClauseIr` for an atomic meld effect clause.
+/// All chain-assembly fields are inert (no condition/continuation/scope) — the
+/// own/control gate rides the trigger's intervening-if, not the effect chain.
+fn meld_single_clause(effect: Effect, source_text: &str) -> ClauseIr {
+    ClauseIr {
+        parsed: parsed_clause(effect),
+        boundary: Some(ClauseBoundary::Sentence),
+        condition: None,
+        is_optional: false,
+        opponent_may_scope: None,
+        repeat_for: None,
+        player_scope: None,
+        starting_with: None,
+        delayed_condition: None,
+        prefix_delayed_condition: None,
+        intrinsic_continuation: None,
+        followup_continuation: None,
+        absorbed_by_followup: false,
+        multi_target: None,
+        where_x_expression: None,
+        is_otherwise: false,
+        unless_pay: None,
+        special: None,
+        source_text: source_text.to_string(),
+        target_selection_mode: TargetSelectionMode::Chosen,
+        target_chooser: None,
+    }
+}
+
 pub(crate) fn parse_effect_chain_ir(
     text: &str,
     kind: AbilityKind,
@@ -14676,6 +14706,45 @@ pub(crate) fn parse_effect_chain_ir(
         .map_or(text, |(_, body)| *body);
     let full_text = text; // bind AFTER the strip so diagnostics track the parsed chunks
     ctx.effect_chain_full_lower = Some(full_text.to_ascii_lowercase());
+    // CR 701.42a: The meld effect clause "exile them, then meld them into
+    // [result]" is a single atomic instruction whose ", then " comma would
+    // otherwise be split into two clauses by `split_clause_sequence`. Intercept
+    // the bare clause BEFORE chunking and emit it as one `Effect::Meld`.
+    //
+    // Only the TRIGGERED forms (Gisela, Graf Rats) are handled here: their
+    // own/control gate was already hoisted to the trigger's intervening-if (in
+    // `oracle_trigger.rs`) and the partner staged in `ctx.pending_meld_partner`,
+    // so `full_text` is the bare residual "exile them, then meld them into R".
+    //
+    // The ACTIVATED / inline-gate forms (Hanweir Battlements, Urza, Lord
+    // Protector) are deliberately NOT handled here. Their text leads with the
+    // inline "if you both own and control ..." gate, which `parse_meld_effect_clause`
+    // cannot consume (its `tag("exile them, then meld them into ")` fails), so
+    // they fall through to baseline parsing and remain `Unimplemented`. Swallowing
+    // that inline `Condition_If` would be a coverage-honesty regression; an honest
+    // activated-ability condition node for these is a follow-up.
+    //
+    // Cheap fast-reject: only the ~6 meld cards carry the meld signature, so a
+    // byte-substring check on the lowercase form already computed above
+    // (`effect_chain_full_lower`) gates the full nom parse. This is a perf
+    // guard, not parsing dispatch — a positive hit still routes through the
+    // nom-combinator `parse_meld_effect_clause`, which remains the sole
+    // authority on whether the text forms a meld clause.
+    if ctx
+        .effect_chain_full_lower
+        .as_deref()
+        .is_some_and(|lower| lower.contains(meld::MELD_EFFECT_MARKER))
+    {
+        if let Some(effect) = meld::parse_meld_effect_clause(full_text.trim(), ctx) {
+            return EffectChainIr {
+                clauses: vec![meld_single_clause(effect, full_text)],
+                kind,
+                chain_rounding,
+                actor: ctx.actor.clone(),
+                repeat_until: None,
+            };
+        }
+    }
     let chunks = split_clause_sequence(text);
     // CR 107.3i: "Normally, all instances of X on an object have the same value."
     // Build a per-chunk sentence-scoped `where X is <expr>` binding so that when

@@ -770,9 +770,24 @@ pub(crate) fn parse_trigger_line_with_index_ir(
     let condition_text: &str = &condition_text_stripped;
 
     let effect_lower = effect_text.to_lowercase();
-    // Extract intervening-if condition from effect text first — a leading
-    // "if X, " can hide the "you may " optional marker behind the if-clause.
-    let (effect_without_if, if_condition) = extract_if_condition(&effect_text);
+    // CR 701.42b: A meld instigator's effect text opens with the own/control
+    // gate ("if you both own and control ~ and a [type] named [partner], exile
+    // them, then meld them into [result]"). Recognize it as a unit: the gate
+    // becomes the trigger's intervening-if condition, the partner name is staged
+    // for the meld effect combinator, and the residual ("exile them, then meld
+    // them into [result]") is parsed as the effect body. Falls through to the
+    // generic `extract_if_condition` for every non-meld trigger.
+    let (effect_without_if, if_condition, meld_partner) =
+        match crate::parser::oracle_effect::meld::parse_meld_gate(&effect_text) {
+            Some((gate, partner, residual)) => (residual, Some(gate), Some(partner)),
+            None => {
+                // Extract intervening-if condition from effect text first — a
+                // leading "if X, " can hide the "you may " optional marker behind
+                // the if-clause.
+                let (without_if, cond) = extract_if_condition(&effect_text);
+                (without_if, cond, None)
+            }
+        };
 
     // CR 608.2c (resolution-order instructions): "You may" at the start of
     // the effect text makes the triggered effect optional at resolution.
@@ -819,6 +834,9 @@ pub(crate) fn parse_trigger_line_with_index_ir(
         // needs it to remap a `"that creature"` copy-token anaphor to the
         // enchanted host (Springheart Nantuko's landfall trigger).
         host_self_reference: ctx.host_self_reference.clone(),
+        // CR 701.42a: stage the meld partner so the effect-clause combinator can
+        // stamp `Effect::Meld { partner, .. }` (the gate carried the name).
+        pending_meld_partner: meld_partner,
         ..Default::default()
     };
 
