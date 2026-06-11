@@ -36,9 +36,7 @@ use crate::game::game_object::MergeKind;
 use crate::game::merge;
 use crate::game::printed_cards::{meld_copiable_values, printed_ref_from_face};
 use crate::game::zone_pipeline::{self, ZoneMoveRequest};
-use crate::types::ability::{
-    ControllerRef, Effect, EffectError, FilterProp, ResolvedAbility, TargetFilter, TypedFilter,
-};
+use crate::types::ability::{Effect, EffectError, ResolvedAbility};
 use crate::types::events::GameEvent;
 use crate::types::game_state::GameState;
 use crate::types::zones::Zone;
@@ -59,42 +57,45 @@ pub fn perform_meld(
     let source = ability.source_id;
     let controller = ability.controller;
 
-    // CR 701.42b: the controller must both OWN and CONTROL the instigator. The
-    // instigator must be on the battlefield (it was put there to activate/trigger
-    // this ability).
+    // CR 701.42b: the controller must both OWN and CONTROL the instigator, and
+    // the instigator must be the real meld card — only a card (CR 111.1: not a
+    // token; CR 707.10: not a copy) printed with the meld instruction can be
+    // melded. A token copy or a renamed non-meld impostor carrying the same name
+    // is NOT a valid meld half. The instigator must be on the battlefield (it was
+    // put there to activate/trigger this ability).
     let source_ok = state.objects.get(&source).is_some_and(|o| {
-        o.zone == Zone::Battlefield && o.controller == controller && o.owner == controller
+        o.zone == Zone::Battlefield
+            && o.controller == controller
+            && o.owner == controller
+            && o.is_represented_by_a_card()
     });
     if !source_ok {
         // CR 701.42c: objects that can't be melded stay in their current zone.
         return Ok(());
     }
 
-    // CR 701.42b: find a battlefield object named `partner` that the controller
-    // both owns and controls. Composed from the filter building blocks (named +
-    // owned), not an inline string compare.
-    let partner_filter = TargetFilter::Typed(TypedFilter {
-        type_filters: Vec::new(),
-        controller: Some(ControllerRef::You),
-        properties: vec![
-            FilterProp::Named {
-                name: partner.clone(),
-            },
-            FilterProp::Owned {
-                controller: ControllerRef::You,
-            },
-        ],
-    });
-    let fctx = crate::game::filter::FilterContext::from_ability(ability);
+    // CR 701.42b: find a battlefield object that is the real `partner` meld card,
+    // co-owned and co-controlled. We match `base_name` (the object's PRINTED
+    // identity), NOT the layer-modified current `name`: `FilterProp::Named`
+    // matches the post-layer `name` (filter.rs:2812), which (i) would let a
+    // renamed non-meld impostor whose current name equals the partner pass, and
+    // (ii) would wrongly REJECT a real partner whose name was changed by an
+    // effect. `base_name` is rename-proof — `ContinuousModification::SetName`
+    // overwrites `name` but never `base_name`, and layers reset `name =
+    // base_name` each pass — so a `base_name` match proves the object IS the real
+    // pair card (closing the token/copy/rename impostor classes and the
+    // real-partner-renamed inverse). It must also be card-backed (CR 111.1 /
+    // CR 707.10) for the same reason as the source.
     let Some(partner_id) = state.battlefield.iter().copied().find(|&id| {
         id != source
-            && state
-                .objects
-                .get(&id)
-                .is_some_and(|o| o.controller == controller)
-            && crate::game::filter::matches_target_filter(state, id, &partner_filter, &fctx)
+            && state.objects.get(&id).is_some_and(|o| {
+                o.controller == controller
+                    && o.owner == controller
+                    && o.is_represented_by_a_card()
+                    && o.base_name.eq_ignore_ascii_case(partner.as_str())
+            })
     }) else {
-        // CR 701.42c: no co-owned/controlled partner → no-op.
+        // CR 701.42c: no real co-owned/controlled partner → no-op.
         return Ok(());
     };
 
@@ -160,26 +161,14 @@ pub fn perform_meld(
         None,
     );
 
-    // CR 603.6a / CR 701.42a: drive the survivor's exile→battlefield entry through
-    // the NORMAL path so the `ZoneChanged { to: Battlefield }` event fires and ETB
-    // triggers match (unlike Mutate's CR 730.2b suppression). The leave-split
-    // (CR 712.21) is wired automatically into `move_to_zone`'s exit seam via
-    // `split_merged_permanent_on_leave` — no leave code needed here.
-    crate::game::zones::move_to_zone(state, source, Zone::Battlefield, events);
-
-    // CR 613.1 + CR 400.7: the battlefield entry re-derived the survivor's
-    // characteristics from its (intact) base, so re-flush the layers to
-    // re-apply the installed meld `CopyValues` on top — the melded permanent
-    // presents the result identity (Brisela) once it is on the battlefield. The
-    // transient continuous effect persists across the zone move (its id is keyed
-    // to the survivor and not cleared on entry).
-    crate::game::layers::flush_layers(state);
-
     // CR 701.42a / CR 730.2: absorb the partner into the single melded permanent
     // — it is no longer an independent object; remove it from the exile list and
     // mark it absorbed (zone == Battlefield, in no zone list), mirroring
     // merge_object_onto, so the CR 712.21 leave-split routes it to the graveyard
-    // exactly once.
+    // exactly once. This runs BEFORE the survivor's pipeline entry below: an
+    // entry-replacement consult (CR 614.1c) can park a `NeedsChoice` pause, and
+    // absorbing first guarantees the partner is never stranded in exile across
+    // that pause.
     let partner_owner = state.objects.get(&partner_id).map(|o| o.owner);
     if let Some(owner) = partner_owner {
         crate::game::zones::remove_from_zone(state, partner_id, Zone::Exile, owner);
@@ -188,5 +177,43 @@ pub fn perform_meld(
         partner.zone = Zone::Battlefield;
     }
 
-    Ok(())
+    // CR 603.6a / CR 701.42a: drive the survivor's exile→battlefield entry through
+    // the zone-change pipeline so the `ZoneChanged { to: Battlefield }` event
+    // fires and ETB triggers match (unlike Mutate's CR 730.2b suppression). The
+    // `Effect` cause is non-exempt, so `execute_zone_move` runs the entry
+    // replacement consult (CR 614.1c entries-with-counters / CR 614.12a
+    // enters-tapped) that a raw `move_to_zone` would skip. The leave-split
+    // (CR 712.21) is wired automatically into the exit seam via
+    // `split_merged_permanent_on_leave` — no leave code needed here.
+    // `reset_for_battlefield_entry` does NOT clear merged_components / merge_kind
+    // / merge_layer_effect_id, so the merge identity survives the entry.
+    match zone_pipeline::move_object(
+        state,
+        ZoneMoveRequest::effect(source, Zone::Battlefield, source),
+        events,
+    ) {
+        zone_pipeline::ZoneMoveResult::Done => {
+            // CR 613.1 + CR 400.7: the battlefield entry re-derived the survivor's
+            // characteristics from its (intact) base, so re-flush the layers to
+            // re-apply the installed meld `CopyValues` on top — the melded
+            // permanent presents the result identity (Brisela) once it is on the
+            // battlefield (the same re-flush the prior raw path performed). The
+            // transient continuous effect persists across the move (its id is
+            // keyed to the survivor and not cleared on entry).
+            crate::game::layers::flush_layers(state);
+            Ok(())
+        }
+        zone_pipeline::ZoneMoveResult::NeedsChoice(player) => {
+            // CR 616.1: an entry replacement surfaced an ordering choice. Park the
+            // prompt and return; the partner is already absorbed (above), so it is
+            // not stranded across the pause.
+            state.waiting_for =
+                crate::game::replacement::replacement_choice_waiting_for(player, state);
+            Ok(())
+        }
+        // CR 303.4f: only an Aura entering via a non-spell effect needs an
+        // enchant-host choice. A melded permanent is never an Aura, so this arm is
+        // documented-unreachable — handled exhaustively rather than wildcarded.
+        zone_pipeline::ZoneMoveResult::NeedsAuraAttachmentChoice => Ok(()),
+    }
 }

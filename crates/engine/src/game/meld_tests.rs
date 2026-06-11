@@ -272,3 +272,299 @@ fn etb_fires_on_meld() {
         "the melded permanent's entry emits a battlefield ZoneChanged so ETB can fire"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Hardening tests (PR #3023): printed-identity legality gate + pipeline entry.
+//
+// Tests `meld_token_partner_is_noop` and `meld_renamed_non_meld_partner_is_noop`
+// are DISCRIMINATING — they FAIL on the pre-fix resolver (the old
+// `FilterProp::Named` finder matched the layer-modified `name` and did not gate
+// on card-backing, so a token/copy/renamed impostor was melded) and PASS only
+// with the `base_name` + `is_represented_by_a_card()` gate. Test
+// `meld_entry_consults_enters_with_replacement` is the entry-seam discriminator:
+// the raw `move_to_zone` skipped the entry replacement consult, so the survivor
+// did not enter tapped; routing through `zone_pipeline::move_object` runs the
+// consult (CR 614.1c / CR 614.12a).
+// ---------------------------------------------------------------------------
+
+/// CR 701.42a / CR 712.4a (production-shaped): real Gisela + Bruna loaded from
+/// the card database meld into a SINGLE Brisela permanent. Drives the real
+/// resolver against real parsed card faces (`add_real_card`), seeding the result
+/// face the same way production does. SKIPped if `card-data.json` is absent.
+#[test]
+fn meld_production_shaped_real_cards_single_permanent() {
+    use crate::database::card_db::CardDatabase;
+    use crate::game::scenario_db::GameScenarioDbExt;
+    use std::path::Path;
+
+    let candidates = [
+        Path::new("client/public/card-data.json"),
+        Path::new("../../client/public/card-data.json"),
+    ];
+    let Some(path) = candidates.iter().find(|p| p.exists()).copied() else {
+        eprintln!(
+            "SKIP meld_production_shaped_real_cards_single_permanent: card-data.json missing \
+             (primary CI lanes regenerate it; local runs without it skip)"
+        );
+        return;
+    };
+    let db = match CardDatabase::from_export(path) {
+        Ok(db) => db,
+        Err(err) => {
+            eprintln!("SKIP meld_production_shaped_real_cards_single_permanent: load error: {err}");
+            return;
+        }
+    };
+
+    let mut sc = GameScenario::new();
+    let source = sc.add_real_card(P0, "Gisela, the Broken Blade", Zone::Battlefield, &db);
+    let partner = sc.add_real_card(P0, "Bruna, the Fading Light", Zone::Battlefield, &db);
+    let mut state = sc.state;
+    // `add_real_card` does NOT seed `card_face_registry`; `perform_meld` no-ops
+    // without the Brisela result face, so seed it explicitly.
+    seed_result_face(&mut state);
+
+    let mut events = Vec::new();
+    perform_meld(
+        &mut state,
+        &meld_ability(source, P0, "Bruna, the Fading Light"),
+        &mut events,
+    )
+    .unwrap();
+
+    let survivor = state.objects.get(&source).expect("survivor exists");
+    assert_eq!(survivor.zone, Zone::Battlefield);
+    assert_eq!(
+        survivor.merged_components,
+        vec![source, partner],
+        "the melded permanent records both real halves"
+    );
+    // The partner is absorbed: not an independent battlefield object, not in
+    // exile, but its zone reads Battlefield (a component, in no zone list).
+    assert!(
+        !state.battlefield.iter().any(|&id| id == partner),
+        "the partner half is absorbed, not an independent battlefield object"
+    );
+    assert!(
+        !state.exile.iter().any(|&id| id == partner),
+        "the partner is not stranded in exile"
+    );
+    assert_eq!(
+        state.objects.get(&partner).expect("partner exists").zone,
+        Zone::Battlefield,
+        "the absorbed partner's zone is Battlefield"
+    );
+    // CR 712.4b: presents the result identity; base identity (Gisela front face)
+    // is intact for the leave-split.
+    assert_eq!(survivor.name, RESULT_NAME);
+    assert_eq!(survivor.base_name, "Gisela, the Broken Blade");
+}
+
+/// CR 701.42b (CR 111.1): a TOKEN copy named like a meld half is NOT a real meld
+/// card and cannot be melded — the resolver no-ops. DISCRIMINATING: the pre-fix
+/// finder gated only on name, so the token partner was melded.
+#[test]
+fn meld_token_partner_is_noop() {
+    let (mut state, source, partner) = both_halves();
+    state.objects.get_mut(&partner).unwrap().is_token = true;
+    let mut events = Vec::new();
+    perform_meld(
+        &mut state,
+        &meld_ability(source, P0, "Bruna, the Fading Light"),
+        &mut events,
+    )
+    .unwrap();
+
+    let src = state.objects.get(&source).expect("source persists");
+    assert_eq!(
+        src.zone,
+        Zone::Battlefield,
+        "no-op: a token partner is not a real meld card, so the source stays put"
+    );
+    assert!(
+        src.merged_components.is_empty(),
+        "no meld occurred with a token partner"
+    );
+    assert!(
+        state.exile.is_empty(),
+        "nothing was exiled — the token partner is not a meld half"
+    );
+}
+
+/// CR 701.42b (CR 707.10): a COPY named like a meld half cannot be melded.
+#[test]
+fn meld_copy_partner_is_noop() {
+    let (mut state, source, partner) = both_halves();
+    state.objects.get_mut(&partner).unwrap().is_copy = true;
+    let mut events = Vec::new();
+    perform_meld(
+        &mut state,
+        &meld_ability(source, P0, "Bruna, the Fading Light"),
+        &mut events,
+    )
+    .unwrap();
+
+    let src = state.objects.get(&source).expect("source persists");
+    assert_eq!(
+        src.zone,
+        Zone::Battlefield,
+        "no-op: a copy partner is not a real meld card"
+    );
+    assert!(
+        src.merged_components.is_empty(),
+        "no meld occurred with a copy partner"
+    );
+    assert!(
+        state.exile.is_empty(),
+        "nothing was exiled — the copy partner is not a meld half"
+    );
+}
+
+/// CR 701.42b: a card-backed NON-MELD permanent renamed (via a continuous effect)
+/// to the partner's name is an IMPOSTOR — its PRINTED identity (`base_name`) is
+/// not the meld half, so it cannot be melded. DISCRIMINATING: the pre-fix finder
+/// matched the layer-modified current `name`, so the impostor WOULD have been
+/// melded; matching `base_name` rejects it.
+#[test]
+fn meld_renamed_non_meld_partner_is_noop() {
+    use crate::types::ability::{ContinuousModification, Duration, TargetFilter};
+    use crate::types::game_state::TransientContinuousEffect;
+
+    let mut sc = GameScenario::new();
+    let source = sc.add_creature(P0, "Gisela, the Broken Blade", 4, 3).id();
+    // A vanilla, card-backed creature with its OWN printed identity.
+    let impostor = sc.add_creature(P0, "Grizzly Bears", 2, 2).id();
+    let mut state = sc.state;
+    seed_result_face(&mut state);
+
+    // Install a continuous effect renaming the impostor's current `name` to the
+    // partner's name (CR 613 layer 7-equivalent SetName; layer pass overwrites
+    // `name` but never `base_name`). `Duration::Permanent` stays live through
+    // `flush_layers` (no turn passes in this test).
+    let ts = state.next_timestamp();
+    state
+        .transient_continuous_effects
+        .push_back(TransientContinuousEffect {
+            id: 1,
+            source_id: impostor,
+            controller: P0,
+            timestamp: ts,
+            duration: Duration::Permanent,
+            affected: TargetFilter::SelfRef,
+            modifications: vec![ContinuousModification::SetName {
+                name: "Bruna, the Fading Light".to_string(),
+            }],
+            condition: None,
+            source_name: String::new(),
+        });
+    crate::game::layers::flush_layers(&mut state);
+
+    // Precondition: the impostor presents the partner's NAME but keeps its own
+    // printed identity (base_name).
+    let imp = state.objects.get(&impostor).expect("impostor exists");
+    assert_eq!(
+        imp.name, "Bruna, the Fading Light",
+        "impostor renamed by effect"
+    );
+    assert_eq!(imp.base_name, "Grizzly Bears", "printed identity unchanged");
+
+    let mut events = Vec::new();
+    perform_meld(
+        &mut state,
+        &meld_ability(source, P0, "Bruna, the Fading Light"),
+        &mut events,
+    )
+    .unwrap();
+
+    // No-op: the impostor's printed identity is not the meld half.
+    let src = state.objects.get(&source).expect("source persists");
+    assert_eq!(
+        src.zone,
+        Zone::Battlefield,
+        "no-op: the renamed non-meld impostor is rejected by the base_name gate"
+    );
+    assert!(
+        src.merged_components.is_empty(),
+        "no meld occurred against a renamed impostor"
+    );
+    let imp = state.objects.get(&impostor).expect("impostor persists");
+    assert_eq!(
+        imp.zone,
+        Zone::Battlefield,
+        "the impostor is not exiled or absorbed"
+    );
+    assert!(
+        state.exile.is_empty(),
+        "nothing was exiled — the impostor is not a real meld half"
+    );
+}
+
+/// CR 614.1c / CR 614.12a: the survivor's exile→battlefield entry is routed
+/// through the zone-change pipeline, so an entry replacement effect on the
+/// survivor (here: enters-tapped) is consulted. DISCRIMINATING: the pre-fix raw
+/// `move_to_zone` skipped the entry consult, so the survivor would NOT enter
+/// tapped; the pipeline runs the consult.
+#[test]
+fn meld_entry_consults_enters_with_replacement() {
+    use crate::types::ability::{
+        AbilityDefinition, AbilityKind, Effect as AbilEffect, EffectScope, ReplacementDefinition,
+        TapStateChange, TargetFilter,
+    };
+    use crate::types::replacements::ReplacementEvent;
+
+    let (mut state, source, _partner) = both_halves();
+
+    // A self-scoped "enters tapped" replacement on the survivor (CR 614.1c /
+    // CR 614.12a): the replacement's execute is the canonical SelfRef single
+    // `SetTapState { Tap }` that `event_modifiers_for_ability` reads as the
+    // enters-tapped modifier (CR 701.26a). Its exile→battlefield entry is the
+    // ChangeZone event the consult must replace.
+    let enters_tapped = ReplacementDefinition::new(ReplacementEvent::Moved)
+        .valid_card(TargetFilter::SelfRef)
+        .destination_zone(Zone::Battlefield)
+        .execute(AbilityDefinition::new(
+            AbilityKind::Spell,
+            AbilEffect::SetTapState {
+                target: TargetFilter::SelfRef,
+                scope: EffectScope::Single,
+                state: TapStateChange::Tap,
+            },
+        ))
+        .description("This permanent enters the battlefield tapped.".to_string());
+    {
+        let obj = state.objects.get_mut(&source).unwrap();
+        obj.replacement_definitions.push(enters_tapped.clone());
+        // The survivor is reverted to its base characteristics on the exile leg
+        // of the meld (CR 613.1 zone-exit reset restores `replacement_definitions`
+        // from `base_replacement_definitions`). Seed the base too so this printed
+        // replacement survives the exile→battlefield round-trip — a real meld
+        // card's printed "enters tapped" replacement lives in its base.
+        obj.base_replacement_definitions = std::sync::Arc::new(vec![enters_tapped]);
+    }
+
+    // Precondition: the survivor is currently untapped.
+    assert!(
+        !state.objects.get(&source).unwrap().tapped,
+        "precondition: survivor untapped before meld"
+    );
+
+    let mut events = Vec::new();
+    perform_meld(
+        &mut state,
+        &meld_ability(source, P0, "Bruna, the Fading Light"),
+        &mut events,
+    )
+    .unwrap();
+
+    let survivor = state.objects.get(&source).expect("survivor persists");
+    assert_eq!(survivor.zone, Zone::Battlefield);
+    assert!(
+        survivor.tapped,
+        "the entry consult ran: the survivor entered tapped (raw move_to_zone would skip it)"
+    );
+    assert_eq!(
+        survivor.merged_components,
+        vec![source, _partner],
+        "the meld still produced the merged permanent through the pipeline entry"
+    );
+}
