@@ -144,6 +144,20 @@ pub fn merge_object_onto(
         survivor.merged_components = ordered;
     }
 
+    // CR 730.2d: a merged permanent is a token only if its TOPMOST component is a
+    // token. The survivor keeps its `ObjectId` (CR 730.2c) but adopts the topmost
+    // component's token-ness while merged. Capture the survivor's intrinsic value
+    // once (on the first merge that actually overrides it) so the on-leave split
+    // can restore it (CR 111.7 cease-to-exist must fire for a token host that had
+    // a card mutated on top of it). The all-card case is a no-op (topmost matches).
+    let topmost_is_token = state.objects.get(&topmost_id).is_some_and(|o| o.is_token);
+    if let Some(survivor) = state.objects.get_mut(&target_id) {
+        if survivor.pre_merge_is_token.is_none() && survivor.is_token != topmost_is_token {
+            survivor.pre_merge_is_token = Some(survivor.is_token);
+        }
+        survivor.is_token = topmost_is_token;
+    }
+
     install_merge_layer_effect(
         state,
         target_id,
@@ -301,6 +315,16 @@ pub fn split_merged_permanent_on_leave(
         return;
     }
     let components = survivor.merged_components.clone();
+
+    // CR 730.2d + CR 400.7 + CR 111.7: restore the survivor's intrinsic token-ness
+    // (overridden to the topmost component's while merged) before it leaves, so a
+    // token host that had a card mutated on top of it is a token again — the
+    // cease-to-exist SBA then applies to it instead of leaking a nontoken object.
+    if let Some(survivor) = state.objects.get_mut(&merged_id) {
+        if let Some(intrinsic) = survivor.pre_merge_is_token.take() {
+            survivor.is_token = intrinsic;
+        }
+    }
 
     // CR 730.3 + CR 400.7: before the surviving object changes zone, drop the
     // merge's layer-1 copy effect and flush layers so it leaves as its own card.
