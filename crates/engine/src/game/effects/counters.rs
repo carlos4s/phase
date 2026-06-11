@@ -405,7 +405,7 @@ fn apply_pending_counter_post_action(
             // complete token entry exactly as the uninterrupted token path
             // does: abilities/bookkeeping, attachment, ETB events, and any
             // delayed sacrifice trigger.
-            super::token::inject_predefined_token_abilities(state, object_id);
+            super::token::inject_resolved_token_abilities(state, object_id);
             crate::game::layers::mark_layers_entered(state, object_id);
             crate::game::restrictions::record_battlefield_entry(state, object_id);
             crate::game::restrictions::record_token_created(state, object_id);

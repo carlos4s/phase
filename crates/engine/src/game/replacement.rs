@@ -3918,6 +3918,11 @@ pub(super) struct EventModifiers {
     etb_tap_state: EtbTapState,
     etb_counters: Vec<(CounterType, u32)>,
     redirect_zone: Option<Zone>,
+    /// CR 110.2a: Controller override for a self-ETB replacement
+    /// (`ReplacementDefinition::enters_under`). Carried as an unresolved
+    /// `ControllerRef`; resolved to a concrete `PlayerId` and written onto the
+    /// `ZoneChange`'s `controller_override` when the replacement is applied.
+    controller_override: Option<ControllerRef>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -4027,6 +4032,38 @@ fn event_modifiers_for_ability(
         etb_tap_state,
         etb_counters: counters,
         redirect_zone: redirect,
+        controller_override: None,
+    }
+}
+
+/// CR 110.2a: Resolve the controller for a self-ETB controller-override
+/// replacement (`ReplacementDefinition::enters_under`). The reference is resolved
+/// relative to the entering object's *own* controller.
+///
+/// `ControllerRef::Opponent` ("enters under the control of an opponent of your
+/// choice") is resolved here rather than via the canonical `controller_ref_player`,
+/// which returns `None` for `Opponent` (ambiguous when more than one opponent
+/// exists). In a two-player game this is the sole opponent — fully correct. In
+/// multiplayer it picks the first opponent in seat order; a full controller choice
+/// is a follow-up. Either way the permanent enters under an opponent's control
+/// rather than its owner's, satisfying CR 110.2a.
+fn resolve_self_enters_under_controller(
+    state: &GameState,
+    object_id: ObjectId,
+    cref: &ControllerRef,
+) -> Option<PlayerId> {
+    let entering_controller = state.objects.get(&object_id)?.controller;
+    match cref {
+        ControllerRef::Opponent => crate::game::players::opponents(state, entering_controller)
+            .into_iter()
+            .next(),
+        other => crate::game::filter::controller_ref_player(
+            state,
+            object_id,
+            Some(entering_controller),
+            None,
+            other,
+        ),
     }
 }
 
@@ -4312,11 +4349,13 @@ fn apply_single_replacement(
                         | (ProposedEvent::LifeGain { .. }, Effect::GainLife { .. })
                 )
             });
-            (
-                repl_def.event.clone(),
-                event_modifiers_for_ability(ability, state, rid.source, &proposed),
-                post_effect,
-            )
+            let mut modifiers = event_modifiers_for_ability(ability, state, rid.source, &proposed);
+            // CR 110.2a: A self-ETB controller override is carried directly on the
+            // replacement definition (not derived from `execute`), parallel to the
+            // imperative `Effect::ChangeZone.enters_under` slot. Surface it as an
+            // event modifier so it is written onto the `ZoneChange` below.
+            modifiers.controller_override = repl_def.enters_under.clone();
+            (repl_def.event.clone(), modifiers, post_effect)
         }
         None => return Ok(proposed),
     };
@@ -4341,6 +4380,25 @@ fn apply_single_replacement(
                 if modifiers.etb_tap_state != EtbTapState::Unspecified {
                     if let Some(enter_tapped) = new_event.battlefield_entry_tap_state_mut() {
                         *enter_tapped = modifiers.etb_tap_state;
+                    }
+                }
+                // CR 110.2a: Apply a self-ETB controller override onto the entering
+                // ZoneChange (set before ETB triggers fire — the permanent never
+                // enters under its owner's control first). Resolve the carried
+                // `ControllerRef` against the entering object's own controller.
+                if let Some(cref) = modifiers.controller_override.as_ref() {
+                    if let ProposedEvent::ZoneChange {
+                        object_id,
+                        to: Zone::Battlefield,
+                        controller_override,
+                        ..
+                    } = &mut new_event
+                    {
+                        if let Some(pid) =
+                            resolve_self_enters_under_controller(state, *object_id, cref)
+                        {
+                            *controller_override = Some(pid);
+                        }
                     }
                 }
                 // CR 614.6: Apply zone redirect (e.g., graveyard → exile for Rest in Peace).

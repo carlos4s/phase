@@ -154,6 +154,16 @@ fn parse_replacement_line_inner(text: &str, card_name: &str) -> Option<Replaceme
         return Some(def);
     }
 
+    // --- "~ enters under the control of an opponent of your choice." ---
+    // CR 110.2a: A self-ETB controller-override replacement — the permanent
+    // enters the battlefield directly under an opponent's control (Xantcha,
+    // Sleeper Agent; Captive Audience; Pendant of Prosperity; Abby, Merciless
+    // Soldier). Checked before the generic enters-tapped guard so the "enters"
+    // verb isn't claimed by another arm.
+    if let Some(def) = parse_self_enters_under_opponent(&norm_lower, &text) {
+        return Some(def);
+    }
+
     // --- "~ enters the battlefield tapped" (unconditional) ---
     // Guard: reject text with " unless " or "if you control" — all conditional
     // patterns must be handled above. Counter-bearing variants fall through to
@@ -1125,6 +1135,64 @@ fn parse_as_enters_choose(norm_lower: &str, original_text: &str) -> Option<Repla
             .valid_card(TargetFilter::SelfRef)
             // CR 614.1c: battlefield-entry-scoped (see destination-gate note above).
             .destination_zone(Zone::Battlefield)
+            .description(original_text.to_string()),
+    )
+}
+
+/// CR 110.2a + CR 614.1c: "`<this permanent>` enters under the control of an
+/// opponent of your choice." — a self-ETB controller-override replacement.
+///
+/// The permanent enters the battlefield directly under an opponent's control;
+/// it never enters under its owner's control first (CR 110.2a). Cards: Xantcha,
+/// Sleeper Agent; Captive Audience; Pendant of Prosperity; Abby, Merciless
+/// Soldier. Emitted as a `Moved` self-replacement (`valid_card = SelfRef`,
+/// `destination_zone = Battlefield`) carrying `enters_under = Opponent`; the
+/// engine resolves the opponent and stamps the entering `ZoneChange`'s
+/// `controller_override` before ETB triggers fire (see
+/// `resolve_self_enters_under_controller`).
+///
+/// "Of your choice" is the controller's choice of opponent — deterministic in a
+/// two-player game (the sole opponent); a full multiplayer choice is a follow-up.
+fn parse_self_enters_under_opponent(
+    norm_lower: &str,
+    original_text: &str,
+) -> Option<ReplacementDefinition> {
+    // The full, highly specific control clause (with or without "the battlefield").
+    let has_clause = nom_primitives::scan_contains(
+        norm_lower,
+        "enters under the control of an opponent of your choice",
+    ) || nom_primitives::scan_contains(
+        norm_lower,
+        "enters the battlefield under the control of an opponent of your choice",
+    );
+    if !has_clause {
+        return None;
+    }
+
+    // Self-subject gate: the subject of "enters" must be this permanent — the
+    // normalized self-name "~" (legendary short names included), or a "this
+    // <card-type>" / bare "this" demonstrative — never an external filter
+    // ("creatures you control enter ...").
+    let is_self_subject = nom_primitives::scan_contains(norm_lower, "~ enters")
+        || nom_primitives::scan_contains(norm_lower, "this artifact enters")
+        || nom_primitives::scan_contains(norm_lower, "this creature enters")
+        || nom_primitives::scan_contains(norm_lower, "this enchantment enters")
+        || nom_primitives::scan_contains(norm_lower, "this planeswalker enters")
+        || nom_primitives::scan_contains(norm_lower, "this land enters")
+        || nom_primitives::scan_contains(norm_lower, "this battle enters")
+        || nom_primitives::scan_contains(norm_lower, "this permanent enters")
+        || nom_primitives::scan_contains(norm_lower, "this enters");
+    if !is_self_subject {
+        return None;
+    }
+
+    Some(
+        ReplacementDefinition::new(ReplacementEvent::Moved)
+            .valid_card(TargetFilter::SelfRef)
+            // CR 614.1c: battlefield-entry-scoped (see destination-gate note above).
+            .destination_zone(Zone::Battlefield)
+            // CR 110.2a: enters under an opponent's control (resolved at apply time).
+            .enters_under(ControllerRef::Opponent)
             .description(original_text.to_string()),
     )
 }
@@ -11426,6 +11494,75 @@ mod snapshot_tests {
         assert!(
             super::parse_copy_count_replacement(&lower, text).is_none(),
             "copy-count replacement must not be gated by loose substring matching"
+        );
+    }
+
+    /// CR 110.2a: "<this permanent> enters under the control of an opponent of
+    /// your choice." parses to a self-ETB controller-override replacement —
+    /// `Moved` / `valid_card = SelfRef` / `destination_zone = Battlefield` /
+    /// `enters_under = Opponent`. Build-the-class across the four real corpus
+    /// phrasings (self-name "~", "this artifact", "this enchantment").
+    #[test]
+    fn self_enters_under_opponent_parses_controller_override_replacement() {
+        let cases = [
+            // Xantcha, Sleeper Agent / Abby, Merciless Soldier (legendary short name → "~").
+            (
+                "Xantcha enters under the control of an opponent of your choice.",
+                "Xantcha, Sleeper Agent",
+            ),
+            (
+                "Abby enters under the control of an opponent of your choice.",
+                "Abby, Merciless Soldier",
+            ),
+            // Pendant of Prosperity (card name absent; demonstrative subject).
+            (
+                "This artifact enters under the control of an opponent of your choice.",
+                "Pendant of Prosperity",
+            ),
+            // Captive Audience.
+            (
+                "This enchantment enters under the control of an opponent of your choice.",
+                "Captive Audience",
+            ),
+        ];
+
+        for (text, card_name) in cases {
+            let def = parse_replacement_line(text, card_name)
+                .unwrap_or_else(|| panic!("{card_name}: should parse as a replacement"));
+            assert_eq!(
+                def.event,
+                ReplacementEvent::Moved,
+                "{card_name}: self-ETB replacement is a Moved event"
+            );
+            assert_eq!(
+                def.valid_card,
+                Some(TargetFilter::SelfRef),
+                "{card_name}: applies only to the entering permanent itself"
+            );
+            assert_eq!(
+                def.destination_zone,
+                Some(Zone::Battlefield),
+                "{card_name}: battlefield-entry-scoped (CR 614.1c)"
+            );
+            assert_eq!(
+                def.enters_under,
+                Some(ControllerRef::Opponent),
+                "{card_name}: enters under an opponent's control (CR 110.2a)"
+            );
+        }
+    }
+
+    /// The control clause is NOT claimed when the subject is an external filter
+    /// rather than the permanent itself — the self-subject gate must reject it.
+    #[test]
+    fn external_enters_under_opponent_is_not_a_self_replacement() {
+        assert!(
+            super::parse_self_enters_under_opponent(
+                "creatures you control enter under the control of an opponent of your choice",
+                "Whatever",
+            )
+            .is_none(),
+            "external-subject entry must not match the self controller-override arm"
         );
     }
 }

@@ -12864,6 +12864,19 @@ pub struct ReplacementDefinition {
     /// counter-agnostic replacements.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub counter_match: Option<CounterMatch>,
+    /// CR 110.2a + CR 614.1c: Controller override applied to a self-ETB
+    /// (`event = Moved`, `valid_card = SelfRef`, `destination_zone = Battlefield`)
+    /// replacement, for permanents that "enter under the control of an opponent
+    /// of your choice" (Xantcha, Sleeper Agent; Captive Audience; Pendant of
+    /// Prosperity; Abby, Merciless Soldier). `Some(cref)` routes the entering
+    /// object to the player resolved from `cref` — set on the `ZoneChange`'s
+    /// `controller_override` *before* ETB triggers fire, so the permanent never
+    /// enters under its owner's control first. Mirrors the imperative
+    /// `Effect::ChangeZone.enters_under` slot (generalized for any `ControllerRef`
+    /// in #2817) on the self-replacement path. `None` = enters under owner's
+    /// control (the default for every existing replacement).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enters_under: Option<ControllerRef>,
 }
 
 impl ReplacementDefinition {
@@ -12896,7 +12909,14 @@ impl ReplacementDefinition {
             additional_token_spec: None,
             ensure_token_specs: None,
             counter_match: None,
+            enters_under: None,
         }
+    }
+
+    /// CR 110.2a: Builder for the self-ETB controller override (see field docs).
+    pub fn enters_under(mut self, controller: ControllerRef) -> Self {
+        self.enters_under = Some(controller);
+        self
     }
 
     pub fn execute(mut self, ability: AbilityDefinition) -> Self {

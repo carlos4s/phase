@@ -96,6 +96,7 @@ pub fn convert_as_enters(
             additional_token_spec: None,
             ensure_token_specs: None,
             counter_match: None,
+            enters_under: None,
         });
     }
     Ok(out)
@@ -175,6 +176,7 @@ pub fn convert_replace_would_enter(
             additional_token_spec: None,
             ensure_token_specs: None,
             counter_match: None,
+            enters_under: None,
         });
     }
     Ok(out)
@@ -237,6 +239,7 @@ pub fn convert_replace_would_deal_damage(
             additional_token_spec: None,
             ensure_token_specs: None,
             counter_match: None,
+            enters_under: None,
         });
     }
     Ok(out)
@@ -608,6 +611,7 @@ pub fn convert_replace_would_draw(
             additional_token_spec: None,
             ensure_token_specs: None,
             counter_match: None,
+            enters_under: None,
         });
     }
     Ok(out)
@@ -728,6 +732,7 @@ pub fn convert_replace_would_put_into_graveyard(
             additional_token_spec: None,
             ensure_token_specs: None,
             counter_match: None,
+            enters_under: None,
         });
     }
     Ok(out)
@@ -973,6 +978,7 @@ pub fn convert_as_put_into_graveyard_from_anywhere(
             additional_token_spec: None,
             ensure_token_specs: None,
             counter_match: None,
+            enters_under: None,
         });
     }
     Ok(out)
@@ -1060,6 +1066,7 @@ pub fn convert_replace_would_put_counters(
             additional_token_spec: None,
             ensure_token_specs: None,
             counter_match: counter_match.clone(),
+            enters_under: None,
         });
     }
     Ok(out)
@@ -1241,6 +1248,7 @@ pub fn convert_replace_would_gain_life(
             additional_token_spec: None,
             ensure_token_specs: None,
             counter_match: None,
+            enters_under: None,
         });
     }
     Ok(out)
@@ -1359,6 +1367,7 @@ fn try_build_may_cost_pair(
         additional_token_spec: None,
         ensure_token_specs: None,
         counter_match: None,
+        enters_under: None,
     }))
 }
 

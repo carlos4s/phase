@@ -4683,8 +4683,14 @@ fn try_parse_conjure_duplicate(tp: TextPair) -> Option<Effect> {
         }
         filter
     } else {
+        // CR 707.2: demonstrative anaphors referring to the object the enclosing
+        // ability just established (the triggering / chosen / exiled object) all
+        // resolve to the inherited parent target. "that creature" (Goblin Morale
+        // Sergeant, Vodalian Tide Mage), "that spell" (Spellchain Scatter) and
+        // "that permanent" (Vona de Iedo) join the existing card-noun anaphors.
         match reference_lower.trim() {
-            "it" | "that card" | "this card" => TargetFilter::ParentTarget,
+            "it" | "that card" | "this card" | "that creature" | "that spell"
+            | "that permanent" => TargetFilter::ParentTarget,
             _ => return None,
         }
     };
@@ -16231,11 +16237,18 @@ pub(crate) fn parse_effect_chain_ir(
         }
         if inherits_carried_targeted_player_subject {
             if let Some(subject) = carried_targeted_player_subject.as_ref() {
+                // CR 601.2c: a single "target opponent" governs the whole verb
+                // list ("sacrifices …, discards …, and loses 3 life") — the
+                // target is chosen ONCE at announcement and every conjugated
+                // continuation applies to that same player. Inject
+                // `ParentTarget` (inherit the leading verb's chosen player) and
+                // NOT a fresh copy of the player filter, which would surface a
+                // second target slot and prompt the player again (#2344).
                 let subject = SubjectPhraseAst {
-                    affected: subject.affected.clone(),
-                    target: subject.target.clone(),
-                    multi_target: subject.multi_target.clone(),
-                    inherits_parent: subject.inherits_parent,
+                    affected: TargetFilter::ParentTarget,
+                    target: Some(TargetFilter::ParentTarget),
+                    multi_target: None,
+                    inherits_parent: true,
                     is_optional: subject.is_optional,
                 };
                 inject_subject_target(&mut clause.effect, &subject);
@@ -23983,18 +23996,15 @@ mod tests {
             Some(ControllerRef::TargetPlayer)
         );
 
+        // CR 601.2c (#2344): the single "target opponent" is chosen once at
+        // announcement; the conjugated continuations ("discards a card", "loses
+        // 3 life") apply to that SAME player and inherit it via `ParentTarget`,
+        // not a fresh `Opponent` slot (which would prompt the player again).
         let discard = def.sub_ability.as_ref().expect("expected discard link");
         let Effect::Discard { target, .. } = &*discard.effect else {
             panic!("expected Discard link, got {:?}", discard.effect);
         };
-        assert!(
-            target_filter_can_target_player(target),
-            "carried discard target must be a player target, got {target:?}"
-        );
-        assert_eq!(
-            target_filter_controller_ref(target),
-            Some(ControllerRef::Opponent)
-        );
+        assert_eq!(*target, TargetFilter::ParentTarget);
 
         let lose_life = discard
             .sub_ability
@@ -24007,14 +24017,7 @@ mod tests {
         else {
             panic!("expected LoseLife(3) link, got {:?}", lose_life.effect);
         };
-        assert!(
-            target_filter_can_target_player(target),
-            "carried life-loss target must be a player target, got {target:?}"
-        );
-        assert_eq!(
-            target_filter_controller_ref(target),
-            Some(ControllerRef::Opponent)
-        );
+        assert_eq!(*target, TargetFilter::ParentTarget);
 
         let draw = lose_life.sub_ability.as_ref().expect("expected draw link");
         assert!(matches!(
@@ -39062,6 +39065,35 @@ mod tests {
                 assert!(!tapped);
             }
             other => panic!("expected Conjure, got: {other:?}"),
+        }
+    }
+
+    /// CR 707.2: the demonstrative anaphors "that creature" / "that spell" /
+    /// "that permanent" resolve to the inherited parent target, like "it" /
+    /// "that card" (Goblin Morale Sergeant, Spellchain Scatter, Vona de Iedo).
+    #[test]
+    fn conjure_duplicate_demonstrative_anaphors_resolve_to_parent_target() {
+        for reference in ["that creature", "that spell", "that permanent"] {
+            let e = parse_effect(&format!(
+                "conjure a duplicate of {reference} onto the battlefield"
+            ));
+            match e {
+                Effect::Conjure {
+                    cards, destination, ..
+                } => {
+                    assert!(
+                        matches!(
+                            &cards[0].source,
+                            ConjureSource::Duplicate { duplicate_of }
+                                if *duplicate_of == TargetFilter::ParentTarget
+                        ),
+                        "reference {reference:?}: expected Duplicate(ParentTarget), got {:?}",
+                        cards[0].source
+                    );
+                    assert_eq!(destination, Zone::Battlefield);
+                }
+                other => panic!("reference {reference:?}: expected Conjure, got {other:?}"),
+            }
         }
     }
 

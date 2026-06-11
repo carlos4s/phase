@@ -2,7 +2,29 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import { createPortal } from "react-dom";
 
 const MENU_GAP_PX = 4;
+const MENU_VIEWPORT_PADDING_PX = 8;
 const MENU_MAX_HEIGHT_PX = 280;
+/** Matches AppShell `pb-[76px]` tab-bar reserve on viewports below 820px. */
+const MOBILE_TAB_BAR_RESERVE_PX = 76;
+
+function getViewportBottomInset(): number {
+  if (window.matchMedia("(min-width: 820px)").matches) {
+    return MENU_VIEWPORT_PADDING_PX;
+  }
+  return MOBILE_TAB_BAR_RESERVE_PX + MENU_VIEWPORT_PADDING_PX;
+}
+
+function getViewportBottom(): number {
+  const visualViewport = window.visualViewport;
+  if (visualViewport) {
+    return visualViewport.offsetTop + visualViewport.height - getViewportBottomInset();
+  }
+  return window.innerHeight - getViewportBottomInset();
+}
+
+function getViewportTop(): number {
+  return window.visualViewport?.offsetTop ?? 0;
+}
 // Cap how far the widest item label can grow the closed trigger — a single
 // long deck name must not stretch the toolbar (items truncate with a title
 // tooltip beyond this).
@@ -19,6 +41,10 @@ export interface MenuSelectProps {
   items: MenuSelectItem[];
   onSelect: (value: string) => void;
   disabled?: boolean;
+  /** Accessible name when `label` shows the current value instead of the control name. */
+  ariaLabel?: string;
+  /** Highlights the matching option in the open menu. */
+  selectedValue?: string;
   /** Class on the outer relative wrapper (e.g. `max-w-[8rem] shrink-0`). */
   wrapperClassName?: string;
   /** Class on the trigger button. */
@@ -54,6 +80,8 @@ export function MenuSelect({
   items,
   onSelect,
   disabled = false,
+  ariaLabel,
+  selectedValue,
   wrapperClassName = "",
   className = "",
 }: MenuSelectProps) {
@@ -97,14 +125,25 @@ export function MenuSelect({
     if (!trigger) return;
 
     const rect = trigger.getBoundingClientRect();
-    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - MENU_GAP_PX);
-    const spaceAbove = Math.max(0, rect.top - MENU_GAP_PX);
+    const viewportWidth = window.innerWidth;
+    const viewportTop = getViewportTop();
+    const viewportBottom = getViewportBottom();
+    const width = Math.min(
+      rect.width,
+      viewportWidth - MENU_VIEWPORT_PADDING_PX * 2,
+    );
+    const left = Math.max(
+      MENU_VIEWPORT_PADDING_PX,
+      Math.min(rect.left, viewportWidth - width - MENU_VIEWPORT_PADDING_PX),
+    );
+    const spaceBelow = Math.max(0, viewportBottom - rect.bottom - MENU_GAP_PX);
+    const spaceAbove = Math.max(0, rect.top - viewportTop - MENU_GAP_PX);
     const openUp = spaceBelow < MENU_MAX_HEIGHT_PX && spaceAbove > spaceBelow;
     const maxHeight = Math.min(MENU_MAX_HEIGHT_PX, openUp ? spaceAbove : spaceBelow);
 
     setMenuStyle({
-      left: rect.left,
-      width: rect.width,
+      left,
+      width,
       maxHeight: Math.max(maxHeight, 0),
       top: openUp ? "auto" : rect.bottom + MENU_GAP_PX,
       bottom: openUp ? window.innerHeight - rect.top + MENU_GAP_PX : "auto",
@@ -116,8 +155,14 @@ export function MenuSelect({
     updatePosition();
     // APG listbox pattern: move focus into the menu so the keyboard path
     // (Arrow keys + Enter) works like the native select this replaces.
-    menuRef.current?.querySelector<HTMLButtonElement>('[role="option"]')?.focus();
-  }, [open, updatePosition]);
+    const menu = menuRef.current;
+    const selectedOption =
+      selectedValue != null
+        ? menu?.querySelector<HTMLButtonElement>(`[role="option"][aria-selected="true"]`)
+        : null;
+    (selectedOption ?? menu?.querySelector<HTMLButtonElement>('[role="option"]'))?.focus();
+    selectedOption?.scrollIntoView({ block: "nearest" });
+  }, [open, selectedValue, updatePosition]);
 
   useEffect(() => {
     if (!open) return;
@@ -157,6 +202,8 @@ export function MenuSelect({
     window.addEventListener("pointerdown", handlePointerDown, true);
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("resize", updatePosition);
+    window.visualViewport?.addEventListener("resize", updatePosition);
+    window.visualViewport?.addEventListener("scroll", updatePosition);
     scrollParents.forEach((parent) => {
       parent.addEventListener("scroll", handleScroll, { passive: true });
     });
@@ -165,6 +212,8 @@ export function MenuSelect({
       window.removeEventListener("pointerdown", handlePointerDown, true);
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("resize", updatePosition);
+      window.visualViewport?.removeEventListener("resize", updatePosition);
+      window.visualViewport?.removeEventListener("scroll", updatePosition);
       scrollParents.forEach((parent) => {
         parent.removeEventListener("scroll", handleScroll);
       });
@@ -197,7 +246,7 @@ export function MenuSelect({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
-        aria-label={label}
+        aria-label={ariaLabel ?? label}
         onClick={() => {
           if (disabled) return;
           setOpen((prev) => !prev);
@@ -214,7 +263,7 @@ export function MenuSelect({
             ref={menuRef}
             id={listboxId}
             role="listbox"
-            aria-label={label}
+            aria-label={ariaLabel ?? label}
             className="fixed z-[120] flex flex-col overflow-x-hidden overflow-y-auto overscroll-contain rounded-xl border border-white/10 bg-[#0a0f1b]/98 py-1 shadow-xl backdrop-blur-md thin-scrollbar"
             onWheel={(event) => event.stopPropagation()}
             style={{
@@ -234,7 +283,11 @@ export function MenuSelect({
                   onSelect(item.value);
                   setOpen(false);
                 }}
-                className="flex w-full min-w-0 items-center px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none"
+                aria-selected={selectedValue === item.value}
+                className={[
+                  "flex w-full min-w-0 items-center px-3 py-2 text-left text-sm transition-colors hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none",
+                  selectedValue === item.value ? "bg-white/10 text-white" : "text-slate-200",
+                ].join(" ")}
                 title={item.label}
               >
                 <span className="min-w-0 truncate">{item.label}</span>
