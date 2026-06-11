@@ -141,6 +141,27 @@ fn merge_card_on_top_of_token_host_is_nontoken_and_restores_on_leave() {
 
     // On leave, the survivor's intrinsic token-ness is restored.
     crate::game::zones::move_to_zone(&mut state, host, Zone::Graveyard, &mut events);
+    let leave_record = events
+        .iter()
+        .find_map(|event| match event {
+            GameEvent::ZoneChanged {
+                object_id,
+                from,
+                to,
+                record,
+            } if *object_id == host
+                && *from == Some(Zone::Battlefield)
+                && *to == Zone::Graveyard =>
+            {
+                Some(record)
+            }
+            _ => None,
+        })
+        .expect("merged survivor emits a battlefield-to-graveyard ZoneChanged event");
+    assert!(
+        !leave_record.is_token,
+        "the leave event observes the card-on-top merged permanent as nontoken (CR 730.2d)"
+    );
     let o = state.objects.get(&host).unwrap();
     assert!(
         o.is_token,

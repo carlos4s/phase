@@ -316,16 +316,6 @@ pub fn split_merged_permanent_on_leave(
     }
     let components = survivor.merged_components.clone();
 
-    // CR 730.2d + CR 400.7 + CR 111.7: restore the survivor's intrinsic token-ness
-    // (overridden to the topmost component's while merged) before it leaves, so a
-    // token host that had a card mutated on top of it is a token again — the
-    // cease-to-exist SBA then applies to it instead of leaking a nontoken object.
-    if let Some(survivor) = state.objects.get_mut(&merged_id) {
-        if let Some(intrinsic) = survivor.pre_merge_is_token.take() {
-            survivor.is_token = intrinsic;
-        }
-    }
-
     // CR 730.3 + CR 400.7: before the surviving object changes zone, drop the
     // merge's layer-1 copy effect and flush layers so it leaves as its own card.
     remove_merge_layer_effect(state, merged_id);
@@ -351,6 +341,19 @@ pub fn split_merged_permanent_on_leave(
 
     // The surviving object's merge identity is cleared by its own
     // `reset_for_battlefield_exit` during the subsequent `move_to_zone`.
+}
+
+/// CR 730.2d + CR 400.7 + CR 111.7: restore the survivor's intrinsic token-ness
+/// after the leave-event snapshot captures the merged permanent's topmost-derived
+/// token-ness, but before the object lands outside the battlefield. This lets
+/// "creature token dies" filters see the object as it existed immediately before
+/// leaving while still letting the restored token host cease to exist.
+pub(crate) fn restore_pre_merge_tokenness_for_leave(state: &mut GameState, merged_id: ObjectId) {
+    if let Some(survivor) = state.objects.get_mut(&merged_id) {
+        if let Some(intrinsic) = survivor.pre_merge_is_token.take() {
+            survivor.is_token = intrinsic;
+        }
+    }
 }
 
 /// CR 730.3c: "If an effect can find the new object that a merged permanent
