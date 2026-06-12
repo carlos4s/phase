@@ -2251,7 +2251,9 @@ fn pay_mana_sub_cost(
             EngineError::ActionNotAllowed("Mana pool cannot cover mana ability cost".to_string())
         })?,
     };
-    let _ = spent;
+    if !spent.is_empty() || hybrid_plan.is_some() {
+        state.layers_dirty.mark_full();
+    }
     // CR 605.3b: The player's mana pool mutation is the public signal; no
     // dedicated event exists for ability mana payments. The pool-diff is
     // surfaced via the standard state-update machinery.

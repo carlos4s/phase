@@ -1144,7 +1144,7 @@ fn parse_you_control_subtype_count(text: &str) -> Option<(usize, String)> {
 /// remainder returned by `parse_type_phrase` must be empty for the parse to
 /// succeed; otherwise we'd silently truncate qualifying clauses that the filter
 /// layer hasn't absorbed.
-fn parse_spell_targets_filter(text: &str) -> Option<ParsedCondition> {
+pub(crate) fn parse_spell_targets_filter(text: &str) -> Option<ParsedCondition> {
     let rest = alt((
         tag::<_, _, OracleError<'_>>("it targets a "),
         tag("it targets an "),
@@ -1171,6 +1171,19 @@ fn parse_spell_targets_filter(text: &str) -> Option<ParsedCondition> {
                 }),
             });
         }
+    }
+    // CR 115.1: "it targets a permanent or player" — proliferate-style pool
+    // (Shiko and Narset, Unified Flurry gate). Matched before `parse_type_phrase`
+    // so the "or player" half is not dropped.
+    if rest.trim() == "permanent or player" {
+        return Some(ParsedCondition::SpellTargetsFilter {
+            filter: TargetFilter::Or {
+                filters: vec![
+                    TargetFilter::Typed(TypedFilter::permanent()),
+                    TargetFilter::Player,
+                ],
+            },
+        });
     }
     let (filter, remainder) = parse_type_phrase(rest);
     if !remainder.trim().is_empty() {
@@ -1205,7 +1218,7 @@ fn capitalize_condition_word(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::ability::{CountScope, FilterProp, QuantityExpr};
+    use crate::types::ability::{CountScope, FilterProp, QuantityExpr, TargetFilter, TypeFilter};
 
     #[test]
     fn parses_source_conditions() {
@@ -1661,6 +1674,24 @@ mod tests {
                 );
             }
             other => panic!("expected SpellTargetsFilter(IsCommander), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn it_targets_a_permanent_or_player_parses_to_spell_targets_filter() {
+        let parsed = parse_restriction_condition("it targets a permanent or player")
+            .expect("should parse the permanent-or-player predicate");
+        match parsed {
+            ParsedCondition::SpellTargetsFilter {
+                filter: TargetFilter::Or { filters },
+            } => {
+                assert!(filters.iter().any(|f| matches!(
+                    f,
+                    TargetFilter::Typed(tf) if tf.type_filters.contains(&TypeFilter::Permanent)
+                )));
+                assert!(filters.contains(&TargetFilter::Player));
+            }
+            other => panic!("expected SpellTargetsFilter(Or), got {other:?}"),
         }
     }
 

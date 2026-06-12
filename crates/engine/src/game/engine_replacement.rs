@@ -360,6 +360,9 @@ pub(super) fn handle_replacement_choice(
                                 tap_state: ManaTapState::from_tap(tapped_for_mana),
                             });
                         }
+                        if count > 0 {
+                            state.layers_dirty.mark_full();
+                        }
                     }
                 }
                 // CR 614.1b + CR 614.10: BeginTurn / BeginPhase replacements are

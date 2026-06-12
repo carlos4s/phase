@@ -1589,6 +1589,11 @@ pub enum CastingPermission {
         /// declines or fails to cast.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         duration: Option<Duration>,
+        /// CR 614.1a: Torrential Gearhulk / Toshiro class — a `CastFromZone`
+        /// grant whose sub-ability is "if that spell would be put into your
+        /// graveyard, exile it instead." Applied when the granted cast finalizes.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        exile_instead_of_graveyard_on_resolve: bool,
     },
     /// CR 400.7i: Play from exile until duration expires (impulse draw).
     /// Building block for "exile top N, choose one, you may play it this turn" patterns.
@@ -2888,6 +2893,13 @@ pub enum TargetFilter {
     /// Resolves to the most recently created token(s) from Effect::Token.
     /// Used for "create X and [verb] it" patterns (e.g. "create a token and suspect it").
     LastCreated,
+    /// CR 701.20e + CR 608.2c: Resolves to the most recently looked-at or
+    /// revealed card(s) from a `Dig`/`RevealTop` effect in the current
+    /// resolution (`state.last_revealed_ids`). Used by anaphoric "it" /
+    /// "that card" references after "look at the top card of your library"
+    /// (Amareth, the Lustrous) and by `AbilityCondition::ObjectsShareQuality`
+    /// subject slots.
+    LastRevealed,
     /// CR 400.7j + CR 608.2k: Resolves to the object paid as a cost for the
     /// resolving spell or ability. Used by effects such as "the exiled card"
     /// after an exile-as-cost clause.
@@ -3488,6 +3500,15 @@ pub enum QuantityRef {
     /// targeted-player and cross-player aggregate variants per the same axis
     /// used by `LifeTotal`/`HandSize`.
     PartySize { player: PlayerScope },
+    /// CR 106.4: The amount of unspent mana in the controller's mana pool —
+    /// `Some(color)` counts only that color, `None` counts all colors. Drives
+    /// dynamic P/T and similar magnitudes that scale with floating mana
+    /// (Omnath, Locus of Mana — "gets +1/+1 for each unspent green mana you
+    /// have"). Controller-scoped: every printed "unspent … mana you have"
+    /// reference is to the ability's own controller, so no `PlayerScope` axis
+    /// is carried (unlike `LifeTotal`/`HandSize`, which opponents' effects do
+    /// read).
+    UnspentMana { color: Option<ManaColor> },
     /// CR 702.179f: `player`'s current speed, treating no speed as 0.
     /// `PlayerScope::Controller` is the default reading ("your speed");
     /// `Target` / `Opponent { .. }` / `AllPlayers { .. }` /
@@ -4579,6 +4600,14 @@ pub enum StaticCondition {
     /// CR 400.7: True when the source permanent entered the battlefield this turn.
     /// Used for "as long as this [permanent] entered this turn" conditional statics.
     SourceEnteredThisTurn,
+    /// CR 601.2 + CR 611.3a: True when the source permanent was cast (its
+    /// `cast_from_zone` is `Some`). `zone: None` = cast from any zone; `Some(z)`
+    /// = cast specifically from zone `z`. Used for "as long as it was cast"
+    /// continuous grants (The Tarrasque).
+    WasCast {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        zone: Option<crate::types::zones::Zone>,
+    },
     /// CR 701.54a: True when this creature is the ring-bearer for its controller.
     IsRingBearer,
     /// CR 701.54c: True when the controller's ring level is at least this value (0-indexed).
@@ -6137,6 +6166,12 @@ pub struct FaceDownProfile {
     /// CR 205.1a: Creature subtypes the effect grants ("Cyberman").
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subtypes: Vec<String>,
+    /// CR 701.58a: Ward granted to the face-down permanent. `None` for plain
+    /// manifest/morph; `Some(Ward {2})` for cloak (and is also the correct home
+    /// for disguise's ward). Applied as a `Keyword::Ward` on entry and cleared
+    /// when the card is turned face up (the real card's keywords take over).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ward: Option<crate::types::keywords::WardCost>,
 }
 
 impl FaceDownProfile {
@@ -6149,6 +6184,19 @@ impl FaceDownProfile {
             toughness: None,
             extra_core_types: vec![],
             subtypes: vec![],
+            ward: None,
+        }
+    }
+
+    /// CR 701.58a: The cloak face-down characteristics — a vanilla 2/2 creature
+    /// with ward {2}. Otherwise identical to [`Self::vanilla_2_2`]; the card can
+    /// still be turned face up for its mana cost if it's a creature card.
+    pub fn cloaked_2_2() -> Self {
+        Self {
+            ward: Some(crate::types::keywords::WardCost::Mana(
+                crate::types::mana::ManaCost::generic(2),
+            )),
+            ..Self::vanilla_2_2()
         }
     }
 }
@@ -8014,6 +8062,28 @@ pub enum Effect {
     /// CR 701.62a: Manifest dread — look at top 2 cards of library, manifest one,
     /// put the rest into graveyard. Uses interactive WaitingFor::ManifestDreadChoice.
     ManifestDread,
+    /// CR 701.58a: Cloak — put card(s) onto the battlefield face down as a 2/2
+    /// creature **with ward {2}**, turnable face up for its mana cost if it's a
+    /// creature card. Distinct from `Manifest` (CR 701.40a): cloak grants ward
+    /// and is a separate keyword action for "cloak"-referencing text. `target`
+    /// selects whose library is cloaked from (mirrors `Manifest.target`); first
+    /// pass covers the top-of-library source. `count` is the number of cards.
+    Cloak {
+        target: TargetFilter,
+        count: QuantityExpr,
+    },
+    /// CR 406.3 + CR 701.20a: Turn a face-down card face up via a resolving effect (not the
+    /// morph special action). Used by the Imprint "flip" cards — Clone Shell,
+    /// Summoner's Egg, Compleated Clone Shell, The Creation of Avacyn — which
+    /// exile a card face down and later "turn the exiled card face up". `target`
+    /// selects the face-down object (default `ExiledBySource`, the card this
+    /// source exiled). Reveals the card's real characteristics; any conditional
+    /// follow-up ("if it's a creature card, put it onto the battlefield …")
+    /// chains as a sub-ability.
+    TurnFaceUp {
+        #[serde(default = "default_target_filter_exiled_by_source")]
+        target: TargetFilter,
+    },
     /// CR 500.7: Take an extra turn after this one. The target determines who
     /// takes the extra turn (usually Controller for "take an extra turn").
     /// Extra turns are stored as a LIFO stack — most recently created taken first.
@@ -8483,6 +8553,12 @@ fn default_target_filter_self_ref() -> TargetFilter {
     TargetFilter::SelfRef
 }
 
+/// CR 406.3: default for `Effect::TurnFaceUp` — "the exiled card" this source
+/// exiled face down (Imprint flip cards).
+fn default_target_filter_exiled_by_source() -> TargetFilter {
+    TargetFilter::ExiledBySource
+}
+
 /// CR 608.2c: default for continuation effects whose target is inherited from
 /// the parent ability (e.g. `Effect::HideawayConceal`).
 fn default_target_filter_parent() -> TargetFilter {
@@ -8760,6 +8836,10 @@ impl TargetFilter {
                 | TargetFilter::TriggeringPlayer
                 | TargetFilter::TriggeringSource
                 | TargetFilter::DefendingPlayer
+                // CR 608.2c + CR 115.1: "that token" / "those tokens"
+                // continuations bind to objects created earlier in the same
+                // resolution; they are never declared as player-chosen targets.
+                | TargetFilter::LastCreated
                 // CR 102.1 + CR 103.1: the seating neighbor is computed at the
                 // resolver (`game::players::neighbor`), never declared as a
                 // chosen target slot — so it is a context ref.
@@ -9159,6 +9239,8 @@ impl Effect {
             | Effect::ExileResolvingSpellInsteadOfGraveyard
             | Effect::Manifest { .. }
             | Effect::ManifestDread
+            | Effect::Cloak { .. }
+            | Effect::TurnFaceUp { .. }
             | Effect::RollDie { .. }
             | Effect::FlipCoin { .. }
             | Effect::FlipCoins { .. }
@@ -9260,6 +9342,7 @@ impl Effect {
             | Effect::PutAtLibraryPosition { count, .. }
             | Effect::ChooseDrawnThisTurnPayOrTopdeck { count, .. }
             | Effect::Manifest { count, .. }
+            | Effect::Cloak { count, .. }
             | Effect::SkipNextTurn { count, .. }
             | Effect::SkipNextStep { count, .. }
             | Effect::AdditionalPhase { count, .. }
@@ -9403,6 +9486,7 @@ impl Effect {
             | Effect::MadnessCast { .. }
             | Effect::Mana { .. }
             | Effect::ManifestDread
+            | Effect::TurnFaceUp { .. }
             | Effect::MiracleCast { .. }
             | Effect::OpenAttractions { .. }
             | Effect::PayCost { .. }
@@ -9456,6 +9540,7 @@ impl Effect {
             | Effect::PutAtLibraryPosition { count, .. }
             | Effect::ChooseDrawnThisTurnPayOrTopdeck { count, .. }
             | Effect::Manifest { count, .. }
+            | Effect::Cloak { count, .. }
             | Effect::SkipNextTurn { count, .. }
             | Effect::SkipNextStep { count, .. }
             | Effect::AdditionalPhase { count, .. }
@@ -9599,6 +9684,7 @@ impl Effect {
             | Effect::MadnessCast { .. }
             | Effect::Mana { .. }
             | Effect::ManifestDread
+            | Effect::TurnFaceUp { .. }
             | Effect::MiracleCast { .. }
             | Effect::OpenAttractions { .. }
             | Effect::PayCost { .. }
@@ -9790,6 +9876,8 @@ pub fn effect_variant_name(effect: &Effect) -> &str {
         Effect::Adapt { .. } => "Adapt",
         Effect::Manifest { .. } => "Manifest",
         Effect::ManifestDread => "ManifestDread",
+        Effect::Cloak { .. } => "Cloak",
+        Effect::TurnFaceUp { .. } => "TurnFaceUp",
         Effect::ExtraTurn { .. } => "ExtraTurn",
         Effect::GrantExtraLoyaltyActivations { .. } => "GrantExtraLoyaltyActivations",
         Effect::SkipNextTurn { .. } => "SkipNextTurn",
@@ -9986,6 +10074,8 @@ pub enum EffectKind {
     Adapt,
     Manifest,
     ManifestDread,
+    /// CR 701.58a: Cloak (face-down 2/2 with ward {2}).
+    Cloak,
     ExtraTurn,
     GrantExtraLoyaltyActivations,
     SkipNextTurn,
@@ -10195,6 +10285,8 @@ impl From<&Effect> for EffectKind {
             Effect::Adapt { .. } => EffectKind::Adapt,
             Effect::Manifest { .. } => EffectKind::Manifest,
             Effect::ManifestDread => EffectKind::ManifestDread,
+            Effect::Cloak { .. } => EffectKind::Cloak,
+            Effect::TurnFaceUp { .. } => EffectKind::TurnFaceUp,
             Effect::ExtraTurn { .. } => EffectKind::ExtraTurn,
             Effect::GrantExtraLoyaltyActivations { .. } => EffectKind::GrantExtraLoyaltyActivations,
             Effect::SkipNextTurn { .. } => EffectKind::SkipNextTurn,
@@ -11320,6 +11412,17 @@ pub enum AbilityCondition {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         subtype_filter: Option<Box<TargetFilter>>,
     },
+    /// CR 608.2c + CR 201.2: Compare whether two anaphoric object references
+    /// share at least one value of the named quality at resolution time.
+    /// Covers "if it shares a card type with that permanent" (Amareth) and the
+    /// full `SharedQuality` axis (color, creature type, name, mana value, etc.).
+    /// `subject` and `reference` are resolved via `resolved_targets` — typical
+    /// pairings are `LastRevealed` × `TriggeringSource`.
+    ObjectsShareQuality {
+        subject: TargetFilter,
+        reference: TargetFilter,
+        quality: SharedQuality,
+    },
     /// CR 400.7 + CR 608.2c: True when the source permanent entered the battlefield
     /// this turn. For the "did not enter this turn" sense (e.g., Moon-Circuit Hacker
     /// "unless ~ entered this turn"), wrap with `AbilityCondition::Not`.
@@ -11368,6 +11471,14 @@ pub enum AbilityCondition {
         #[serde(default)]
         use_lki: bool,
     },
+    /// CR 608.2c + CR 603.2: "if it targets a [filter]" on a triggered ability —
+    /// gates the sub_ability on whether the triggering spell's chosen targets
+    /// include at least one permanent or player matching `filter`. The pronoun
+    /// `it` refers to the spell that caused the trigger (e.g. Flurry's "copy
+    /// that spell if it targets a permanent or player"). Contrast with
+    /// `ParsedCondition::SpellTargetsFilter`, which gates casting permissions on
+    /// the spell being cast.
+    TriggeringSpellTargetsFilter { filter: TargetFilter },
     /// CR 608.2c: "If this creature/permanent is a [type]" — gates sub_ability on whether
     /// the ability's source object matches the filter. Used by leveler-style cards
     /// (e.g. Figure of Fable) where each activated ability gates on the source's current type.

@@ -266,6 +266,7 @@ fn quantity_ref_uses_object_count(qty: &QuantityRef) -> bool {
         // references: unaffected by another object's battlefield entry/exit.
         QuantityRef::HandSize { .. }
         | QuantityRef::LifeTotal { .. }
+        | QuantityRef::UnspentMana { .. }
         | QuantityRef::GraveyardSize { .. }
         | QuantityRef::LifeAboveStarting
         | QuantityRef::StartingLifeTotal
@@ -436,6 +437,7 @@ fn entered_object_perturbs_quantity_ref(
         // enumeration to the `false` arm of `quantity_ref_uses_object_count`.
         QuantityRef::HandSize { .. }
         | QuantityRef::LifeTotal { .. }
+        | QuantityRef::UnspentMana { .. }
         | QuantityRef::GraveyardSize { .. }
         | QuantityRef::LifeAboveStarting
         | QuantityRef::StartingLifeTotal
@@ -1085,6 +1087,19 @@ fn resolve_ref(
         QuantityRef::LifeTotal { player: scope } => {
             resolve_per_player_scalar(state, scope, controller, ctx, targets, ability, |p| p.life)
         }
+        // CR 106.4: floating mana of `color` (or any color) in the controller's
+        // mana pool. Controller-scoped — `player` is the controller. Omnath,
+        // Locus of Mana ("+1/+1 for each unspent green mana you have").
+        QuantityRef::UnspentMana { color } => player
+            .map(|p| {
+                usize_to_i32_saturating(match color {
+                    Some(c) => p
+                        .mana_pool
+                        .count_color(crate::types::mana::ManaType::from(*c)),
+                    None => p.mana_pool.produced_mana_total(),
+                })
+            })
+            .unwrap_or(0),
         // CR 122.1: Counter-kind lookup summed across scope players. Controller
         // scope resolves to a single player; Opponents/All may span multiple.
         // Per-player u32 is widened to u64 before summing; the i32::try_from
@@ -5645,6 +5660,47 @@ mod tests {
             resolve_quantity(&state, &expr, PlayerId(0), ObjectId(99)),
             4
         );
+    }
+
+    /// CR 106.4: `QuantityRef::UnspentMana` counts floating mana in the
+    /// controller's pool — `Some(color)` per-color, `None` total. Omnath, Locus
+    /// of Mana ("+1/+1 for each unspent green mana you have").
+    #[test]
+    fn resolve_quantity_unspent_mana() {
+        use crate::types::mana::{ManaType, ManaUnit};
+        let mut state = GameState::new_two_player(42);
+        // P0 has 3 green + 1 red floating; P1's pool is empty.
+        for _ in 0..3 {
+            state.players[0].mana_pool.add(ManaUnit::new(
+                ManaType::Green,
+                ObjectId(0),
+                false,
+                vec![],
+            ));
+        }
+        state.players[0]
+            .mana_pool
+            .add(ManaUnit::new(ManaType::Red, ObjectId(0), false, vec![]));
+
+        let green = QuantityExpr::Ref {
+            qty: QuantityRef::UnspentMana {
+                color: Some(ManaColor::Green),
+            },
+        };
+        // Controller-scoped: P0 reads 3 green, P1 (empty pool) reads 0.
+        assert_eq!(
+            resolve_quantity(&state, &green, PlayerId(0), ObjectId(1)),
+            3
+        );
+        assert_eq!(
+            resolve_quantity(&state, &green, PlayerId(1), ObjectId(1)),
+            0
+        );
+        // `None` counts all floating mana (3 green + 1 red).
+        let any = QuantityExpr::Ref {
+            qty: QuantityRef::UnspentMana { color: None },
+        };
+        assert_eq!(resolve_quantity(&state, &any, PlayerId(0), ObjectId(1)), 4);
     }
 
     /// CR 613.1: `CountScope::SourceChosenPlayer` resolves to the player

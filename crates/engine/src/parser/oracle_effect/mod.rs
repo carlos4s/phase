@@ -1949,6 +1949,7 @@ fn try_parse_airbend_clause(tp: TextPair<'_>) -> Option<ParsedEffectClause> {
                         granted_to: None,
                         resolution_cleanup: None,
                         duration: None,
+                        exile_instead_of_graveyard_on_resolve: false,
                     },
                     target: TargetFilter::TrackedSet {
                         id: TrackedSetId(0),
@@ -24028,6 +24029,114 @@ mod tests {
     }
 
     #[test]
+    fn effect_cloak_top_card() {
+        // CR 701.58a: Cryptic Coat / Ransom Note — "cloak the top card of your library".
+        let e = parse_effect("Cloak the top card of your library");
+        assert!(
+            matches!(
+                e,
+                Effect::Cloak {
+                    target: TargetFilter::Controller,
+                    count: QuantityExpr::Fixed { value: 1 }
+                }
+            ),
+            "expected Cloak {{ Controller, count: 1 }}, got: {e:?}"
+        );
+    }
+
+    #[test]
+    fn effect_cloak_top_n_cards() {
+        let e = parse_effect("Cloak the top two cards of your library");
+        assert!(
+            matches!(
+                e,
+                Effect::Cloak {
+                    target: TargetFilter::Controller,
+                    count: QuantityExpr::Fixed { value: 2 }
+                }
+            ),
+            "expected Cloak {{ Controller, count: 2 }}, got: {e:?}"
+        );
+    }
+
+    #[test]
+    fn effect_cloak_rejects_unsupported_source_suffix() {
+        let e = parse_effect("Cloak the top card of their library");
+        assert!(
+            matches!(e, Effect::Unimplemented { .. }),
+            "unsupported cloak source must not default to Controller: {e:?}"
+        );
+    }
+
+    #[test]
+    fn turn_face_up_then_conditional_put_keeps_follow_up_clause() {
+        // CR 406.3 + CR 701.20a: Clone Shell / Summoner's Egg dies-trigger effect. The
+        // "turn the exiled card face up" clause must NOT swallow the trailing
+        // "If it's a creature card, put it onto the battlefield ..." sentence:
+        // the leading clause lowers to TurnFaceUp and the follow-up survives as
+        // a conditional sub-ability (RevealedHasCardType{Creature}).
+        let chain = parse_effect_chain(
+            "Turn the exiled card face up. If it's a creature card, put it onto the battlefield under your control.",
+            AbilityKind::Spell,
+        );
+        assert!(
+            matches!(
+                &*chain.effect,
+                Effect::TurnFaceUp {
+                    target: TargetFilter::ExiledBySource
+                }
+            ),
+            "expected leading TurnFaceUp, got: {:?}",
+            chain.effect
+        );
+        let sub = chain
+            .sub_ability
+            .as_ref()
+            .expect("follow-up clause must survive as a sub-ability, not be swallowed");
+        assert!(
+            matches!(
+                &*sub.effect,
+                Effect::ChangeZone {
+                    destination: Zone::Battlefield,
+                    ..
+                }
+            ),
+            "expected follow-up ChangeZone to battlefield, got: {:?}",
+            sub.effect
+        );
+    }
+
+    #[test]
+    fn effect_turn_the_exiled_card_face_up() {
+        // CR 406.3: Summoner's Egg / Compleated Clone Shell — singular subject.
+        let e = parse_effect("Turn the exiled card face up");
+        assert!(
+            matches!(
+                e,
+                Effect::TurnFaceUp {
+                    target: TargetFilter::ExiledBySource
+                }
+            ),
+            "expected TurnFaceUp {{ ExiledBySource }}, got: {e:?}"
+        );
+    }
+
+    #[test]
+    fn effect_turn_the_exiled_cards_face_up() {
+        // CR 406.3: Clone Shell — plural subject ("turn the exiled cards face up").
+        let e = parse_effect("Turn the exiled cards face up");
+        assert!(
+            matches!(
+                e,
+                Effect::TurnFaceUp {
+                    target: TargetFilter::ExiledBySource
+                }
+            ),
+            "expected TurnFaceUp {{ ExiledBySource }}, got: {e:?}"
+        );
+    }
+
+    #[test]
     fn effect_manifest_top_card() {
         let e = parse_effect("Manifest the top card of your library");
         assert!(
@@ -35727,6 +35836,23 @@ mod tests {
     }
 
     #[test]
+    fn strip_suffix_conditional_extracts_flurry_target_gate_with_copy_retarget_tail() {
+        let (cond, text) = strip_suffix_conditional(
+            "copy that spell if it targets a permanent or player, and you may choose new targets for the copy",
+            &mut ParseContext::default(),
+        );
+        assert_eq!(
+            text,
+            "copy that spell, and you may choose new targets for the copy"
+        );
+        let cond = cond.expect("should extract triggering-spell target gate");
+        assert!(matches!(
+            cond,
+            AbilityCondition::TriggeringSpellTargetsFilter { .. }
+        ));
+    }
+
+    #[test]
     fn strip_suffix_conditional_extracts_quantity_check() {
         let (cond, text) = strip_suffix_conditional(
             "draw a card if your life total is greater than your starting life total",
@@ -41484,7 +41610,7 @@ mod tests {
             name: "this".to_string(),
             description: Some("this token gains haste".to_string()),
         };
-        let rewritten = rewrite_token_created_this_way_unimplemented(&effect)
+        let rewritten = rewrite_token_created_this_way_unimplemented(&effect, None)
             .expect("recognizer must accept 'this token' prefix");
         match rewritten {
             Effect::GenericEffect {
@@ -41517,7 +41643,7 @@ mod tests {
             name: "that".to_string(),
             description: Some("that token gains flying".to_string()),
         };
-        let rewritten = rewrite_token_created_this_way_unimplemented(&effect)
+        let rewritten = rewrite_token_created_this_way_unimplemented(&effect, None)
             .expect("recognizer must accept 'that token' prefix");
         match rewritten {
             Effect::GenericEffect {
@@ -41530,6 +41656,34 @@ mod tests {
                     m,
                     ContinuousModification::AddKeyword {
                         keyword: Keyword::Flying,
+                    }
+                )));
+            }
+            other => panic!("expected GenericEffect, got {other:?}"),
+        }
+    }
+
+    /// CR 611.2c + CR 701.15b: "the tokens are goaded" anaphor after token creation.
+    #[test]
+    fn rewrite_recognizer_accepts_the_tokens_goaded_prefix() {
+        let effect = Effect::unimplemented(
+            "the_tokens_goaded_anaphor",
+            "The tokens are goaded for the rest of the game",
+        );
+        let rewritten = rewrite_token_created_this_way_unimplemented(&effect, None)
+            .expect("recognizer must accept 'the tokens' goad prefix");
+        match rewritten {
+            Effect::GenericEffect {
+                static_abilities,
+                duration,
+                target,
+            } => {
+                assert_eq!(target, Some(TargetFilter::LastCreated));
+                assert_eq!(duration, Some(Duration::Permanent));
+                assert!(static_abilities[0].modifications.iter().any(|m| matches!(
+                    m,
+                    ContinuousModification::AddStaticMode {
+                        mode: StaticMode::Goaded
                     }
                 )));
             }

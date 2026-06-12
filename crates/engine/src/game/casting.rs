@@ -6869,6 +6869,7 @@ pub(super) fn initiate_cast_during_resolution(
                 granted_to: Some(player),
                 resolution_cleanup: Some(cleanup),
                 duration: None,
+                exile_instead_of_graveyard_on_resolve: false,
             });
     }
     let mut prepared = prepare_spell_cast_with_variant_override(state, player, hit_card, None)?;
@@ -9983,7 +9984,7 @@ pub(super) fn pay_effect_mana_cost(
         .iter_mut()
         .find(|p| p.id == player)
         .expect("player exists");
-    let (_spent_units, life_payments) = mana_payment::pay_cost_with_demand_and_choices(
+    let (spent_units, life_payments) = mana_payment::pay_cost_with_demand_and_choices(
         &mut player_data.mana_pool,
         cost,
         None,
@@ -9993,6 +9994,9 @@ pub(super) fn pay_effect_mana_cost(
         permissions.life_colors,
     )
     .map_err(|_| EngineError::ActionNotAllowed("Mana payment failed".to_string()))?;
+    if !spent_units.is_empty() {
+        state.layers_dirty.mark_full();
+    }
 
     for payment in &life_payments {
         let amount = u32::try_from(payment.amount).unwrap_or(0);
@@ -10098,6 +10102,9 @@ fn auto_tap_and_pay_cost_excluding(
         permissions.life_colors,
     )
     .map_err(|_| EngineError::ActionNotAllowed("Mana payment failed".to_string()))?;
+    if !spent_units.is_empty() {
+        state.layers_dirty.mark_full();
+    }
 
     // CR 107.4f + CR 118.3b + CR 119.4 + CR 119.8: Each Phyrexian shard paid
     // with life routes through the single-authority life-cost helper so the
@@ -12311,6 +12318,7 @@ mod tests {
     };
     use crate::types::actions::GameAction;
     use crate::types::card_type::{CoreType, Supertype};
+    use crate::types::counter::CounterType;
     use crate::types::events::GameEvent;
     use crate::types::keywords::{FlashbackCost, Keyword, KeywordKind};
     use crate::types::mana::{
@@ -12885,6 +12893,8 @@ mod tests {
                 granted_to: None,
                 resolution_cleanup: None,
                 duration: None,
+
+                exile_instead_of_graveyard_on_resolve: false,
             });
         let prepared = prepare_spell_cast(&state, PlayerId(0), exiled).unwrap();
         assert!(matches!(prepared.mana_cost, ManaCost::NoCost));
@@ -23583,6 +23593,91 @@ mod tests {
         ));
     }
 
+    /// Issue #2937 — Torrential Gearhulk / Toshiro class: `CastFromZone` with an
+    /// "exile it instead" rider must exile the granted cast on resolution.
+    #[test]
+    fn cast_from_zone_exile_rider_exiles_graveyard_cast_on_resolution() {
+        use crate::game::effects::cast_from_zone;
+        use crate::game::stack;
+        use crate::types::ability::{
+            CardPlayMode, CastFromZoneDriver, Effect, ResolvedAbility, TargetRef,
+        };
+
+        let mut state = setup_game_at_main_phase();
+        let instant = create_object(
+            &mut state,
+            CardId(2937),
+            PlayerId(0),
+            "Graveyard Draw".to_string(),
+            Zone::Graveyard,
+        );
+        {
+            let obj = state.objects.get_mut(&instant).unwrap();
+            obj.card_types.core_types.push(CoreType::Instant);
+            obj.mana_cost = ManaCost::zero();
+            Arc::make_mut(&mut obj.abilities).push(AbilityDefinition::new(
+                AbilityKind::Spell,
+                Effect::Draw {
+                    count: QuantityExpr::Fixed { value: 1 },
+                    target: TargetFilter::Controller,
+                },
+            ));
+        }
+
+        let mut ability = ResolvedAbility::new(
+            Effect::CastFromZone {
+                target: TargetFilter::ParentTarget,
+                without_paying_mana_cost: true,
+                mode: CardPlayMode::Cast,
+                cast_transformed: false,
+                alt_ability_cost: None,
+                constraint: None,
+                duration: None,
+                driver: CastFromZoneDriver::LingeringPermission,
+            },
+            vec![TargetRef::Object(instant)],
+            ObjectId(9001),
+            PlayerId(0),
+        );
+        ability.sub_ability = Some(Box::new(ResolvedAbility::new(
+            Effect::ChangeZone {
+                origin: None,
+                destination: Zone::Exile,
+                target: TargetFilter::ParentTarget,
+                owner_library: false,
+                enter_transformed: false,
+                enters_under: None,
+                enter_tapped: crate::types::zones::EtbTapState::Unspecified,
+                enters_attacking: false,
+                up_to: false,
+                enter_with_counters: vec![],
+                face_down_profile: None,
+            },
+            vec![],
+            ObjectId(9001),
+            PlayerId(0),
+        )));
+
+        let mut events = Vec::new();
+        cast_from_zone::resolve(&mut state, &ability, &mut events).unwrap();
+
+        let prepared = prepare_spell_cast(&state, PlayerId(0), instant)
+            .expect("graveyard instant must be castable under the grant");
+        continue_with_prepared(&mut state, PlayerId(0), prepared, &mut events).unwrap();
+
+        stack::resolve_top(&mut state, &mut events);
+
+        assert_eq!(
+            state.objects[&instant].zone,
+            Zone::Exile,
+            "the exile rider must redirect the resolved spell to exile"
+        );
+        assert!(
+            !state.players[0].graveyard.contains(&instant),
+            "the spell must not return to the graveyard"
+        );
+    }
+
     /// Issue #2027 — Emry, Lurker in the Loch: targeted graveyard artifact may
     /// be cast this turn via `CastFromZone` without exiling first.
     #[test]
@@ -23656,6 +23751,8 @@ mod tests {
                     granted_to: Some(PlayerId(0)),
                     resolution_cleanup: None,
                     duration: None,
+
+                    exile_instead_of_graveyard_on_resolve: false,
                 });
         }
 
@@ -23701,6 +23798,8 @@ mod tests {
             granted_to: Some(PlayerId(0)),
             resolution_cleanup: None,
             duration: None,
+
+            exile_instead_of_graveyard_on_resolve: false,
         }
     }
 
@@ -23738,6 +23837,8 @@ mod tests {
                     granted_to: Some(PlayerId(0)),
                     resolution_cleanup: None,
                     duration: None,
+
+                    exile_instead_of_graveyard_on_resolve: false,
                 });
         }
 
@@ -29637,6 +29738,8 @@ mod tests {
                 granted_to: None,
                 resolution_cleanup: None,
                 duration: None,
+
+                exile_instead_of_graveyard_on_resolve: false,
             });
 
         assert!(is_blocked_by_cast_only_from_zones(
@@ -30187,6 +30290,174 @@ mod tests {
         }
 
         assert!(!can_cast_object_now(&state, PlayerId(0), second_bird));
+    }
+
+    #[test]
+    fn first_x_spell_reducer_uses_x_filter_dynamic_counter_count_and_first_gate() {
+        let mut state = setup_game_at_main_phase();
+
+        let reducer = create_object(
+            &mut state,
+            CardId(305),
+            PlayerId(0),
+            "Zimone, Infinite Analyst".to_string(),
+            Zone::Battlefield,
+        );
+        {
+            let obj = state.objects.get_mut(&reducer).unwrap();
+            obj.counters.insert(CounterType::Plus1Plus1, 2);
+            obj.static_definitions.push(
+                parse_static_line(
+                    "The first spell you cast with {X} in its mana cost each turn costs {1} less to cast for each +1/+1 counter on ~.",
+                )
+                .unwrap(),
+            );
+        }
+
+        let non_x_spell = create_object(
+            &mut state,
+            CardId(306),
+            PlayerId(0),
+            "Non-X Spell".to_string(),
+            Zone::Hand,
+        );
+        {
+            let obj = state.objects.get_mut(&non_x_spell).unwrap();
+            obj.card_types.core_types.push(CoreType::Sorcery);
+            obj.mana_cost = ManaCost::generic(2);
+            Arc::make_mut(&mut obj.abilities).push(AbilityDefinition::new(
+                AbilityKind::Spell,
+                Effect::Unimplemented {
+                    name: "Sorcery".to_string(),
+                    description: None,
+                },
+            ));
+        }
+
+        assert!(
+            !can_cast_object_now(&state, PlayerId(0), non_x_spell),
+            "Zimone must not reduce non-X spells"
+        );
+
+        let x_spell = create_object(
+            &mut state,
+            CardId(307),
+            PlayerId(0),
+            "X Spell".to_string(),
+            Zone::Hand,
+        );
+        {
+            let obj = state.objects.get_mut(&x_spell).unwrap();
+            obj.card_types.core_types.push(CoreType::Sorcery);
+            obj.mana_cost = ManaCost::Cost {
+                shards: vec![ManaCostShard::X],
+                generic: 2,
+            };
+            Arc::make_mut(&mut obj.abilities).push(AbilityDefinition::new(
+                AbilityKind::Spell,
+                Effect::Unimplemented {
+                    name: "Sorcery".to_string(),
+                    description: None,
+                },
+            ));
+        }
+
+        assert!(
+            can_cast_object_now(&state, PlayerId(0), x_spell),
+            "two +1/+1 counters should reduce the first X spell's generic cost by two"
+        );
+
+        state.spells_cast_this_turn_by_player.insert(
+            PlayerId(0),
+            crate::im::Vector::from(vec![crate::types::SpellCastRecord {
+                name: "Earlier X Spell".to_string(),
+                core_types: vec![CoreType::Sorcery],
+                supertypes: vec![],
+                subtypes: vec![],
+                keywords: vec![],
+                colors: vec![],
+                mana_value: 2,
+                has_x_in_cost: true,
+                from_zone: Zone::Hand,
+                cast_variant: crate::types::game_state::CastingVariant::Normal,
+            }]),
+        );
+
+        assert!(
+            !can_cast_object_now(&state, PlayerId(0), x_spell),
+            "the reduction must stop after the first X spell each turn"
+        );
+    }
+
+    #[test]
+    fn opponent_first_noncreature_tax_uses_caster_history() {
+        let mut state = setup_game_at_main_phase();
+        state.active_player = PlayerId(1);
+        state.priority_player = PlayerId(1);
+        state.waiting_for = WaitingFor::Priority {
+            player: PlayerId(1),
+        };
+
+        let tax_source = create_object(
+            &mut state,
+            CardId(308),
+            PlayerId(0),
+            "Heartwood Storyteller Avatar".to_string(),
+            Zone::Battlefield,
+        );
+        state.objects.get_mut(&tax_source).unwrap().static_definitions.push(
+            parse_static_line(
+                "The first noncreature spell each opponent casts each turn costs {1} more to cast.",
+            )
+            .unwrap(),
+        );
+
+        add_mana(&mut state, PlayerId(1), ManaType::Colorless, 1);
+        let spell = create_object(
+            &mut state,
+            CardId(309),
+            PlayerId(1),
+            "Opponent Instant".to_string(),
+            Zone::Hand,
+        );
+        {
+            let obj = state.objects.get_mut(&spell).unwrap();
+            obj.card_types.core_types.push(CoreType::Instant);
+            obj.mana_cost = ManaCost::generic(1);
+            Arc::make_mut(&mut obj.abilities).push(AbilityDefinition::new(
+                AbilityKind::Spell,
+                Effect::Unimplemented {
+                    name: "Instant".to_string(),
+                    description: None,
+                },
+            ));
+        }
+
+        assert!(
+            !can_cast_object_now(&state, PlayerId(1), spell),
+            "opponent's first noncreature spell should be taxed beyond one available mana"
+        );
+
+        state.spells_cast_this_turn_by_player.insert(
+            PlayerId(1),
+            crate::im::Vector::from(vec![crate::types::SpellCastRecord {
+                name: "Earlier Instant".to_string(),
+                core_types: vec![CoreType::Instant],
+                supertypes: vec![],
+                subtypes: vec![],
+                keywords: vec![],
+                colors: vec![],
+                mana_value: 1,
+                has_x_in_cost: false,
+                from_zone: Zone::Hand,
+                cast_variant: crate::types::game_state::CastingVariant::Normal,
+            }]),
+        );
+
+        assert!(
+            can_cast_object_now(&state, PlayerId(1), spell),
+            "after that opponent has cast a noncreature spell this turn, the first-spell tax should no longer apply"
+        );
     }
 
     #[test]
@@ -32115,6 +32386,8 @@ mod tests {
                     granted_to: None,
                     resolution_cleanup: None,
                     duration: None,
+
+                    exile_instead_of_graveyard_on_resolve: false,
                 },
             );
         }
