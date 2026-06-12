@@ -6851,13 +6851,15 @@ pub enum Effect {
     /// target (opponents and per-opponent attack binding are chosen by the
     /// effect, like `Myriad`).
     Encore,
-    /// CR 701.42a / CR 712.4a: Meld — exile both this object (`source_id`) and a
-    /// battlefield object named `partner` that the controller both owns and
-    /// controls, then put a single melded permanent onto the battlefield whose
-    /// characteristics are the `result` card (the combined back faces, exposed in
-    /// card-data as the named result). No player-selectable target — the partner
-    /// is found by name + ownership at resolution. Resolver: `game/meld.rs`.
+    /// CR 701.42a / CR 712.4a: Meld — exile both the real meld instigator
+    /// (`source`) and a battlefield object named `partner` that the controller
+    /// both owns and controls, then put a single melded permanent onto the
+    /// battlefield whose characteristics are the `result` card (the combined back
+    /// faces, exposed in card-data as the named result). No player-selectable
+    /// target — the partner is found by name + ownership at resolution. Resolver:
+    /// `game/meld.rs`.
     Meld {
+        source: String,
         partner: String,
         result: String,
     },

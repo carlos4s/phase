@@ -50,7 +50,12 @@ pub fn perform_meld(
     ability: &ResolvedAbility,
     events: &mut Vec<GameEvent>,
 ) -> Result<(), EffectError> {
-    let Effect::Meld { partner, result } = &ability.effect else {
+    let Effect::Meld {
+        source: expected_source,
+        partner,
+        result,
+    } = &ability.effect
+    else {
         return Err(EffectError::MissingParam("Meld".to_string()));
     };
 
@@ -68,6 +73,7 @@ pub fn perform_meld(
             && o.controller == controller
             && o.owner == controller
             && o.is_represented_by_a_card()
+            && o.base_name.eq_ignore_ascii_case(expected_source.as_str())
     });
     if !source_ok {
         // CR 701.42c: objects that can't be melded stay in their current zone.

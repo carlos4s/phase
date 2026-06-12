@@ -41,11 +41,31 @@ fn seed_result_face(state: &mut crate::types::game_state::GameState) {
 fn meld_ability(source: ObjectId, controller: PlayerId, partner: &str) -> ResolvedAbility {
     ResolvedAbility::new(
         Effect::Meld {
+            source: "Gisela, the Broken Blade".to_string(),
             partner: partner.to_string(),
             result: RESULT_NAME.to_string(),
         },
         Vec::new(),
         source,
+        controller,
+    )
+}
+
+/// A meld `ResolvedAbility` with an explicit expected source name.
+fn meld_ability_from(
+    source_id: ObjectId,
+    controller: PlayerId,
+    source: &str,
+    partner: &str,
+) -> ResolvedAbility {
+    ResolvedAbility::new(
+        Effect::Meld {
+            source: source.to_string(),
+            partner: partner.to_string(),
+            result: RESULT_NAME.to_string(),
+        },
+        Vec::new(),
+        source_id,
         controller,
     )
 }
@@ -496,6 +516,51 @@ fn meld_renamed_non_meld_partner_is_noop() {
     assert!(
         state.exile.is_empty(),
         "nothing was exiled — the impostor is not a real meld half"
+    );
+}
+
+/// CR 701.42b: a card-backed NON-MELD source cannot be used as the meld
+/// instigator. The resolver must check the source's printed identity too, not
+/// only the partner's identity.
+#[test]
+fn meld_non_meld_source_is_noop() {
+    let mut sc = GameScenario::new();
+    let source = sc.add_creature(P0, "Grizzly Bears", 2, 2).id();
+    let partner = sc.add_creature(P0, "Bruna, the Fading Light", 5, 4).id();
+    seed_result_face(&mut sc.state);
+    let mut state = sc.state;
+
+    let mut events = Vec::new();
+    perform_meld(
+        &mut state,
+        &meld_ability_from(
+            source,
+            P0,
+            "Gisela, the Broken Blade",
+            "Bruna, the Fading Light",
+        ),
+        &mut events,
+    )
+    .unwrap();
+
+    let src = state.objects.get(&source).expect("source persists");
+    assert_eq!(
+        src.zone,
+        Zone::Battlefield,
+        "no-op: the source's printed identity is not the meld instigator"
+    );
+    assert!(
+        src.merged_components.is_empty(),
+        "no meld occurred with a non-meld source"
+    );
+    assert_eq!(
+        state.objects.get(&partner).expect("partner persists").zone,
+        Zone::Battlefield,
+        "the real partner is not exiled or absorbed"
+    );
+    assert!(
+        state.exile.is_empty(),
+        "nothing was exiled — the source is not the real meld instigator"
     );
 }
 

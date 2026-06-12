@@ -835,7 +835,8 @@ pub(crate) fn parse_trigger_line_with_index_ir(
         // enchanted host (Springheart Nantuko's landfall trigger).
         host_self_reference: ctx.host_self_reference.clone(),
         // CR 701.42a: stage the meld partner so the effect-clause combinator can
-        // stamp `Effect::Meld { partner, .. }` (the gate carried the name).
+        // stamp `Effect::Meld { source, partner, .. }` (the context carries the
+        // source name; the gate carried the partner name).
         pending_meld_partner: meld_partner,
         ..Default::default()
     };

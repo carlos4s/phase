@@ -7,7 +7,7 @@
 //! synthesis to build:
 //!
 //! * The instigator face is the one whose parsed ability already carries
-//!   `Effect::Meld { partner, result }`.
+//!   `Effect::Meld { source, partner, result }`.
 //! * The partner half carries only "Melds with X." reminder text and synthesizes
 //!   nothing.
 //!

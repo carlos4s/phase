@@ -705,8 +705,9 @@ fn walk_effect(effect: &Effect, out: &mut Vec<String>) {
         // CR 701.42 / CR 712.4b: the melded permanent presents the `result`
         // card's characteristics, but `result` is an outside-the-game third card.
         // Seed its name so `build_conjure_registry` preloads its `CardFace` into
-        // `card_face_registry`. `partner` is a live battlefield object the resolver
-        // finds by name — it needs no registry seeding.
+        // `card_face_registry`. `source` and `partner` are live battlefield
+        // objects the resolver finds by printed identity — they need no registry
+        // seeding.
         Effect::Meld { result, .. } => out.push(result.clone()),
         // A spellbook draft conjures the chosen card, but the list lives on the
         // card face (`metadata.spellbook`), not in the effect — the registry

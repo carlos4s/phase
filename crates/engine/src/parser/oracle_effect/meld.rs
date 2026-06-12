@@ -17,8 +17,10 @@
 //!    gate, returning the two-conjunct `TriggerCondition::And` (CR 701.42b own +
 //!    control of BOTH halves) and the partner card name.
 //! 2. [`parse_meld_effect_clause`] — recognizes the `"exile them, then meld them
-//!    into [result]"` effect clause, returning `Effect::Meld { partner, result }`
-//!    (partner supplied by the gate via `ParseContext::pending_meld_partner`).
+//!    into [result]"` effect clause, returning
+//!    `Effect::Meld { source, partner, result }` (`source` supplied by the parse
+//!    context and `partner` supplied by the gate via
+//!    `ParseContext::pending_meld_partner`).
 
 use nom::bytes::complete::{tag, take_until};
 use nom::Parser;
@@ -182,9 +184,10 @@ pub(crate) fn parse_meld_gate(effect_text: &str) -> Option<(TriggerCondition, St
 }
 
 /// CR 701.42a: Parse the meld effect clause `"exile them, then meld them into
-/// [result]"` into `Effect::Meld { partner, result }`. The partner name is
-/// supplied by the gate via `ctx.pending_meld_partner` (the gate carries it in
-/// its `ControlCount` conjunct; the effect clause names only `them` + result).
+/// [result]"` into `Effect::Meld { source, partner, result }`. The source name
+/// is the enclosing card name; the partner name is supplied by the gate via
+/// `ctx.pending_meld_partner` (the gate carries it in its `ControlCount`
+/// conjunct; the effect clause names only `them` + result).
 /// Returns `None` if the clause shape does not match or no partner is staged.
 pub(crate) fn parse_meld_effect_clause(text: &str, ctx: &ParseContext) -> Option<Effect> {
     let lower = text.to_lowercase();
@@ -205,7 +208,9 @@ pub(crate) fn parse_meld_effect_clause(text: &str, ctx: &ParseContext) -> Option
         return None;
     }
     let partner = ctx.pending_meld_partner.clone()?;
+    let source = ctx.card_name.clone()?;
     Some(Effect::Meld {
+        source,
         partner,
         result: result_name.to_string(),
     })

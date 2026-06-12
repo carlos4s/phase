@@ -3,10 +3,11 @@
 //! `game/meld.rs`) stay free of inline test scaffolding.
 //!
 //! These are building-block / AST-shape tests: they assert the parser derives
-//! `Effect::Meld { partner, result }` with the correct names, parameterized over
-//! the partner card type (creature partner / creature partner from a LAND
-//! instigator) and trigger-vs-activated shape. The runtime regression tests that
-//! drive the real resolve pipeline live in `game/meld_tests.rs`.
+//! `Effect::Meld { source, partner, result }` with the correct names,
+//! parameterized over the partner card type (creature partner / creature partner
+//! from a LAND instigator) and trigger-vs-activated shape. The runtime
+//! regression tests that drive the real resolve pipeline live in
+//! `game/meld_tests.rs`.
 
 use crate::database::mtgjson::{AtomicCard, AtomicIdentifiers};
 use crate::types::ability::{AbilityKind, Effect};
@@ -52,16 +53,26 @@ fn parse_face(card: &AtomicCard) -> CardFace {
 }
 
 /// Find an `Effect::Meld` anywhere in a face's abilities or trigger payloads.
-fn find_meld(face: &CardFace) -> Option<(String, String)> {
+fn find_meld(face: &CardFace) -> Option<(String, String, String)> {
     for a in &face.abilities {
-        if let Effect::Meld { partner, result } = a.effect.as_ref() {
-            return Some((partner.clone(), result.clone()));
+        if let Effect::Meld {
+            source,
+            partner,
+            result,
+        } = a.effect.as_ref()
+        {
+            return Some((source.clone(), partner.clone(), result.clone()));
         }
     }
     for t in &face.triggers {
         if let Some(exec) = &t.execute {
-            if let Effect::Meld { partner, result } = exec.effect.as_ref() {
-                return Some((partner.clone(), result.clone()));
+            if let Effect::Meld {
+                source,
+                partner,
+                result,
+            } = exec.effect.as_ref()
+            {
+                return Some((source.clone(), partner.clone(), result.clone()));
             }
         }
     }
@@ -88,9 +99,10 @@ const VANILLE_TEXT: &str = "When Vanille enters, mill two cards, then return a p
     meld them into Ragnarok, Divine Deliverance.";
 
 /// CR 701.42a: the triggered instigator (Gisela, creature partner) parses to an
-/// `Effect::Meld { partner, result }` carrying the correct partner + result
-/// names. The own/control gate is hoisted to the trigger's intervening-if, so
-/// the bare residual "exile them, then meld them into R" parses cleanly.
+/// `Effect::Meld { source, partner, result }` carrying the correct source,
+/// partner, and result names. The own/control gate is hoisted to the trigger's
+/// intervening-if, so the bare residual "exile them, then meld them into R"
+/// parses cleanly.
 ///
 /// The activated / inline-gate form (Hanweir Battlements) is DEFERRED: its text
 /// leads with the inline "if you both own and control ..." gate, which the meld
@@ -106,7 +118,8 @@ fn synthesize_or_parse_derives_self_partner_result() {
         &["Creature"],
         GISELA_TEXT,
     ));
-    let (partner, result) = find_meld(&gisela).expect("Gisela parses an Effect::Meld");
+    let (source, partner, result) = find_meld(&gisela).expect("Gisela parses an Effect::Meld");
+    assert_eq!(source, "Gisela, the Broken Blade");
     assert_eq!(partner, "Bruna, the Fading Light");
     assert_eq!(result, "Brisela, Voice of Nightmares");
 
@@ -200,7 +213,7 @@ fn triggered_vs_activated_shape() {
     );
 }
 
-/// The parsed `Effect::Meld` carries BOTH names — partner is NOT dropped or
+/// The parsed `Effect::Meld` carries all pair names — partner is NOT dropped or
 /// re-derived from a single field.
 #[test]
 fn effect_round_trips_partner_and_result() {
@@ -210,8 +223,9 @@ fn effect_round_trips_partner_and_result() {
         &["Creature"],
         GISELA_TEXT,
     ));
-    let (partner, result) = find_meld(&gisela).expect("Effect::Meld present");
-    assert!(!partner.is_empty() && !result.is_empty());
+    let (source, partner, result) = find_meld(&gisela).expect("Effect::Meld present");
+    assert!(!source.is_empty() && !partner.is_empty() && !result.is_empty());
+    assert_ne!(source, partner);
     assert_ne!(partner, result);
 }
 
