@@ -7373,9 +7373,50 @@ fn try_parse_named_trigger_mode(lower: &str) -> Option<(TriggerMode, TriggerDefi
         return Some((TriggerMode::HauntedCreatureDies, def));
     }
 
-    if matches!(lower, "whenever chaos ensues" | "when chaos ensues") {
+    // CR 311.7 / CR 901.9b: "Whenever/When chaos ensues" — the active plane's
+    // chaos-triggered ability. Self-referential (fires for its own plane).
+    if (
+        alt((tag::<_, _, OracleError<'_>>("whenever "), tag("when "))),
+        tag("chaos ensues"),
+    )
+        .parse(lower)
+        .is_ok()
+    {
         def.mode = TriggerMode::ChaosEnsues;
+        def.valid_card = Some(TargetFilter::SelfRef);
         return Some((TriggerMode::ChaosEnsues, def));
+    }
+
+    // CR 701.31d: "Whenever you planeswalk away from ~" — fires when this
+    // plane/phenomenon is the card planeswalked away from.
+    if (
+        alt((tag::<_, _, OracleError<'_>>("whenever "), tag("when "))),
+        tag("you planeswalk away from ~"),
+    )
+        .parse(lower)
+        .is_ok()
+    {
+        def.mode = TriggerMode::PlaneswalkedFrom;
+        def.valid_card = Some(TargetFilter::SelfRef);
+        def.valid_target = Some(TargetFilter::Controller);
+        return Some((TriggerMode::PlaneswalkedFrom, def));
+    }
+
+    // CR 312.5 / CR 701.31d: encounter == planeswalked-to face-up endpoint.
+    // "Whenever you planeswalk to ~" and "When you encounter ~" both fire when
+    // this plane/phenomenon is the card turned face up.
+    if (
+        alt((tag::<_, _, OracleError<'_>>("whenever "), tag("when "))),
+        tag("you "),
+        alt((tag("planeswalk to ~"), tag("encounter ~"))),
+    )
+        .parse(lower)
+        .is_ok()
+    {
+        def.mode = TriggerMode::PlaneswalkedTo;
+        def.valid_card = Some(TargetFilter::SelfRef);
+        def.valid_target = Some(TargetFilter::Controller);
+        return Some((TriggerMode::PlaneswalkedTo, def));
     }
 
     if matches!(
@@ -20201,6 +20242,56 @@ mod tests {
     fn trigger_chaos_ensues_mode() {
         let def = parse_trigger_line("Whenever chaos ensues, draw a card.", "Plane");
         assert_eq!(def.mode, TriggerMode::ChaosEnsues);
+        // CR 311.7: self-referential — fires for its own plane.
+        assert_eq!(def.valid_card, Some(TargetFilter::SelfRef));
+    }
+
+    #[test]
+    fn trigger_planeswalk_away_from_mode() {
+        // CR 701.31d: "Whenever you planeswalk away from [this plane]".
+        let def = parse_trigger_line(
+            "Whenever you planeswalk away from Test Plane, draw a card.",
+            "Test Plane",
+        );
+        assert_eq!(def.mode, TriggerMode::PlaneswalkedFrom);
+        assert_eq!(def.valid_card, Some(TargetFilter::SelfRef));
+        assert_eq!(def.valid_target, Some(TargetFilter::Controller));
+    }
+
+    #[test]
+    fn trigger_planeswalk_to_mode() {
+        // CR 701.31d: "Whenever you planeswalk to [this plane]".
+        let def = parse_trigger_line(
+            "Whenever you planeswalk to Test Plane, draw a card.",
+            "Test Plane",
+        );
+        assert_eq!(def.mode, TriggerMode::PlaneswalkedTo);
+        assert_eq!(def.valid_card, Some(TargetFilter::SelfRef));
+        assert_eq!(def.valid_target, Some(TargetFilter::Controller));
+    }
+
+    #[test]
+    fn trigger_encounter_maps_to_planeswalked_to() {
+        // CR 312.5: "When you encounter [this phenomenon]" is the face-up
+        // (planeswalked-to) endpoint.
+        let def = parse_trigger_line(
+            "When you encounter Test Phenomenon, draw a card.",
+            "Test Phenomenon",
+        );
+        assert_eq!(def.mode, TriggerMode::PlaneswalkedTo);
+        assert_eq!(def.valid_card, Some(TargetFilter::SelfRef));
+    }
+
+    #[test]
+    fn trigger_chaos_no_zone_stamped_by_parser() {
+        // Synthesis stamps trigger_zones=[Command]; the parser must NOT (preserves
+        // the trigger_no_zone test-lock). Confirm the parser leaves it default.
+        let def = parse_trigger_line("Whenever chaos ensues, draw a card.", "Plane");
+        assert!(
+            !def.trigger_zones.contains(&Zone::Command),
+            "parser must not stamp Zone::Command — synthesis owns that, got {:?}",
+            def.trigger_zones
+        );
     }
 
     #[test]

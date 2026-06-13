@@ -595,11 +595,13 @@ pub enum GameEvent {
     CityBlessingGained {
         player_id: PlayerId,
     },
-    /// CR 706: A die was rolled.
+    /// CR 706: A die was rolled. `result` is `None` when the roll has no numeric
+    /// face value — the symbolic planar die (CR 901.9d / CR 706.7): the
+    /// `RolledDie` trigger still fires, but numeric-result consumers ignore it.
     DieRolled {
         player_id: PlayerId,
         sides: u8,
-        result: u8,
+        result: Option<u8>,
     },
     /// CR 103.1 / CR 706: The game-1 starting-player roll-off, emitted as one
     /// authoritative structured event so the contest can be rendered round by
@@ -645,6 +647,24 @@ pub enum GameEvent {
     DungeonCompleted {
         player_id: PlayerId,
         dungeon: crate::game::dungeon::DungeonId,
+    },
+    /// CR 701.31 / CR 901.11: The planar controller planeswalked — the active
+    /// plane/phenomenon (`from`) is put on the bottom of the planar deck face
+    /// down and the new top card (`to`) is turned face up.
+    Planeswalked {
+        player_id: PlayerId,
+        from: Option<ObjectId>,
+        to: Option<ObjectId>,
+    },
+    /// CR 311.7 / CR 901.9b: Chaos ensued — the active plane's chaos-triggered
+    /// ability triggers.
+    ChaosEnsued {
+        plane_id: ObjectId,
+    },
+    /// CR 901.9: The planar die was rolled, landing on the given face.
+    PlanarDieRolled {
+        player_id: PlayerId,
+        face: crate::game::planechase::PlanarDieFace,
     },
     /// CR 726.2: A player took the initiative.
     InitiativeTaken {

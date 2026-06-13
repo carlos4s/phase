@@ -1,32 +1,32 @@
 {
   "sources": [
-    "crates/engine/src/types/zones.rs",
-    "crates/engine/src/types/game_state.rs",
-    "crates/engine/src/types/mana.rs",
-    "crates/engine/src/types/layers.rs",
-    "crates/engine/src/types/mod.rs",
-    "crates/engine/src/types/actions.rs",
-    "crates/engine/src/types/attribution.rs",
-    "crates/engine/src/types/card_type.rs",
-    "crates/engine/src/types/player.rs",
     "crates/engine/src/types/identifiers.rs",
-    "crates/engine/src/types/counter.rs",
-    "crates/engine/src/types/proposed_event.rs",
-    "crates/engine/src/types/format.rs",
-    "crates/engine/src/types/match_config.rs",
-    "crates/engine/src/types/replacements.rs",
-    "crates/engine/src/types/events.rs",
+    "crates/engine/src/types/game_state.rs",
     "crates/engine/src/types/definitions.rs",
-    "crates/engine/src/types/log.rs",
-    "crates/engine/src/types/ability.rs",
     "crates/engine/src/types/phase.rs",
-    "crates/engine/src/types/triggers.rs",
-    "crates/engine/src/types/keywords.rs",
+    "crates/engine/src/types/replacements.rs",
+    "crates/engine/src/types/mana.rs",
     "crates/engine/src/types/statics.rs",
+    "crates/engine/src/types/triggers.rs",
+    "crates/engine/src/types/log.rs",
+    "crates/engine/src/types/events.rs",
+    "crates/engine/src/types/actions.rs",
+    "crates/engine/src/types/counter.rs",
+    "crates/engine/src/types/keywords.rs",
+    "crates/engine/src/types/format.rs",
+    "crates/engine/src/types/mod.rs",
+    "crates/engine/src/types/match_config.rs",
+    "crates/engine/src/types/zones.rs",
+    "crates/engine/src/types/attribution.rs",
+    "crates/engine/src/types/ability.rs",
+    "crates/engine/src/types/card_type.rs",
+    "crates/engine/src/types/proposed_event.rs",
+    "crates/engine/src/types/player.rs",
+    "crates/engine/src/types/layers.rs",
     "crates/engine/src/types/card.rs"
   ],
   "enum_count": 295,
-  "variant_count": 3101,
+  "variant_count": 3108,
   "smell_summary": [
     {
       "enum_name": "AbilityCondition",
@@ -490,13 +490,13 @@
     },
     "AbilityCondition": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 11715,
+      "line": 11726,
       "doc": "Condition on an ability within a sub_ability chain. Checked during resolve_ability_chain before executing the ability. The condition is a pure predicate — it describes WHAT to check, not the outcome. Casting-time facts needed for evaluation are stored in `SpellContext`.",
       "cr_refs": [],
       "variants": [
         {
           "name": "AdditionalCostPaid",
-          "line": 11733,
+          "line": 11744,
           "kind": "struct",
           "field_names": [
             "source",
@@ -516,7 +516,7 @@
         },
         {
           "name": "AdditionalCostPaidInstead",
-          "line": 11753,
+          "line": 11764,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 614.1a / CR 614.15: \"Instead\" clause — a self-replacement effect that replaces the parent effect when the additional cost was paid. The resolver swaps the override sub's effect in place of the parent before resolution.",
@@ -527,7 +527,7 @@
         },
         {
           "name": "AlternativeManaCostPaid",
-          "line": 11757,
+          "line": 11768,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 118.9 + CR 608.2c: \"If the {COST} cost was paid\" on spells with an alternative *mana* cost (e.g. Baleful Mastery). Evaluates against `SpellContext.alternative_mana_cost_paid`, not `additional_cost_paid`.",
@@ -538,7 +538,7 @@
         },
         {
           "name": "EffectOutcome",
-          "line": 11762,
+          "line": 11773,
           "kind": "struct",
           "field_names": [
             "signal"
@@ -552,7 +552,7 @@
         },
         {
           "name": "EventOutcomeWon",
-          "line": 11767,
+          "line": 11778,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 608.2c: \"If you won\" — sub_ability executes only if this ability's controller won the triggering event, such as a clash or coin flip. Falls back to `optional_effect_performed` for in-chain clash continuations whose parent effect records the result directly.",
@@ -562,7 +562,7 @@
         },
         {
           "name": "WhenYouDo",
-          "line": 11775,
+          "line": 11786,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 603.12: \"When you do\" — reflexive trigger that fires based on whether the parent's trigger event actually occurred. For a non-cost parent (e.g. a `BecomeCopy` reflexive or a copy/exile replacement sub-ability) the \"do\" always occurred, so this is unconditionally true. For a cost-payment parent (`Effect::PayCost`), an unpayable or declined cost is not an occurrence, so the reflexive sub-ability is skipped — `evaluate_condition` gates on `cost_payment_failed_flag` for that case (mirrors `IfYouDo`).",
@@ -572,7 +572,7 @@
         },
         {
           "name": "CastFromZone",
-          "line": 11778,
+          "line": 11789,
           "kind": "struct",
           "field_names": [
             "zone"
@@ -584,7 +584,7 @@
         },
         {
           "name": "CastDuringPhase",
-          "line": 11782,
+          "line": 11793,
           "kind": "struct",
           "field_names": [
             "phases"
@@ -597,7 +597,7 @@
         },
         {
           "name": "CastTimingPermission",
-          "line": 11785,
+          "line": 11796,
           "kind": "struct",
           "field_names": [
             "permission"
@@ -610,7 +610,7 @@
         },
         {
           "name": "ManaColorSpent",
-          "line": 11788,
+          "line": 11799,
           "kind": "struct",
           "field_names": [
             "color",
@@ -624,7 +624,7 @@
         },
         {
           "name": "RevealedHasCardType",
-          "line": 11798,
+          "line": 11809,
           "kind": "struct",
           "field_names": [
             "card_types",
@@ -638,7 +638,7 @@
         },
         {
           "name": "ObjectsShareQuality",
-          "line": 11820,
+          "line": 11831,
           "kind": "struct",
           "field_names": [
             "subject",
@@ -653,7 +653,7 @@
         },
         {
           "name": "TargetSharesNameWithOtherExiledThisWay",
-          "line": 11828,
+          "line": 11839,
           "kind": "struct",
           "field_names": [
             "target"
@@ -666,7 +666,7 @@
         },
         {
           "name": "SourceEnteredThisTurn",
-          "line": 11832,
+          "line": 11843,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 400.7 + CR 608.2c: True when the source permanent entered the battlefield this turn. For the \"did not enter this turn\" sense (e.g., Moon-Circuit Hacker \"unless ~ entered this turn\"), wrap with `AbilityCondition::Not`.",
@@ -677,7 +677,7 @@
         },
         {
           "name": "CastVariantPaid",
-          "line": 11835,
+          "line": 11846,
           "kind": "struct",
           "field_names": [
             "variant"
@@ -690,7 +690,7 @@
         },
         {
           "name": "CastVariantPaidInstead",
-          "line": 11840,
+          "line": 11851,
           "kind": "struct",
           "field_names": [
             "variant"
@@ -704,7 +704,7 @@
         },
         {
           "name": "QuantityCheck",
-          "line": 11844,
+          "line": 11855,
           "kind": "struct",
           "field_names": [
             "lhs",
@@ -718,7 +718,7 @@
         },
         {
           "name": "PreviousEffectAmount",
-          "line": 11853,
+          "line": 11864,
           "kind": "struct",
           "field_names": [
             "comparator",
@@ -732,7 +732,7 @@
         },
         {
           "name": "HasMaxSpeed",
-          "line": 11858,
+          "line": 11869,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.178a: The ability functions only while its controller has max speed.",
@@ -742,7 +742,7 @@
         },
         {
           "name": "IsMonarch",
-          "line": 11860,
+          "line": 11871,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 725.1: \"if you're the monarch\" is true when the ability controller has the monarch designation.",
@@ -752,7 +752,7 @@
         },
         {
           "name": "IsInitiative",
-          "line": 11863,
+          "line": 11874,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 726.3: \"if you have the initiative\" is true when the ability controller has the initiative designation.",
@@ -762,7 +762,7 @@
         },
         {
           "name": "HasCityBlessing",
-          "line": 11866,
+          "line": 11877,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.131c: \"if you have the city's blessing\" is true when the ability controller has the city's blessing designation.",
@@ -772,7 +772,7 @@
         },
         {
           "name": "TargetHasKeywordInstead",
-          "line": 11870,
+          "line": 11881,
           "kind": "struct",
           "field_names": [
             "keyword"
@@ -784,7 +784,7 @@
         },
         {
           "name": "TargetMatchesFilter",
-          "line": 11875,
+          "line": 11886,
           "kind": "struct",
           "field_names": [
             "filter",
@@ -798,7 +798,7 @@
         },
         {
           "name": "TriggeringSpellTargetsFilter",
-          "line": 11887,
+          "line": 11898,
           "kind": "struct",
           "field_names": [
             "filter"
@@ -811,7 +811,7 @@
         },
         {
           "name": "SourceMatchesFilter",
-          "line": 11891,
+          "line": 11902,
           "kind": "struct",
           "field_names": [
             "filter"
@@ -823,7 +823,7 @@
         },
         {
           "name": "ZoneChangeObjectMatchesFilter",
-          "line": 11896,
+          "line": 11907,
           "kind": "struct",
           "field_names": [
             "origin",
@@ -839,7 +839,7 @@
         },
         {
           "name": "ControllerControlsMatching",
-          "line": 11908,
+          "line": 11919,
           "kind": "struct",
           "field_names": [
             "filter"
@@ -852,7 +852,7 @@
         },
         {
           "name": "ControllerControlledMatchingAsCast",
-          "line": 11912,
+          "line": 11923,
           "kind": "struct",
           "field_names": [
             "filter"
@@ -865,7 +865,7 @@
         },
         {
           "name": "IsYourTurn",
-          "line": 11916,
+          "line": 11927,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 608.2c: \"If it's your turn\" — gates sub_ability on whether the active player is the ability's controller. For \"if it's not your turn\", wrap with `AbilityCondition::Not`.",
@@ -875,7 +875,7 @@
         },
         {
           "name": "WasStartingPlayer",
-          "line": 11924,
+          "line": 11935,
           "kind": "struct",
           "field_names": [
             "controller"
@@ -888,7 +888,7 @@
         },
         {
           "name": "SpellCastWithVariantThisTurn",
-          "line": 11929,
+          "line": 11940,
           "kind": "struct",
           "field_names": [
             "variant"
@@ -901,7 +901,7 @@
         },
         {
           "name": "FirstCombatPhaseOfTurn",
-          "line": 11934,
+          "line": 11945,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 500.8 + CR 506.1 + CR 608.2c: \"if it's the first combat phase of the turn\". Gates a follow-up effect on whether this is the first combat phase started this turn.",
@@ -913,7 +913,7 @@
         },
         {
           "name": "ZoneChangedThisWay",
-          "line": 11940,
+          "line": 11951,
           "kind": "struct",
           "field_names": [
             "filter"
@@ -925,7 +925,7 @@
         },
         {
           "name": "CostPaidObjectMatchesFilter",
-          "line": 11944,
+          "line": 11955,
           "kind": "struct",
           "field_names": [
             "filter"
@@ -939,7 +939,7 @@
         },
         {
           "name": "SourceIsTapped",
-          "line": 11947,
+          "line": 11958,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 110.5b: \"if this [permanent] is tapped\" — checks the source's tapped status. For the untapped sense, wrap with `AbilityCondition::Not`.",
@@ -949,7 +949,7 @@
         },
         {
           "name": "ConditionInstead",
-          "line": 11956,
+          "line": 11967,
           "kind": "struct",
           "field_names": [
             "inner"
@@ -962,7 +962,7 @@
         },
         {
           "name": "And",
-          "line": 11961,
+          "line": 11972,
           "kind": "struct",
           "field_names": [
             "conditions"
@@ -974,7 +974,7 @@
         },
         {
           "name": "Or",
-          "line": 11966,
+          "line": 11977,
           "kind": "struct",
           "field_names": [
             "conditions"
@@ -986,7 +986,7 @@
         },
         {
           "name": "Not",
-          "line": 11974,
+          "line": 11985,
           "kind": "struct",
           "field_names": [
             "condition"
@@ -998,7 +998,7 @@
         },
         {
           "name": "DayNightIsNeither",
-          "line": 11978,
+          "line": 11989,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 730.2a: True when it's neither day nor night (day_night is None). Used by Daybound/Nightbound ETB initialization: \"If it's neither day nor night, it becomes day as this creature enters.\"",
@@ -1008,7 +1008,7 @@
         },
         {
           "name": "DayNightIs",
-          "line": 11980,
+          "line": 11991,
           "kind": "struct",
           "field_names": [
             "state"
@@ -1020,7 +1020,7 @@
         },
         {
           "name": "NthResolutionThisTurn",
-          "line": 11990,
+          "line": 12001,
           "kind": "struct",
           "field_names": [
             "n"
@@ -1032,7 +1032,7 @@
         },
         {
           "name": "SourceLacksKeyword",
-          "line": 11993,
+          "line": 12004,
           "kind": "struct",
           "field_names": [
             "keyword"
@@ -1044,7 +1044,7 @@
         },
         {
           "name": "ScopedPlayerMatches",
-          "line": 12013,
+          "line": 12024,
           "kind": "struct",
           "field_names": [
             "filter"
@@ -1406,13 +1406,13 @@
     },
     "AbilityKind": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 10696,
+      "line": 10707,
       "doc": "",
       "cr_refs": [],
       "variants": [
         {
           "name": "Spell",
-          "line": 10698,
+          "line": 10709,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -1420,7 +1420,7 @@
         },
         {
           "name": "Activated",
-          "line": 10699,
+          "line": 10710,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -1428,7 +1428,7 @@
         },
         {
           "name": "Database",
-          "line": 10700,
+          "line": 10711,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -1436,7 +1436,7 @@
         },
         {
           "name": "BeginGame",
-          "line": 10703,
+          "line": 10714,
           "kind": "unit",
           "field_names": [],
           "doc": "Pre-game abilities: \"If this card is in your opening hand, you may begin the game with...\" Fired during game setup, not during normal stack resolution.",
@@ -1444,7 +1444,7 @@
         },
         {
           "name": "Mulligan",
-          "line": 10709,
+          "line": 10720,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 103.5b: Mulligan-time abilities — \"Any time you could mulligan and ~ is in your hand, you may ...\" (Serum Powder, No-Regrets Egret). The player may perform the action at any point they would declare whether to take a mulligan. Like `BeginGame`, these never resolve through the normal stack; runtime dispatch lives in the mulligan flow (e.g. `MulliganChoice::UseSerumPowder` for Serum Powder).",
@@ -1457,7 +1457,7 @@
     },
     "AbilityTag": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 10862,
+      "line": 10873,
       "doc": "CR 702.142b: Tag identifying the keyword origin of an ability. Used by effects that reference abilities by keyword class (e.g., \"boast abilities\", \"ninjutsu abilities\"). Survives serialization through the WASM boundary.",
       "cr_refs": [
         "CR 702.142b"
@@ -1465,7 +1465,7 @@
       "variants": [
         {
           "name": "Boast",
-          "line": 10864,
+          "line": 10875,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.142a: This ability originated from a Boast keyword definition.",
@@ -1475,7 +1475,7 @@
         },
         {
           "name": "Evolve",
-          "line": 10866,
+          "line": 10877,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.100a: This ability originated from an Evolve keyword definition.",
@@ -1485,7 +1485,7 @@
         },
         {
           "name": "Exhaust",
-          "line": 10868,
+          "line": 10879,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.177a: This ability originated from an Exhaust keyword definition.",
@@ -1495,7 +1495,7 @@
         },
         {
           "name": "Outlast",
-          "line": 10870,
+          "line": 10881,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.107a: This ability originated from an Outlast keyword definition.",
@@ -1505,7 +1505,7 @@
         },
         {
           "name": "Cycling",
-          "line": 10875,
+          "line": 10886,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.29a + CR 702.29e: This ability originated from a Cycling (or Typecycling) keyword definition. Used so the activation pipeline can emit a `GameEvent::Cycled` (CR 702.29c) that \"When you cycle this card\" triggers match.",
@@ -1517,7 +1517,7 @@
         },
         {
           "name": "Backup",
-          "line": 10877,
+          "line": 10888,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.165a: ability originated from a Backup keyword definition.",
@@ -1559,13 +1559,13 @@
     },
     "ActivationRestriction": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 10885,
+      "line": 10896,
       "doc": "Structured activation-time restrictions parsed from Oracle text. These describe when an activated ability may be activated; runtime enforcement can be added independently of parsing/export support.",
       "cr_refs": [],
       "variants": [
         {
           "name": "AsSorcery",
-          "line": 10886,
+          "line": 10897,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -1573,7 +1573,7 @@
         },
         {
           "name": "AsInstant",
-          "line": 10887,
+          "line": 10898,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -1581,7 +1581,7 @@
         },
         {
           "name": "DuringYourTurn",
-          "line": 10888,
+          "line": 10899,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -1589,7 +1589,7 @@
         },
         {
           "name": "DuringYourUpkeep",
-          "line": 10889,
+          "line": 10900,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -1597,7 +1597,7 @@
         },
         {
           "name": "DuringCombat",
-          "line": 10890,
+          "line": 10901,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -1605,7 +1605,7 @@
         },
         {
           "name": "BeforeAttackersDeclared",
-          "line": 10891,
+          "line": 10902,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -1613,7 +1613,7 @@
         },
         {
           "name": "BeforeCombatDamage",
-          "line": 10892,
+          "line": 10903,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -1621,7 +1621,7 @@
         },
         {
           "name": "OnlyOnceEachTurn",
-          "line": 10893,
+          "line": 10904,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -1629,7 +1629,7 @@
         },
         {
           "name": "OnlyOnce",
-          "line": 10894,
+          "line": 10905,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -1637,7 +1637,7 @@
         },
         {
           "name": "MaxTimesEachTurn",
-          "line": 10895,
+          "line": 10906,
           "kind": "struct",
           "field_names": [
             "count"
@@ -1647,7 +1647,7 @@
         },
         {
           "name": "RequiresCondition",
-          "line": 10898,
+          "line": 10909,
           "kind": "struct",
           "field_names": [
             "condition"
@@ -1657,7 +1657,7 @@
         },
         {
           "name": "IsSolved",
-          "line": 10902,
+          "line": 10913,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 719.3c: This ability can only be activated while the source Case is solved.",
@@ -1667,7 +1667,7 @@
         },
         {
           "name": "ClassLevelIs",
-          "line": 10904,
+          "line": 10915,
           "kind": "struct",
           "field_names": [
             "level"
@@ -1679,7 +1679,7 @@
         },
         {
           "name": "LevelCounterRange",
-          "line": 10909,
+          "line": 10920,
           "kind": "struct",
           "field_names": [
             "minimum",
@@ -1693,7 +1693,7 @@
         },
         {
           "name": "CounterThreshold",
-          "line": 10920,
+          "line": 10931,
           "kind": "struct",
           "field_names": [
             "counters",
@@ -1707,7 +1707,7 @@
         },
         {
           "name": "MatchesCardCastTiming",
-          "line": 10933,
+          "line": 10944,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.62a: \"If you could begin to cast this card by putting it onto the stack from your hand\" — the activation is legal whenever the underlying card type's natural cast timing is legal. For a sorcery / permanent card, this is sorcery-speed; for an instant, it's instant-speed. Used by the synthesized Suspend hand-activated ability so future \"cast-timing-mirroring\" activations (Foretell, etc.) can reuse this primitive instead of special-casing card type at synthesis time.",
@@ -3735,100 +3735,12 @@
     },
     "CastingRestriction": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 10941,
+      "line": 10952,
       "doc": "Structured spell-casting restrictions parsed from Oracle text. These describe when a spell may be cast. Runtime enforcement can be added independently of parsing/export support.",
       "cr_refs": [],
       "variants": [
         {
           "name": "AsSorcery",
-          "line": 10942,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "DuringCombat",
-          "line": 10943,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "DuringOpponentsTurn",
-          "line": 10944,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "DuringYourTurn",
-          "line": 10945,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "DuringYourUpkeep",
-          "line": 10946,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "DuringOpponentsUpkeep",
-          "line": 10947,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "DuringAnyUpkeep",
-          "line": 10948,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "DuringYourEndStep",
-          "line": 10949,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "DuringOpponentsEndStep",
-          "line": 10950,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "DeclareAttackersStep",
-          "line": 10951,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "DeclareBlockersStep",
-          "line": 10952,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "BeforeAttackersDeclared",
           "line": 10953,
           "kind": "unit",
           "field_names": [],
@@ -3836,7 +3748,7 @@
           "cr_refs": []
         },
         {
-          "name": "BeforeBlockersDeclared",
+          "name": "DuringCombat",
           "line": 10954,
           "kind": "unit",
           "field_names": [],
@@ -3844,7 +3756,7 @@
           "cr_refs": []
         },
         {
-          "name": "BeforeCombatDamage",
+          "name": "DuringOpponentsTurn",
           "line": 10955,
           "kind": "unit",
           "field_names": [],
@@ -3852,7 +3764,7 @@
           "cr_refs": []
         },
         {
-          "name": "AfterCombat",
+          "name": "DuringYourTurn",
           "line": 10956,
           "kind": "unit",
           "field_names": [],
@@ -3860,8 +3772,96 @@
           "cr_refs": []
         },
         {
-          "name": "RequiresCondition",
+          "name": "DuringYourUpkeep",
           "line": 10957,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "DuringOpponentsUpkeep",
+          "line": 10958,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "DuringAnyUpkeep",
+          "line": 10959,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "DuringYourEndStep",
+          "line": 10960,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "DuringOpponentsEndStep",
+          "line": 10961,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "DeclareAttackersStep",
+          "line": 10962,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "DeclareBlockersStep",
+          "line": 10963,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "BeforeAttackersDeclared",
+          "line": 10964,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "BeforeBlockersDeclared",
+          "line": 10965,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "BeforeCombatDamage",
+          "line": 10966,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "AfterCombat",
+          "line": 10967,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "RequiresCondition",
+          "line": 10968,
           "kind": "struct",
           "field_names": [
             "condition"
@@ -4812,7 +4812,7 @@
     },
     "CoinFlipResult": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 12982,
+      "line": 12993,
       "doc": "CR 705.2: Typed result filter for coin-flip triggers.",
       "cr_refs": [
         "CR 705.2"
@@ -4820,7 +4820,7 @@
       "variants": [
         {
           "name": "Won",
-          "line": 12983,
+          "line": 12994,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -4828,7 +4828,7 @@
         },
         {
           "name": "Lost",
-          "line": 12984,
+          "line": 12995,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -4945,7 +4945,7 @@
     },
     "CombatDamageScope": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 13521,
+      "line": 13532,
       "doc": "CR 614.1a: Restricts whether a damage replacement applies to combat, noncombat, or all damage.",
       "cr_refs": [
         "CR 614.1a"
@@ -4953,7 +4953,7 @@
       "variants": [
         {
           "name": "CombatOnly",
-          "line": 13522,
+          "line": 13533,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -4961,7 +4961,7 @@
         },
         {
           "name": "NoncombatOnly",
-          "line": 13523,
+          "line": 13534,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -5290,13 +5290,13 @@
     },
     "ContinuousModification": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 13963,
+      "line": 13974,
       "doc": "What modification a continuous effect applies to an object. Each variant knows its own layer implicitly.",
       "cr_refs": [],
       "variants": [
         {
           "name": "CopyValues",
-          "line": 13964,
+          "line": 13975,
           "kind": "struct",
           "field_names": [
             "values",
@@ -5309,7 +5309,7 @@
         },
         {
           "name": "SetName",
-          "line": 13996,
+          "line": 14007,
           "kind": "struct",
           "field_names": [
             "name"
@@ -5323,7 +5323,7 @@
         },
         {
           "name": "AddPower",
-          "line": 13999,
+          "line": 14010,
           "kind": "struct",
           "field_names": [
             "value"
@@ -5333,7 +5333,7 @@
         },
         {
           "name": "AddToughness",
-          "line": 14002,
+          "line": 14013,
           "kind": "struct",
           "field_names": [
             "value"
@@ -5343,7 +5343,7 @@
         },
         {
           "name": "SetPower",
-          "line": 14005,
+          "line": 14016,
           "kind": "struct",
           "field_names": [
             "value"
@@ -5353,7 +5353,7 @@
         },
         {
           "name": "SetToughness",
-          "line": 14008,
+          "line": 14019,
           "kind": "struct",
           "field_names": [
             "value"
@@ -5363,7 +5363,7 @@
         },
         {
           "name": "AddKeyword",
-          "line": 14011,
+          "line": 14022,
           "kind": "struct",
           "field_names": [
             "keyword"
@@ -5373,7 +5373,7 @@
         },
         {
           "name": "RemoveKeyword",
-          "line": 14014,
+          "line": 14025,
           "kind": "struct",
           "field_names": [
             "keyword"
@@ -5383,7 +5383,7 @@
         },
         {
           "name": "GrantAbility",
-          "line": 14017,
+          "line": 14028,
           "kind": "struct",
           "field_names": [
             "definition"
@@ -5393,7 +5393,7 @@
         },
         {
           "name": "GrantAllActivatedAbilitiesOf",
-          "line": 14029,
+          "line": 14040,
           "kind": "struct",
           "field_names": [
             "source"
@@ -5406,7 +5406,7 @@
         },
         {
           "name": "GrantTrigger",
-          "line": 14036,
+          "line": 14047,
           "kind": "struct",
           "field_names": [
             "trigger"
@@ -5418,7 +5418,7 @@
         },
         {
           "name": "RemoveAllAbilities",
-          "line": 14039,
+          "line": 14050,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -5426,7 +5426,7 @@
         },
         {
           "name": "AddType",
-          "line": 14040,
+          "line": 14051,
           "kind": "struct",
           "field_names": [
             "core_type"
@@ -5436,7 +5436,7 @@
         },
         {
           "name": "RemoveType",
-          "line": 14043,
+          "line": 14054,
           "kind": "struct",
           "field_names": [
             "core_type"
@@ -5446,7 +5446,7 @@
         },
         {
           "name": "AddSubtype",
-          "line": 14046,
+          "line": 14057,
           "kind": "struct",
           "field_names": [
             "subtype"
@@ -5456,7 +5456,7 @@
         },
         {
           "name": "RemoveSubtype",
-          "line": 14049,
+          "line": 14060,
           "kind": "struct",
           "field_names": [
             "subtype"
@@ -5466,7 +5466,7 @@
         },
         {
           "name": "SetCardTypes",
-          "line": 14056,
+          "line": 14067,
           "kind": "struct",
           "field_names": [
             "core_types"
@@ -5479,7 +5479,7 @@
         },
         {
           "name": "RemoveAllSubtypes",
-          "line": 14062,
+          "line": 14073,
           "kind": "struct",
           "field_names": [
             "set"
@@ -5492,7 +5492,7 @@
         },
         {
           "name": "SetDynamicPower",
-          "line": 14066,
+          "line": 14077,
           "kind": "struct",
           "field_names": [
             "value"
@@ -5502,7 +5502,7 @@
         },
         {
           "name": "SetDynamicToughness",
-          "line": 14070,
+          "line": 14081,
           "kind": "struct",
           "field_names": [
             "value"
@@ -5512,7 +5512,7 @@
         },
         {
           "name": "SetPowerDynamic",
-          "line": 14077,
+          "line": 14088,
           "kind": "struct",
           "field_names": [
             "value"
@@ -5524,7 +5524,7 @@
         },
         {
           "name": "SetToughnessDynamic",
-          "line": 14082,
+          "line": 14093,
           "kind": "struct",
           "field_names": [
             "value"
@@ -5536,7 +5536,7 @@
         },
         {
           "name": "AddDynamicPower",
-          "line": 14086,
+          "line": 14097,
           "kind": "struct",
           "field_names": [
             "value"
@@ -5548,7 +5548,7 @@
         },
         {
           "name": "AddDynamicToughness",
-          "line": 14090,
+          "line": 14101,
           "kind": "struct",
           "field_names": [
             "value"
@@ -5560,7 +5560,7 @@
         },
         {
           "name": "AddDynamicKeyword",
-          "line": 14095,
+          "line": 14106,
           "kind": "struct",
           "field_names": [
             "kind",
@@ -5573,7 +5573,7 @@
         },
         {
           "name": "AddAllCreatureTypes",
-          "line": 14101,
+          "line": 14112,
           "kind": "unit",
           "field_names": [],
           "doc": "Grants every creature type (Changeling CDA). Expanded at runtime using `GameState::all_creature_types`.",
@@ -5581,7 +5581,7 @@
         },
         {
           "name": "AddAllBasicLandTypes",
-          "line": 14104,
+          "line": 14115,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 305.6 + CR 305.7: Adds all five basic land types in addition to existing types. Used by Prismatic Omen, Dryad of the Ilysian Grove.",
@@ -5592,7 +5592,7 @@
         },
         {
           "name": "AddAllLandTypes",
-          "line": 14108,
+          "line": 14119,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 205.3i + CR 305.7: grants every land type (all 17 land subtypes) and their mana abilities, additive. Distinct from AddAllBasicLandTypes (CR 305.6, 5 basic types). Omo, Queen of Vesuva. Layer 4.",
@@ -5604,7 +5604,7 @@
         },
         {
           "name": "AddChosenSubtype",
-          "line": 14111,
+          "line": 14122,
           "kind": "struct",
           "field_names": [
             "kind"
@@ -5614,7 +5614,7 @@
         },
         {
           "name": "AddChosenColor",
-          "line": 14116,
+          "line": 14127,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 105.3: Set the object's color to the chosen color. Reads from `chosen_attributes` at layer evaluation time.",
@@ -5624,7 +5624,7 @@
         },
         {
           "name": "RemoveChosenKeyword",
-          "line": 14123,
+          "line": 14134,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 608.2d + CR 613.1f: Strip the chosen keyword (read from the granting source's `chosen_attributes`) from the affected object. Mirrors `RemoveKeyword`'s discriminant-based stripping so parameterized keywords (e.g., `Landwalk(\"Swamp\")`) lose every variant sharing the same discriminant. Used by Urborg / Walking Sponge: \"target creature loses [chosen ability] until end of turn\".",
@@ -5635,7 +5635,7 @@
         },
         {
           "name": "SetColor",
-          "line": 14124,
+          "line": 14135,
           "kind": "struct",
           "field_names": [
             "colors"
@@ -5645,7 +5645,7 @@
         },
         {
           "name": "AddColor",
-          "line": 14127,
+          "line": 14138,
           "kind": "struct",
           "field_names": [
             "color"
@@ -5655,7 +5655,7 @@
         },
         {
           "name": "AddStaticMode",
-          "line": 14132,
+          "line": 14143,
           "kind": "struct",
           "field_names": [
             "mode"
@@ -5665,7 +5665,7 @@
         },
         {
           "name": "GrantStaticAbility",
-          "line": 14147,
+          "line": 14158,
           "kind": "struct",
           "field_names": [
             "definition"
@@ -5680,7 +5680,7 @@
         },
         {
           "name": "SwitchPowerToughness",
-          "line": 14151,
+          "line": 14162,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 613.4d: Switch power and toughness. Applied in layer 7d.",
@@ -5690,7 +5690,7 @@
         },
         {
           "name": "AssignDamageFromToughness",
-          "line": 14154,
+          "line": 14165,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 510.1c: This creature assigns combat damage equal to its toughness rather than its power.",
@@ -5700,7 +5700,7 @@
         },
         {
           "name": "AssignDamageAsThoughUnblocked",
-          "line": 14156,
+          "line": 14167,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 510.1c: This creature assigns combat damage as though it weren't blocked.",
@@ -5710,7 +5710,7 @@
         },
         {
           "name": "AssignNoCombatDamage",
-          "line": 14158,
+          "line": 14169,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 510.1a: This creature assigns no combat damage.",
@@ -5720,7 +5720,7 @@
         },
         {
           "name": "ChangeController",
-          "line": 14161,
+          "line": 14172,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 613.2 (Layer 2): Change the controller of the affected object to the controller of the source permanent (e.g., Control Magic auras).",
@@ -5730,7 +5730,7 @@
         },
         {
           "name": "SetBasicLandType",
-          "line": 14164,
+          "line": 14175,
           "kind": "struct",
           "field_names": [
             "land_type"
@@ -5742,7 +5742,7 @@
         },
         {
           "name": "SetChosenBasicLandType",
-          "line": 14178,
+          "line": 14189,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 305.7 + CR 305.6: Sets a land's subtype to the basic land type CHOSEN by the granting source (e.g. Phantasmal Terrain, Convincing Mirage: \"As this Aura enters, choose a basic land type.\" + \"Enchanted land is the chosen type.\"). Mirrors `SetBasicLandType`'s replacement semantics — removes the land's old land subtypes and clears the abilities generated from its rules text — but reads the concrete subtype from the source object's `chosen_attributes` (`ChosenSubtypeKind::BasicLandType`) at layer evaluation time rather than carrying a fixed type. Unit variant: the kind is implicitly `BasicLandType`. The intrinsic mana ability for the new type is derived from the subtype in `mana_sources.rs` (CR 305.6), so no explicit mana grant is needed here.",
@@ -5753,7 +5753,7 @@
         },
         {
           "name": "RetainPrintedTriggerFromSource",
-          "line": 14190,
+          "line": 14201,
           "kind": "struct",
           "field_names": [
             "source_trigger_index"
@@ -5765,7 +5765,7 @@
         },
         {
           "name": "RetainPrintedAbilityFromSource",
-          "line": 14203,
+          "line": 14214,
           "kind": "struct",
           "field_names": [
             "source_ability_index"
@@ -5777,7 +5777,7 @@
         },
         {
           "name": "AddSupertype",
-          "line": 14211,
+          "line": 14222,
           "kind": "struct",
           "field_names": [
             "supertype"
@@ -5792,7 +5792,7 @@
         },
         {
           "name": "RemoveSupertype",
-          "line": 14220,
+          "line": 14231,
           "kind": "struct",
           "field_names": [
             "supertype"
@@ -5807,7 +5807,7 @@
         },
         {
           "name": "AddCounterOnEnter",
-          "line": 14234,
+          "line": 14245,
           "kind": "struct",
           "field_names": [
             "counter_type",
@@ -5822,7 +5822,7 @@
         },
         {
           "name": "RemoveManaCost",
-          "line": 14250,
+          "line": 14261,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 707.9 + CR 202.1b: Strip a copy's mana cost — the \"has no mana cost\" copy exception used by Embalm (CR 702.128a) and Eternalize (CR 702.129a). Like `AddCounterOnEnter`, this is consumed at copy resolution, never evaluated through the layer system, so `ContinuousModification::layer()` treats it as unreachable: `token_copy.rs` bakes it into the new token's base mana cost, and `become_copy.rs` strips it from the copied values so the continuous copy carries mana value 0.",
@@ -6011,7 +6011,7 @@
     },
     "CopyCountStatus": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 14321,
+      "line": 14332,
       "doc": "CR 707.10 + CR 614.1a: Whether copy-count replacement effects (Twinning Staff's \"copy an additional time\") have already been folded into a `CopySpell` resolution's iteration count.  A `CopySpell` of a targeted spell pauses on `CopyRetarget` per copy; the drain driver then resumes the next iteration with a single-iteration ability. The bonus must apply to the copy *event* once (CR 614.5 — a replacement effect doesn't invoke itself repeatedly; it gets only one opportunity to affect an event), not per copy, so a resumed iteration is marked `Finalized` and the count hook skips it.",
       "cr_refs": [
         "CR 614.1a",
@@ -6021,7 +6021,7 @@
       "variants": [
         {
           "name": "Pending",
-          "line": 14324,
+          "line": 14335,
           "kind": "unit",
           "field_names": [],
           "doc": "Initial resolution — copy-count replacements not yet applied.",
@@ -6029,7 +6029,7 @@
         },
         {
           "name": "Finalized",
-          "line": 14326,
+          "line": 14337,
           "kind": "unit",
           "field_names": [],
           "doc": "Resumed iteration — the bonus is already folded into the iteration count.",
@@ -6057,7 +6057,7 @@
     },
     "CopyRetargetPermission": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 8861,
+      "line": 8866,
       "doc": "CR 707.10c: Whether a copy effect grants its controller the choice to pick new targets for the copy. Only effects whose Oracle text states \"you may choose new targets for the copy/copies\" permit retargeting; a bare \"copy\" keeps the original's targets unchanged (CR 115.1).",
       "cr_refs": [
         "CR 115.1",
@@ -6066,7 +6066,7 @@
       "variants": [
         {
           "name": "KeepOriginalTargets",
-          "line": 8863,
+          "line": 8868,
           "kind": "unit",
           "field_names": [],
           "doc": "No \"choose new targets\" clause — copy inherits the original's targets.",
@@ -6074,7 +6074,7 @@
         },
         {
           "name": "MayChooseNewTargets",
-          "line": 8865,
+          "line": 8870,
           "kind": "unit",
           "field_names": [],
           "doc": "Oracle text grants \"you may choose new targets for the copy.\"",
@@ -6191,6 +6191,28 @@
           "doc": "CR 309: Dungeons — nontraditional cards that exist in the command zone.",
           "cr_refs": [
             "CR 309"
+          ]
+        },
+        {
+          "name": "Plane",
+          "line": 66,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "CR 311: Planes — nontraditional cards used in the Planechase variant that remain face up in the command zone (CR 311.2).",
+          "cr_refs": [
+            "CR 311",
+            "CR 311.2"
+          ]
+        },
+        {
+          "name": "Phenomenon",
+          "line": 69,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "CR 312: Phenomena — nontraditional cards used in the Planechase variant that are encountered from the planar deck (CR 312.2).",
+          "cr_refs": [
+            "CR 312",
+            "CR 312.2"
           ]
         }
       ],
@@ -7091,7 +7113,7 @@
     },
     "DamageModification": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 13394,
+      "line": 13405,
       "doc": "CR 614.1a: Damage modification formula for replacement effects.",
       "cr_refs": [
         "CR 614.1a"
@@ -7099,7 +7121,7 @@
       "variants": [
         {
           "name": "Double",
-          "line": 13396,
+          "line": 13407,
           "kind": "unit",
           "field_names": [],
           "doc": "amount * 2 (e.g. Furnace of Rath)",
@@ -7107,7 +7129,7 @@
         },
         {
           "name": "Triple",
-          "line": 13398,
+          "line": 13409,
           "kind": "unit",
           "field_names": [],
           "doc": "amount * 3 (e.g. Fiery Emancipation)",
@@ -7115,7 +7137,7 @@
         },
         {
           "name": "Plus",
-          "line": 13400,
+          "line": 13411,
           "kind": "struct",
           "field_names": [
             "value"
@@ -7125,7 +7147,7 @@
         },
         {
           "name": "Minus",
-          "line": 13407,
+          "line": 13418,
           "kind": "struct",
           "field_names": [
             "value"
@@ -7138,7 +7160,7 @@
         },
         {
           "name": "SetToSourcePower",
-          "line": 13411,
+          "line": 13422,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 614.1a: Conditional — if amount < source's power, set amount = source's power. References the replacement source's (not the damage source's) current post-layer power. Used by Ojer Axonil: \"deals damage equal to ~'s power instead.\"",
@@ -7148,7 +7170,7 @@
         },
         {
           "name": "SetTo",
-          "line": 13417,
+          "line": 13428,
           "kind": "struct",
           "field_names": [
             "value"
@@ -7160,7 +7182,7 @@
         },
         {
           "name": "LifeFloor",
-          "line": 13423,
+          "line": 13434,
           "kind": "struct",
           "field_names": [
             "minimum"
@@ -7240,7 +7262,7 @@
     },
     "DamageTargetFilter": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 13509,
+      "line": 13520,
       "doc": "CR 614.1a: Restricts which damage targets a replacement applies to. Dedicated enum because `TargetRef` can be `Player` (not handled by `matches_target_filter`).",
       "cr_refs": [
         "CR 614.1a"
@@ -7248,7 +7270,7 @@
       "variants": [
         {
           "name": "CreatureOnly",
-          "line": 13511,
+          "line": 13522,
           "kind": "unit",
           "field_names": [],
           "doc": "\"to a creature\" / \"to that creature\"",
@@ -7256,7 +7278,7 @@
         },
         {
           "name": "Player",
-          "line": 13513,
+          "line": 13524,
           "kind": "struct",
           "field_names": [
             "player"
@@ -7266,7 +7288,7 @@
         },
         {
           "name": "PlayerOrPermanentsControlledBy",
-          "line": 13516,
+          "line": 13527,
           "kind": "struct",
           "field_names": [
             "player"
@@ -7279,7 +7301,7 @@
     },
     "DamageTargetPlayerScope": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 13493,
+      "line": 13504,
       "doc": "CR 614.1a: Player axis for damage-recipient replacement filters.",
       "cr_refs": [
         "CR 614.1a"
@@ -7287,7 +7309,7 @@
       "variants": [
         {
           "name": "Any",
-          "line": 13494,
+          "line": 13505,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -7295,7 +7317,7 @@
         },
         {
           "name": "Opponent",
-          "line": 13495,
+          "line": 13506,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -7303,7 +7325,7 @@
         },
         {
           "name": "Controller",
-          "line": 13498,
+          "line": 13509,
           "kind": "unit",
           "field_names": [],
           "doc": "The controller of the replacement source. Used by Worship: \"damage that would reduce *your* life total to less than 1\".",
@@ -7311,7 +7333,7 @@
         },
         {
           "name": "SourceChosenPlayer",
-          "line": 13502,
+          "line": 13513,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 607.2d + CR 614.1a: Damage recipient is the player chosen for the replacement source by a linked persisted choice, or a permanent that player controls for `PlayerOrPermanentsControlledBy`.",
@@ -7322,7 +7344,7 @@
         },
         {
           "name": "Specific",
-          "line": 13503,
+          "line": 13514,
           "kind": "tuple",
           "field_names": [],
           "doc": "",
@@ -9843,8 +9865,20 @@
           ]
         },
         {
+          "name": "Planeswalk",
+          "line": 8116,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "CR 901.8 / CR 901.9c: The synthetic \"planeswalking ability.\" When a player rolls the Planeswalker symbol on the planar die, this ability triggers and is put on the stack; on resolution its controller (the roller, CR 901.8) planeswalks (CR 701.31).",
+          "cr_refs": [
+            "CR 701.31",
+            "CR 901.8",
+            "CR 901.9c"
+          ]
+        },
+        {
           "name": "OpenAttractions",
-          "line": 8114,
+          "line": 8119,
           "kind": "struct",
           "field_names": [
             "count"
@@ -9856,7 +9890,7 @@
         },
         {
           "name": "RollToVisitAttractions",
-          "line": 8118,
+          "line": 8123,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 701.52: Roll to visit your Attractions.",
@@ -9866,7 +9900,7 @@
         },
         {
           "name": "ProcessRadCounters",
-          "line": 8121,
+          "line": 8126,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 728.1: Process rad counters — mill cards equal to rad counter count, lose 1 life and remove one rad counter per nonland card milled.",
@@ -9876,7 +9910,7 @@
         },
         {
           "name": "GrantCastingPermission",
-          "line": 8124,
+          "line": 8129,
           "kind": "struct",
           "field_names": [
             "permission",
@@ -9888,7 +9922,7 @@
         },
         {
           "name": "ChooseFromZone",
-          "line": 8141,
+          "line": 8146,
           "kind": "struct",
           "field_names": [
             "count",
@@ -9907,7 +9941,7 @@
         },
         {
           "name": "ChooseObjectsIntoTrackedSet",
-          "line": 8174,
+          "line": 8179,
           "kind": "struct",
           "field_names": [
             "chooser",
@@ -9922,7 +9956,7 @@
         },
         {
           "name": "ChooseAndSacrificeRest",
-          "line": 8187,
+          "line": 8192,
           "kind": "struct",
           "field_names": [
             "categories",
@@ -9938,7 +9972,7 @@
         },
         {
           "name": "Exploit",
-          "line": 8202,
+          "line": 8207,
           "kind": "struct",
           "field_names": [
             "target"
@@ -9950,7 +9984,7 @@
         },
         {
           "name": "GainEnergy",
-          "line": 8207,
+          "line": 8212,
           "kind": "struct",
           "field_names": [
             "amount"
@@ -9962,7 +9996,7 @@
         },
         {
           "name": "GivePlayerCounter",
-          "line": 8212,
+          "line": 8217,
           "kind": "struct",
           "field_names": [
             "counter_kind",
@@ -9977,7 +10011,7 @@
         },
         {
           "name": "LoseAllPlayerCounters",
-          "line": 8224,
+          "line": 8229,
           "kind": "struct",
           "field_names": [
             "target"
@@ -9989,7 +10023,7 @@
         },
         {
           "name": "ExileFromTopUntil",
-          "line": 8236,
+          "line": 8241,
           "kind": "struct",
           "field_names": [
             "player",
@@ -10005,7 +10039,7 @@
         },
         {
           "name": "RevealUntil",
-          "line": 8247,
+          "line": 8252,
           "kind": "struct",
           "field_names": [
             "player",
@@ -10023,7 +10057,7 @@
         },
         {
           "name": "Discover",
-          "line": 8285,
+          "line": 8290,
           "kind": "struct",
           "field_names": [
             "mana_value_limit"
@@ -10035,7 +10069,7 @@
         },
         {
           "name": "Cascade",
-          "line": 8297,
+          "line": 8302,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.85a: Cascade — when you cast a spell with cascade, exile cards from the top of your library until you exile a nonland card whose mana value is less than the cascade spell's mana value. You may cast that card without paying its mana cost. Then put all exiled non-cast cards on the bottom of your library in a random order.  The source spell's mana value is read from `ability.source_id` at resolve time (the cascade spell is on the stack when cascade resolves per CR 702.85a), so no threshold parameter is stored on the variant itself.",
@@ -10045,7 +10079,7 @@
         },
         {
           "name": "Ripple",
-          "line": 8302,
+          "line": 8307,
           "kind": "struct",
           "field_names": [
             "count"
@@ -10057,7 +10091,7 @@
         },
         {
           "name": "MiracleCast",
-          "line": 8308,
+          "line": 8313,
           "kind": "struct",
           "field_names": [
             "cost"
@@ -10069,7 +10103,7 @@
         },
         {
           "name": "MadnessCast",
-          "line": 8313,
+          "line": 8318,
           "kind": "struct",
           "field_names": [
             "cost"
@@ -10081,7 +10115,7 @@
         },
         {
           "name": "PutAtLibraryPosition",
-          "line": 8326,
+          "line": 8331,
           "kind": "struct",
           "field_names": [
             "target",
@@ -10093,7 +10127,7 @@
         },
         {
           "name": "ChooseDrawnThisTurnPayOrTopdeck",
-          "line": 8335,
+          "line": 8340,
           "kind": "struct",
           "field_names": [
             "count",
@@ -10105,7 +10139,7 @@
         },
         {
           "name": "PutOnTopOrBottom",
-          "line": 8344,
+          "line": 8349,
           "kind": "struct",
           "field_names": [
             "target"
@@ -10115,7 +10149,7 @@
         },
         {
           "name": "GiftDelivery",
-          "line": 8349,
+          "line": 8354,
           "kind": "struct",
           "field_names": [
             "kind"
@@ -10125,7 +10159,7 @@
         },
         {
           "name": "Goad",
-          "line": 8355,
+          "line": 8360,
           "kind": "struct",
           "field_names": [
             "target"
@@ -10137,7 +10171,7 @@
         },
         {
           "name": "GoadAll",
-          "line": 8362,
+          "line": 8367,
           "kind": "struct",
           "field_names": [
             "target"
@@ -10149,7 +10183,7 @@
         },
         {
           "name": "Detain",
-          "line": 8369,
+          "line": 8374,
           "kind": "struct",
           "field_names": [
             "target"
@@ -10161,7 +10195,7 @@
         },
         {
           "name": "ExchangeControl",
-          "line": 8380,
+          "line": 8385,
           "kind": "struct",
           "field_names": [
             "target_a",
@@ -10175,7 +10209,7 @@
         },
         {
           "name": "ChangeTargets",
-          "line": 8391,
+          "line": 8396,
           "kind": "struct",
           "field_names": [
             "target",
@@ -10189,7 +10223,7 @@
         },
         {
           "name": "Manifest",
-          "line": 8406,
+          "line": 8411,
           "kind": "struct",
           "field_names": [
             "target",
@@ -10202,7 +10236,7 @@
         },
         {
           "name": "ManifestDread",
-          "line": 8412,
+          "line": 8417,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 701.62a: Manifest dread — look at top 2 cards of library, manifest one, put the rest into graveyard. Uses interactive WaitingFor::ManifestDreadChoice.",
@@ -10212,7 +10246,7 @@
         },
         {
           "name": "Cloak",
-          "line": 8419,
+          "line": 8424,
           "kind": "struct",
           "field_names": [
             "target",
@@ -10226,7 +10260,7 @@
         },
         {
           "name": "TurnFaceUp",
-          "line": 8431,
+          "line": 8436,
           "kind": "struct",
           "field_names": [
             "target"
@@ -10239,7 +10273,7 @@
         },
         {
           "name": "ExtraTurn",
-          "line": 8438,
+          "line": 8443,
           "kind": "struct",
           "field_names": [
             "target"
@@ -10251,7 +10285,7 @@
         },
         {
           "name": "GrantExtraLoyaltyActivations",
-          "line": 8452,
+          "line": 8457,
           "kind": "struct",
           "field_names": [
             "amount",
@@ -10264,7 +10298,7 @@
         },
         {
           "name": "SkipNextTurn",
-          "line": 8463,
+          "line": 8468,
           "kind": "struct",
           "field_names": [
             "target",
@@ -10277,7 +10311,7 @@
         },
         {
           "name": "SkipNextStep",
-          "line": 8473,
+          "line": 8478,
           "kind": "struct",
           "field_names": [
             "target",
@@ -10291,7 +10325,7 @@
         },
         {
           "name": "AdditionalPhase",
-          "line": 8489,
+          "line": 8494,
           "kind": "struct",
           "field_names": [
             "target",
@@ -10308,7 +10342,7 @@
         },
         {
           "name": "Double",
-          "line": 8502,
+          "line": 8507,
           "kind": "struct",
           "field_names": [
             "target_kind",
@@ -10322,7 +10356,7 @@
         },
         {
           "name": "RuntimeHandled",
-          "line": 8510,
+          "line": 8515,
           "kind": "struct",
           "field_names": [
             "handler"
@@ -10334,7 +10368,7 @@
         },
         {
           "name": "Incubate",
-          "line": 8516,
+          "line": 8521,
           "kind": "struct",
           "field_names": [
             "count"
@@ -10346,7 +10380,7 @@
         },
         {
           "name": "Amass",
-          "line": 8524,
+          "line": 8529,
           "kind": "struct",
           "field_names": [
             "subtype",
@@ -10359,7 +10393,7 @@
         },
         {
           "name": "Monstrosity",
-          "line": 8532,
+          "line": 8537,
           "kind": "struct",
           "field_names": [
             "count"
@@ -10371,7 +10405,7 @@
         },
         {
           "name": "Specialize",
-          "line": 8538,
+          "line": 8543,
           "kind": "unit",
           "field_names": [],
           "doc": "Digital-only Specialize: permanently become a color-specific face after paying the synthesized activation cost (mana + discard). Not in CR text.",
@@ -10379,7 +10413,7 @@
         },
         {
           "name": "Renown",
-          "line": 8541,
+          "line": 8546,
           "kind": "struct",
           "field_names": [
             "count"
@@ -10391,7 +10425,7 @@
         },
         {
           "name": "Bolster",
-          "line": 8547,
+          "line": 8552,
           "kind": "struct",
           "field_names": [
             "count"
@@ -10403,7 +10437,7 @@
         },
         {
           "name": "Adapt",
-          "line": 8553,
+          "line": 8558,
           "kind": "struct",
           "field_names": [
             "count"
@@ -10415,7 +10449,7 @@
         },
         {
           "name": "Learn",
-          "line": 8559,
+          "line": 8564,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 701.48a: Learn — you may discard a card to draw a card, or get a Lesson from outside the game.",
@@ -10425,7 +10459,7 @@
         },
         {
           "name": "Forage",
-          "line": 8561,
+          "line": 8566,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 701.61a: Forage — exile three cards from your graveyard or sacrifice a Food.",
@@ -10435,7 +10469,7 @@
         },
         {
           "name": "CollectEvidence",
-          "line": 8563,
+          "line": 8568,
           "kind": "struct",
           "field_names": [
             "amount"
@@ -10447,7 +10481,7 @@
         },
         {
           "name": "Endure",
-          "line": 8570,
+          "line": 8575,
           "kind": "struct",
           "field_names": [
             "amount"
@@ -10460,7 +10494,7 @@
         },
         {
           "name": "BlightEffect",
-          "line": 8575,
+          "line": 8580,
           "kind": "struct",
           "field_names": [
             "count"
@@ -10472,7 +10506,7 @@
         },
         {
           "name": "Seek",
-          "line": 8580,
+          "line": 8585,
           "kind": "struct",
           "field_names": [
             "filter",
@@ -10486,7 +10520,7 @@
         },
         {
           "name": "SetLifeTotal",
-          "line": 8597,
+          "line": 8602,
           "kind": "struct",
           "field_names": [
             "target",
@@ -10499,7 +10533,7 @@
         },
         {
           "name": "ExchangeLifeWithStat",
-          "line": 8612,
+          "line": 8617,
           "kind": "struct",
           "field_names": [
             "player",
@@ -10515,7 +10549,7 @@
         },
         {
           "name": "SetDayNight",
-          "line": 8619,
+          "line": 8624,
           "kind": "struct",
           "field_names": [
             "to"
@@ -10527,7 +10561,7 @@
         },
         {
           "name": "GiveControl",
-          "line": 8624,
+          "line": 8629,
           "kind": "struct",
           "field_names": [
             "target",
@@ -10540,7 +10574,7 @@
         },
         {
           "name": "RemoveFromCombat",
-          "line": 8633,
+          "line": 8638,
           "kind": "struct",
           "field_names": [
             "target"
@@ -10552,7 +10586,7 @@
         },
         {
           "name": "Conjure",
-          "line": 8640,
+          "line": 8645,
           "kind": "struct",
           "field_names": [
             "cards",
@@ -10564,7 +10598,7 @@
         },
         {
           "name": "Intensify",
-          "line": 8652,
+          "line": 8657,
           "kind": "struct",
           "field_names": [
             "scope",
@@ -10575,7 +10609,7 @@
         },
         {
           "name": "DraftFromSpellbook",
-          "line": 8666,
+          "line": 8671,
           "kind": "struct",
           "field_names": [
             "destination",
@@ -10586,7 +10620,7 @@
         },
         {
           "name": "ChooseOneOf",
-          "line": 8685,
+          "line": 8690,
           "kind": "struct",
           "field_names": [
             "chooser",
@@ -10600,7 +10634,7 @@
         },
         {
           "name": "Unimplemented",
-          "line": 8696,
+          "line": 8701,
           "kind": "struct",
           "field_names": [
             "name",
@@ -10703,13 +10737,13 @@
     },
     "EffectError": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 14797,
+      "line": 14808,
       "doc": "Error type for effect handler failures.",
       "cr_refs": [],
       "variants": [
         {
           "name": "MissingParam",
-          "line": 14799,
+          "line": 14810,
           "kind": "tuple",
           "field_names": [],
           "doc": "",
@@ -10717,7 +10751,7 @@
         },
         {
           "name": "InvalidParam",
-          "line": 14801,
+          "line": 14812,
           "kind": "tuple",
           "field_names": [],
           "doc": "",
@@ -10725,7 +10759,7 @@
         },
         {
           "name": "PlayerNotFound",
-          "line": 14803,
+          "line": 14814,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -10733,7 +10767,7 @@
         },
         {
           "name": "ObjectNotFound",
-          "line": 14805,
+          "line": 14816,
           "kind": "tuple",
           "field_names": [],
           "doc": "",
@@ -10741,7 +10775,7 @@
         },
         {
           "name": "ChainTooDeep",
-          "line": 14807,
+          "line": 14818,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -10749,7 +10783,7 @@
         },
         {
           "name": "Unregistered",
-          "line": 14809,
+          "line": 14820,
           "kind": "tuple",
           "field_names": [],
           "doc": "",
@@ -10760,84 +10794,12 @@
     },
     "EffectKind": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 10290,
+      "line": 10299,
       "doc": "Typed tag carried by `GameEvent::EffectResolved`. Replaces the former `api_type: String` field with a compile-time-checked enum. Variants mirror `Effect` variants 1:1, plus a few engine-level emits (Equip) and trigger-condition placeholders (Reveal, Transform, TurnFaceUp, DayTimeChange).",
       "cr_refs": [],
       "variants": [
         {
           "name": "StartYourEngines",
-          "line": 10291,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "ChangeSpeed",
-          "line": 10292,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "DealDamage",
-          "line": 10293,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "Draw",
-          "line": 10294,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "Pump",
-          "line": 10295,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "PairWith",
-          "line": 10296,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "Destroy",
-          "line": 10297,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "Counter",
-          "line": 10298,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "CounterAll",
-          "line": 10299,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "Token",
           "line": 10300,
           "kind": "unit",
           "field_names": [],
@@ -10845,7 +10807,7 @@
           "cr_refs": []
         },
         {
-          "name": "GainLife",
+          "name": "ChangeSpeed",
           "line": 10301,
           "kind": "unit",
           "field_names": [],
@@ -10853,7 +10815,7 @@
           "cr_refs": []
         },
         {
-          "name": "LoseLife",
+          "name": "DealDamage",
           "line": 10302,
           "kind": "unit",
           "field_names": [],
@@ -10861,7 +10823,7 @@
           "cr_refs": []
         },
         {
-          "name": "Tap",
+          "name": "Draw",
           "line": 10303,
           "kind": "unit",
           "field_names": [],
@@ -10869,7 +10831,7 @@
           "cr_refs": []
         },
         {
-          "name": "Untap",
+          "name": "Pump",
           "line": 10304,
           "kind": "unit",
           "field_names": [],
@@ -10877,7 +10839,7 @@
           "cr_refs": []
         },
         {
-          "name": "RemoveCounter",
+          "name": "PairWith",
           "line": 10305,
           "kind": "unit",
           "field_names": [],
@@ -10885,7 +10847,7 @@
           "cr_refs": []
         },
         {
-          "name": "Sacrifice",
+          "name": "Destroy",
           "line": 10306,
           "kind": "unit",
           "field_names": [],
@@ -10893,7 +10855,7 @@
           "cr_refs": []
         },
         {
-          "name": "DiscardCard",
+          "name": "Counter",
           "line": 10307,
           "kind": "unit",
           "field_names": [],
@@ -10901,7 +10863,7 @@
           "cr_refs": []
         },
         {
-          "name": "Mill",
+          "name": "CounterAll",
           "line": 10308,
           "kind": "unit",
           "field_names": [],
@@ -10909,7 +10871,7 @@
           "cr_refs": []
         },
         {
-          "name": "Scry",
+          "name": "Token",
           "line": 10309,
           "kind": "unit",
           "field_names": [],
@@ -10917,7 +10879,7 @@
           "cr_refs": []
         },
         {
-          "name": "PumpAll",
+          "name": "GainLife",
           "line": 10310,
           "kind": "unit",
           "field_names": [],
@@ -10925,7 +10887,7 @@
           "cr_refs": []
         },
         {
-          "name": "DamageAll",
+          "name": "LoseLife",
           "line": 10311,
           "kind": "unit",
           "field_names": [],
@@ -10933,7 +10895,7 @@
           "cr_refs": []
         },
         {
-          "name": "DamageEachPlayer",
+          "name": "Tap",
           "line": 10312,
           "kind": "unit",
           "field_names": [],
@@ -10941,7 +10903,7 @@
           "cr_refs": []
         },
         {
-          "name": "DestroyAll",
+          "name": "Untap",
           "line": 10313,
           "kind": "unit",
           "field_names": [],
@@ -10949,7 +10911,7 @@
           "cr_refs": []
         },
         {
-          "name": "TapAll",
+          "name": "RemoveCounter",
           "line": 10314,
           "kind": "unit",
           "field_names": [],
@@ -10957,7 +10919,7 @@
           "cr_refs": []
         },
         {
-          "name": "UntapAll",
+          "name": "Sacrifice",
           "line": 10315,
           "kind": "unit",
           "field_names": [],
@@ -10965,7 +10927,7 @@
           "cr_refs": []
         },
         {
-          "name": "ChangeZone",
+          "name": "DiscardCard",
           "line": 10316,
           "kind": "unit",
           "field_names": [],
@@ -10973,7 +10935,7 @@
           "cr_refs": []
         },
         {
-          "name": "ChangeZoneAll",
+          "name": "Mill",
           "line": 10317,
           "kind": "unit",
           "field_names": [],
@@ -10981,7 +10943,7 @@
           "cr_refs": []
         },
         {
-          "name": "Dig",
+          "name": "Scry",
           "line": 10318,
           "kind": "unit",
           "field_names": [],
@@ -10989,7 +10951,7 @@
           "cr_refs": []
         },
         {
-          "name": "GainControl",
+          "name": "PumpAll",
           "line": 10319,
           "kind": "unit",
           "field_names": [],
@@ -10997,7 +10959,7 @@
           "cr_refs": []
         },
         {
-          "name": "GainControlAll",
+          "name": "DamageAll",
           "line": 10320,
           "kind": "unit",
           "field_names": [],
@@ -11005,7 +10967,7 @@
           "cr_refs": []
         },
         {
-          "name": "ControlNextTurn",
+          "name": "DamageEachPlayer",
           "line": 10321,
           "kind": "unit",
           "field_names": [],
@@ -11013,7 +10975,7 @@
           "cr_refs": []
         },
         {
-          "name": "Attach",
+          "name": "DestroyAll",
           "line": 10322,
           "kind": "unit",
           "field_names": [],
@@ -11021,7 +10983,7 @@
           "cr_refs": []
         },
         {
-          "name": "AttachAll",
+          "name": "TapAll",
           "line": 10323,
           "kind": "unit",
           "field_names": [],
@@ -11029,7 +10991,7 @@
           "cr_refs": []
         },
         {
-          "name": "UnattachAll",
+          "name": "UntapAll",
           "line": 10324,
           "kind": "unit",
           "field_names": [],
@@ -11037,7 +10999,7 @@
           "cr_refs": []
         },
         {
-          "name": "Surveil",
+          "name": "ChangeZone",
           "line": 10325,
           "kind": "unit",
           "field_names": [],
@@ -11045,7 +11007,7 @@
           "cr_refs": []
         },
         {
-          "name": "Fight",
+          "name": "ChangeZoneAll",
           "line": 10326,
           "kind": "unit",
           "field_names": [],
@@ -11053,7 +11015,7 @@
           "cr_refs": []
         },
         {
-          "name": "Bounce",
+          "name": "Dig",
           "line": 10327,
           "kind": "unit",
           "field_names": [],
@@ -11061,7 +11023,7 @@
           "cr_refs": []
         },
         {
-          "name": "BounceAll",
+          "name": "GainControl",
           "line": 10328,
           "kind": "unit",
           "field_names": [],
@@ -11069,7 +11031,7 @@
           "cr_refs": []
         },
         {
-          "name": "Explore",
+          "name": "GainControlAll",
           "line": 10329,
           "kind": "unit",
           "field_names": [],
@@ -11077,7 +11039,7 @@
           "cr_refs": []
         },
         {
-          "name": "ExploreAll",
+          "name": "ControlNextTurn",
           "line": 10330,
           "kind": "unit",
           "field_names": [],
@@ -11085,7 +11047,7 @@
           "cr_refs": []
         },
         {
-          "name": "Investigate",
+          "name": "Attach",
           "line": 10331,
           "kind": "unit",
           "field_names": [],
@@ -11093,7 +11055,7 @@
           "cr_refs": []
         },
         {
-          "name": "Tribute",
+          "name": "AttachAll",
           "line": 10332,
           "kind": "unit",
           "field_names": [],
@@ -11101,7 +11063,7 @@
           "cr_refs": []
         },
         {
-          "name": "TimeTravel",
+          "name": "UnattachAll",
           "line": 10333,
           "kind": "unit",
           "field_names": [],
@@ -11109,7 +11071,7 @@
           "cr_refs": []
         },
         {
-          "name": "BecomeMonarch",
+          "name": "Surveil",
           "line": 10334,
           "kind": "unit",
           "field_names": [],
@@ -11117,7 +11079,7 @@
           "cr_refs": []
         },
         {
-          "name": "Proliferate",
+          "name": "Fight",
           "line": 10335,
           "kind": "unit",
           "field_names": [],
@@ -11125,7 +11087,7 @@
           "cr_refs": []
         },
         {
-          "name": "ProliferateTarget",
+          "name": "Bounce",
           "line": 10336,
           "kind": "unit",
           "field_names": [],
@@ -11133,7 +11095,7 @@
           "cr_refs": []
         },
         {
-          "name": "Populate",
+          "name": "BounceAll",
           "line": 10337,
           "kind": "unit",
           "field_names": [],
@@ -11141,7 +11103,7 @@
           "cr_refs": []
         },
         {
-          "name": "Clash",
+          "name": "Explore",
           "line": 10338,
           "kind": "unit",
           "field_names": [],
@@ -11149,7 +11111,7 @@
           "cr_refs": []
         },
         {
-          "name": "EndTheTurn",
+          "name": "ExploreAll",
           "line": 10339,
           "kind": "unit",
           "field_names": [],
@@ -11157,8 +11119,80 @@
           "cr_refs": []
         },
         {
-          "name": "EndCombatPhase",
+          "name": "Investigate",
+          "line": 10340,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Tribute",
           "line": 10341,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "TimeTravel",
+          "line": 10342,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "BecomeMonarch",
+          "line": 10343,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Proliferate",
+          "line": 10344,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "ProliferateTarget",
+          "line": 10345,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Populate",
+          "line": 10346,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Clash",
+          "line": 10347,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "EndTheTurn",
+          "line": 10348,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "EndCombatPhase",
+          "line": 10350,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 724.2: End the combat phase — skip to the postcombat main phase.",
@@ -11168,7 +11202,7 @@
         },
         {
           "name": "Vote",
-          "line": 10343,
+          "line": 10352,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 701.38: Vote — interactive APNAP-ordered choice with per-choice tally effects.",
@@ -11178,7 +11212,7 @@
         },
         {
           "name": "SeparateIntoPiles",
-          "line": 10345,
+          "line": 10354,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 700.3: SeparateIntoPiles — partition objects into two piles, another player chooses one, sub-effect applies.",
@@ -11188,78 +11222,6 @@
         },
         {
           "name": "SwitchPT",
-          "line": 10346,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "CopySpell",
-          "line": 10347,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "EpicCopy",
-          "line": 10348,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "CastCopyOfCard",
-          "line": 10349,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "CopyTokenOf",
-          "line": 10350,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "Myriad",
-          "line": 10351,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "Encore",
-          "line": 10352,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "Meld",
-          "line": 10353,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "ExileHaunting",
-          "line": 10354,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "HideawayConceal",
           "line": 10355,
           "kind": "unit",
           "field_names": [],
@@ -11267,7 +11229,7 @@
           "cr_refs": []
         },
         {
-          "name": "BecomeCopy",
+          "name": "CopySpell",
           "line": 10356,
           "kind": "unit",
           "field_names": [],
@@ -11275,7 +11237,7 @@
           "cr_refs": []
         },
         {
-          "name": "ChooseCard",
+          "name": "EpicCopy",
           "line": 10357,
           "kind": "unit",
           "field_names": [],
@@ -11283,7 +11245,7 @@
           "cr_refs": []
         },
         {
-          "name": "PutCounter",
+          "name": "CastCopyOfCard",
           "line": 10358,
           "kind": "unit",
           "field_names": [],
@@ -11291,7 +11253,7 @@
           "cr_refs": []
         },
         {
-          "name": "PutCounterAll",
+          "name": "CopyTokenOf",
           "line": 10359,
           "kind": "unit",
           "field_names": [],
@@ -11299,7 +11261,7 @@
           "cr_refs": []
         },
         {
-          "name": "MultiplyCounter",
+          "name": "Myriad",
           "line": 10360,
           "kind": "unit",
           "field_names": [],
@@ -11307,7 +11269,7 @@
           "cr_refs": []
         },
         {
-          "name": "DoublePT",
+          "name": "Encore",
           "line": 10361,
           "kind": "unit",
           "field_names": [],
@@ -11315,7 +11277,7 @@
           "cr_refs": []
         },
         {
-          "name": "DoublePTAll",
+          "name": "Meld",
           "line": 10362,
           "kind": "unit",
           "field_names": [],
@@ -11323,7 +11285,7 @@
           "cr_refs": []
         },
         {
-          "name": "MoveCounters",
+          "name": "ExileHaunting",
           "line": 10363,
           "kind": "unit",
           "field_names": [],
@@ -11331,7 +11293,7 @@
           "cr_refs": []
         },
         {
-          "name": "Animate",
+          "name": "HideawayConceal",
           "line": 10364,
           "kind": "unit",
           "field_names": [],
@@ -11339,7 +11301,7 @@
           "cr_refs": []
         },
         {
-          "name": "ReturnAsAura",
+          "name": "BecomeCopy",
           "line": 10365,
           "kind": "unit",
           "field_names": [],
@@ -11347,7 +11309,7 @@
           "cr_refs": []
         },
         {
-          "name": "RegisterBending",
+          "name": "ChooseCard",
           "line": 10366,
           "kind": "unit",
           "field_names": [],
@@ -11355,7 +11317,7 @@
           "cr_refs": []
         },
         {
-          "name": "GenericEffect",
+          "name": "PutCounter",
           "line": 10367,
           "kind": "unit",
           "field_names": [],
@@ -11363,7 +11325,7 @@
           "cr_refs": []
         },
         {
-          "name": "Cleanup",
+          "name": "PutCounterAll",
           "line": 10368,
           "kind": "unit",
           "field_names": [],
@@ -11371,7 +11333,7 @@
           "cr_refs": []
         },
         {
-          "name": "Mana",
+          "name": "MultiplyCounter",
           "line": 10369,
           "kind": "unit",
           "field_names": [],
@@ -11379,7 +11341,7 @@
           "cr_refs": []
         },
         {
-          "name": "Discard",
+          "name": "DoublePT",
           "line": 10370,
           "kind": "unit",
           "field_names": [],
@@ -11387,7 +11349,7 @@
           "cr_refs": []
         },
         {
-          "name": "Shuffle",
+          "name": "DoublePTAll",
           "line": 10371,
           "kind": "unit",
           "field_names": [],
@@ -11395,7 +11357,7 @@
           "cr_refs": []
         },
         {
-          "name": "SearchLibrary",
+          "name": "MoveCounters",
           "line": 10372,
           "kind": "unit",
           "field_names": [],
@@ -11403,7 +11365,7 @@
           "cr_refs": []
         },
         {
-          "name": "SearchOutsideGame",
+          "name": "Animate",
           "line": 10373,
           "kind": "unit",
           "field_names": [],
@@ -11411,7 +11373,7 @@
           "cr_refs": []
         },
         {
-          "name": "ExileTop",
+          "name": "ReturnAsAura",
           "line": 10374,
           "kind": "unit",
           "field_names": [],
@@ -11419,7 +11381,7 @@
           "cr_refs": []
         },
         {
-          "name": "TargetOnly",
+          "name": "RegisterBending",
           "line": 10375,
           "kind": "unit",
           "field_names": [],
@@ -11427,7 +11389,7 @@
           "cr_refs": []
         },
         {
-          "name": "Choose",
+          "name": "GenericEffect",
           "line": 10376,
           "kind": "unit",
           "field_names": [],
@@ -11435,7 +11397,7 @@
           "cr_refs": []
         },
         {
-          "name": "ChooseDamageSource",
+          "name": "Cleanup",
           "line": 10377,
           "kind": "unit",
           "field_names": [],
@@ -11443,7 +11405,7 @@
           "cr_refs": []
         },
         {
-          "name": "Suspect",
+          "name": "Mana",
           "line": 10378,
           "kind": "unit",
           "field_names": [],
@@ -11451,7 +11413,7 @@
           "cr_refs": []
         },
         {
-          "name": "Connive",
+          "name": "Discard",
           "line": 10379,
           "kind": "unit",
           "field_names": [],
@@ -11459,7 +11421,7 @@
           "cr_refs": []
         },
         {
-          "name": "PhaseOut",
+          "name": "Shuffle",
           "line": 10380,
           "kind": "unit",
           "field_names": [],
@@ -11467,7 +11429,7 @@
           "cr_refs": []
         },
         {
-          "name": "PhaseIn",
+          "name": "SearchLibrary",
           "line": 10381,
           "kind": "unit",
           "field_names": [],
@@ -11475,7 +11437,7 @@
           "cr_refs": []
         },
         {
-          "name": "ForceBlock",
+          "name": "SearchOutsideGame",
           "line": 10382,
           "kind": "unit",
           "field_names": [],
@@ -11483,7 +11445,7 @@
           "cr_refs": []
         },
         {
-          "name": "ForceAttack",
+          "name": "ExileTop",
           "line": 10383,
           "kind": "unit",
           "field_names": [],
@@ -11491,7 +11453,7 @@
           "cr_refs": []
         },
         {
-          "name": "SolveCase",
+          "name": "TargetOnly",
           "line": 10384,
           "kind": "unit",
           "field_names": [],
@@ -11499,8 +11461,80 @@
           "cr_refs": []
         },
         {
-          "name": "BecomePrepared",
+          "name": "Choose",
+          "line": 10385,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "ChooseDamageSource",
           "line": 10386,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Suspect",
+          "line": 10387,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Connive",
+          "line": 10388,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "PhaseOut",
+          "line": 10389,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "PhaseIn",
+          "line": 10390,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "ForceBlock",
+          "line": 10391,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "ForceAttack",
+          "line": 10392,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "SolveCase",
+          "line": 10393,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "BecomePrepared",
+          "line": 10395,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.xxx: Prepare (Strixhaven) — mark target creature as prepared.",
@@ -11510,7 +11544,7 @@
         },
         {
           "name": "BecomeUnprepared",
-          "line": 10388,
+          "line": 10397,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.xxx: Prepare (Strixhaven) — clear prepared state on target.",
@@ -11520,78 +11554,6 @@
         },
         {
           "name": "SetClassLevel",
-          "line": 10389,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "CreateDelayedTrigger",
-          "line": 10390,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "AddTargetReplacement",
-          "line": 10391,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "AddRestriction",
-          "line": 10392,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "ReduceNextSpellCost",
-          "line": 10393,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "GrantNextSpellAbility",
-          "line": 10394,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "AddPendingETBCounters",
-          "line": 10395,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "CreateEmblem",
-          "line": 10396,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "PayCost",
-          "line": 10397,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "CastFromZone",
           "line": 10398,
           "kind": "unit",
           "field_names": [],
@@ -11599,7 +11561,7 @@
           "cr_refs": []
         },
         {
-          "name": "FreeCastFromZones",
+          "name": "CreateDelayedTrigger",
           "line": 10399,
           "kind": "unit",
           "field_names": [],
@@ -11607,7 +11569,7 @@
           "cr_refs": []
         },
         {
-          "name": "ExileResolvingSpellInsteadOfGraveyard",
+          "name": "AddTargetReplacement",
           "line": 10400,
           "kind": "unit",
           "field_names": [],
@@ -11615,7 +11577,7 @@
           "cr_refs": []
         },
         {
-          "name": "PreventDamage",
+          "name": "AddRestriction",
           "line": 10401,
           "kind": "unit",
           "field_names": [],
@@ -11623,7 +11585,7 @@
           "cr_refs": []
         },
         {
-          "name": "CreateDamageReplacement",
+          "name": "ReduceNextSpellCost",
           "line": 10402,
           "kind": "unit",
           "field_names": [],
@@ -11631,7 +11593,7 @@
           "cr_refs": []
         },
         {
-          "name": "Regenerate",
+          "name": "GrantNextSpellAbility",
           "line": 10403,
           "kind": "unit",
           "field_names": [],
@@ -11639,7 +11601,7 @@
           "cr_refs": []
         },
         {
-          "name": "LoseTheGame",
+          "name": "AddPendingETBCounters",
           "line": 10404,
           "kind": "unit",
           "field_names": [],
@@ -11647,7 +11609,7 @@
           "cr_refs": []
         },
         {
-          "name": "WinTheGame",
+          "name": "CreateEmblem",
           "line": 10405,
           "kind": "unit",
           "field_names": [],
@@ -11655,7 +11617,7 @@
           "cr_refs": []
         },
         {
-          "name": "RollDie",
+          "name": "PayCost",
           "line": 10406,
           "kind": "unit",
           "field_names": [],
@@ -11663,7 +11625,7 @@
           "cr_refs": []
         },
         {
-          "name": "FlipCoin",
+          "name": "CastFromZone",
           "line": 10407,
           "kind": "unit",
           "field_names": [],
@@ -11671,7 +11633,7 @@
           "cr_refs": []
         },
         {
-          "name": "FlipCoins",
+          "name": "FreeCastFromZones",
           "line": 10408,
           "kind": "unit",
           "field_names": [],
@@ -11679,7 +11641,7 @@
           "cr_refs": []
         },
         {
-          "name": "FlipCoinUntilLose",
+          "name": "ExileResolvingSpellInsteadOfGraveyard",
           "line": 10409,
           "kind": "unit",
           "field_names": [],
@@ -11687,7 +11649,7 @@
           "cr_refs": []
         },
         {
-          "name": "RingTemptsYou",
+          "name": "PreventDamage",
           "line": 10410,
           "kind": "unit",
           "field_names": [],
@@ -11695,7 +11657,7 @@
           "cr_refs": []
         },
         {
-          "name": "VentureIntoDungeon",
+          "name": "CreateDamageReplacement",
           "line": 10411,
           "kind": "unit",
           "field_names": [],
@@ -11703,7 +11665,7 @@
           "cr_refs": []
         },
         {
-          "name": "VentureInto",
+          "name": "Regenerate",
           "line": 10412,
           "kind": "unit",
           "field_names": [],
@@ -11711,7 +11673,7 @@
           "cr_refs": []
         },
         {
-          "name": "TakeTheInitiative",
+          "name": "LoseTheGame",
           "line": 10413,
           "kind": "unit",
           "field_names": [],
@@ -11719,7 +11681,7 @@
           "cr_refs": []
         },
         {
-          "name": "OpenAttractions",
+          "name": "WinTheGame",
           "line": 10414,
           "kind": "unit",
           "field_names": [],
@@ -11727,7 +11689,7 @@
           "cr_refs": []
         },
         {
-          "name": "RollToVisitAttractions",
+          "name": "RollDie",
           "line": 10415,
           "kind": "unit",
           "field_names": [],
@@ -11735,7 +11697,7 @@
           "cr_refs": []
         },
         {
-          "name": "ProcessRadCounters",
+          "name": "FlipCoin",
           "line": 10416,
           "kind": "unit",
           "field_names": [],
@@ -11743,7 +11705,7 @@
           "cr_refs": []
         },
         {
-          "name": "GrantCastingPermission",
+          "name": "FlipCoins",
           "line": 10417,
           "kind": "unit",
           "field_names": [],
@@ -11751,7 +11713,7 @@
           "cr_refs": []
         },
         {
-          "name": "ChooseFromZone",
+          "name": "FlipCoinUntilLose",
           "line": 10418,
           "kind": "unit",
           "field_names": [],
@@ -11759,7 +11721,7 @@
           "cr_refs": []
         },
         {
-          "name": "ChooseObjectsIntoTrackedSet",
+          "name": "RingTemptsYou",
           "line": 10419,
           "kind": "unit",
           "field_names": [],
@@ -11767,7 +11729,7 @@
           "cr_refs": []
         },
         {
-          "name": "ChooseAndSacrificeRest",
+          "name": "VentureIntoDungeon",
           "line": 10420,
           "kind": "unit",
           "field_names": [],
@@ -11775,7 +11737,7 @@
           "cr_refs": []
         },
         {
-          "name": "Exploit",
+          "name": "VentureInto",
           "line": 10421,
           "kind": "unit",
           "field_names": [],
@@ -11783,7 +11745,7 @@
           "cr_refs": []
         },
         {
-          "name": "GainEnergy",
+          "name": "TakeTheInitiative",
           "line": 10422,
           "kind": "unit",
           "field_names": [],
@@ -11791,7 +11753,7 @@
           "cr_refs": []
         },
         {
-          "name": "GivePlayerCounter",
+          "name": "Planeswalk",
           "line": 10423,
           "kind": "unit",
           "field_names": [],
@@ -11799,7 +11761,7 @@
           "cr_refs": []
         },
         {
-          "name": "LoseAllPlayerCounters",
+          "name": "OpenAttractions",
           "line": 10424,
           "kind": "unit",
           "field_names": [],
@@ -11807,7 +11769,7 @@
           "cr_refs": []
         },
         {
-          "name": "ExileFromTopUntil",
+          "name": "RollToVisitAttractions",
           "line": 10425,
           "kind": "unit",
           "field_names": [],
@@ -11815,7 +11777,7 @@
           "cr_refs": []
         },
         {
-          "name": "RevealUntil",
+          "name": "ProcessRadCounters",
           "line": 10426,
           "kind": "unit",
           "field_names": [],
@@ -11823,7 +11785,7 @@
           "cr_refs": []
         },
         {
-          "name": "Discover",
+          "name": "GrantCastingPermission",
           "line": 10427,
           "kind": "unit",
           "field_names": [],
@@ -11831,7 +11793,7 @@
           "cr_refs": []
         },
         {
-          "name": "Cascade",
+          "name": "ChooseFromZone",
           "line": 10428,
           "kind": "unit",
           "field_names": [],
@@ -11839,7 +11801,7 @@
           "cr_refs": []
         },
         {
-          "name": "Ripple",
+          "name": "ChooseObjectsIntoTrackedSet",
           "line": 10429,
           "kind": "unit",
           "field_names": [],
@@ -11847,7 +11809,7 @@
           "cr_refs": []
         },
         {
-          "name": "MiracleCast",
+          "name": "ChooseAndSacrificeRest",
           "line": 10430,
           "kind": "unit",
           "field_names": [],
@@ -11855,7 +11817,7 @@
           "cr_refs": []
         },
         {
-          "name": "MadnessCast",
+          "name": "Exploit",
           "line": 10431,
           "kind": "unit",
           "field_names": [],
@@ -11863,7 +11825,7 @@
           "cr_refs": []
         },
         {
-          "name": "PutAtLibraryPosition",
+          "name": "GainEnergy",
           "line": 10432,
           "kind": "unit",
           "field_names": [],
@@ -11871,7 +11833,7 @@
           "cr_refs": []
         },
         {
-          "name": "ChooseDrawnThisTurnPayOrTopdeck",
+          "name": "GivePlayerCounter",
           "line": 10433,
           "kind": "unit",
           "field_names": [],
@@ -11879,7 +11841,7 @@
           "cr_refs": []
         },
         {
-          "name": "PutOnTopOrBottom",
+          "name": "LoseAllPlayerCounters",
           "line": 10434,
           "kind": "unit",
           "field_names": [],
@@ -11887,7 +11849,7 @@
           "cr_refs": []
         },
         {
-          "name": "GiftDelivery",
+          "name": "ExileFromTopUntil",
           "line": 10435,
           "kind": "unit",
           "field_names": [],
@@ -11895,7 +11857,7 @@
           "cr_refs": []
         },
         {
-          "name": "Goad",
+          "name": "RevealUntil",
           "line": 10436,
           "kind": "unit",
           "field_names": [],
@@ -11903,7 +11865,7 @@
           "cr_refs": []
         },
         {
-          "name": "GoadAll",
+          "name": "Discover",
           "line": 10437,
           "kind": "unit",
           "field_names": [],
@@ -11911,7 +11873,7 @@
           "cr_refs": []
         },
         {
-          "name": "Detain",
+          "name": "Cascade",
           "line": 10438,
           "kind": "unit",
           "field_names": [],
@@ -11919,7 +11881,7 @@
           "cr_refs": []
         },
         {
-          "name": "ExchangeControl",
+          "name": "Ripple",
           "line": 10439,
           "kind": "unit",
           "field_names": [],
@@ -11927,7 +11889,7 @@
           "cr_refs": []
         },
         {
-          "name": "ChangeTargets",
+          "name": "MiracleCast",
           "line": 10440,
           "kind": "unit",
           "field_names": [],
@@ -11935,7 +11897,7 @@
           "cr_refs": []
         },
         {
-          "name": "Incubate",
+          "name": "MadnessCast",
           "line": 10441,
           "kind": "unit",
           "field_names": [],
@@ -11943,7 +11905,7 @@
           "cr_refs": []
         },
         {
-          "name": "Amass",
+          "name": "PutAtLibraryPosition",
           "line": 10442,
           "kind": "unit",
           "field_names": [],
@@ -11951,7 +11913,7 @@
           "cr_refs": []
         },
         {
-          "name": "Monstrosity",
+          "name": "ChooseDrawnThisTurnPayOrTopdeck",
           "line": 10443,
           "kind": "unit",
           "field_names": [],
@@ -11959,7 +11921,7 @@
           "cr_refs": []
         },
         {
-          "name": "Specialize",
+          "name": "PutOnTopOrBottom",
           "line": 10444,
           "kind": "unit",
           "field_names": [],
@@ -11967,7 +11929,7 @@
           "cr_refs": []
         },
         {
-          "name": "Renown",
+          "name": "GiftDelivery",
           "line": 10445,
           "kind": "unit",
           "field_names": [],
@@ -11975,7 +11937,7 @@
           "cr_refs": []
         },
         {
-          "name": "Bolster",
+          "name": "Goad",
           "line": 10446,
           "kind": "unit",
           "field_names": [],
@@ -11983,7 +11945,7 @@
           "cr_refs": []
         },
         {
-          "name": "Adapt",
+          "name": "GoadAll",
           "line": 10447,
           "kind": "unit",
           "field_names": [],
@@ -11991,7 +11953,7 @@
           "cr_refs": []
         },
         {
-          "name": "Manifest",
+          "name": "Detain",
           "line": 10448,
           "kind": "unit",
           "field_names": [],
@@ -11999,7 +11961,7 @@
           "cr_refs": []
         },
         {
-          "name": "ManifestDread",
+          "name": "ExchangeControl",
           "line": 10449,
           "kind": "unit",
           "field_names": [],
@@ -12007,8 +11969,88 @@
           "cr_refs": []
         },
         {
-          "name": "Cloak",
+          "name": "ChangeTargets",
+          "line": 10450,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Incubate",
           "line": 10451,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Amass",
+          "line": 10452,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Monstrosity",
+          "line": 10453,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Specialize",
+          "line": 10454,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Renown",
+          "line": 10455,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Bolster",
+          "line": 10456,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Adapt",
+          "line": 10457,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Manifest",
+          "line": 10458,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "ManifestDread",
+          "line": 10459,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Cloak",
+          "line": 10461,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 701.58a: Cloak (face-down 2/2 with ward {2}).",
@@ -12018,86 +12060,6 @@
         },
         {
           "name": "ExtraTurn",
-          "line": 10452,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "GrantExtraLoyaltyActivations",
-          "line": 10453,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "SkipNextTurn",
-          "line": 10454,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "SkipNextStep",
-          "line": 10455,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "AdditionalPhase",
-          "line": 10456,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "Double",
-          "line": 10457,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "RuntimeHandled",
-          "line": 10458,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "Learn",
-          "line": 10459,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "Forage",
-          "line": 10460,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "CollectEvidence",
-          "line": 10461,
-          "kind": "unit",
-          "field_names": [],
-          "doc": "",
-          "cr_refs": []
-        },
-        {
-          "name": "Endure",
           "line": 10462,
           "kind": "unit",
           "field_names": [],
@@ -12105,7 +12067,7 @@
           "cr_refs": []
         },
         {
-          "name": "BlightEffect",
+          "name": "GrantExtraLoyaltyActivations",
           "line": 10463,
           "kind": "unit",
           "field_names": [],
@@ -12113,7 +12075,7 @@
           "cr_refs": []
         },
         {
-          "name": "Seek",
+          "name": "SkipNextTurn",
           "line": 10464,
           "kind": "unit",
           "field_names": [],
@@ -12121,7 +12083,7 @@
           "cr_refs": []
         },
         {
-          "name": "SetLifeTotal",
+          "name": "SkipNextStep",
           "line": 10465,
           "kind": "unit",
           "field_names": [],
@@ -12129,7 +12091,7 @@
           "cr_refs": []
         },
         {
-          "name": "ExchangeLifeWithStat",
+          "name": "AdditionalPhase",
           "line": 10466,
           "kind": "unit",
           "field_names": [],
@@ -12137,7 +12099,7 @@
           "cr_refs": []
         },
         {
-          "name": "SetDayNight",
+          "name": "Double",
           "line": 10467,
           "kind": "unit",
           "field_names": [],
@@ -12145,7 +12107,7 @@
           "cr_refs": []
         },
         {
-          "name": "GiveControl",
+          "name": "RuntimeHandled",
           "line": 10468,
           "kind": "unit",
           "field_names": [],
@@ -12153,7 +12115,7 @@
           "cr_refs": []
         },
         {
-          "name": "RemoveFromCombat",
+          "name": "Learn",
           "line": 10469,
           "kind": "unit",
           "field_names": [],
@@ -12161,7 +12123,7 @@
           "cr_refs": []
         },
         {
-          "name": "Conjure",
+          "name": "Forage",
           "line": 10470,
           "kind": "unit",
           "field_names": [],
@@ -12169,7 +12131,7 @@
           "cr_refs": []
         },
         {
-          "name": "Intensify",
+          "name": "CollectEvidence",
           "line": 10471,
           "kind": "unit",
           "field_names": [],
@@ -12177,7 +12139,7 @@
           "cr_refs": []
         },
         {
-          "name": "DraftFromSpellbook",
+          "name": "Endure",
           "line": 10472,
           "kind": "unit",
           "field_names": [],
@@ -12185,7 +12147,7 @@
           "cr_refs": []
         },
         {
-          "name": "ChooseOneOf",
+          "name": "BlightEffect",
           "line": 10473,
           "kind": "unit",
           "field_names": [],
@@ -12193,7 +12155,7 @@
           "cr_refs": []
         },
         {
-          "name": "Unimplemented",
+          "name": "Seek",
           "line": 10474,
           "kind": "unit",
           "field_names": [],
@@ -12201,8 +12163,88 @@
           "cr_refs": []
         },
         {
-          "name": "Equip",
+          "name": "SetLifeTotal",
+          "line": 10475,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "ExchangeLifeWithStat",
           "line": 10476,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "SetDayNight",
+          "line": 10477,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "GiveControl",
+          "line": 10478,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "RemoveFromCombat",
+          "line": 10479,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Conjure",
+          "line": 10480,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Intensify",
+          "line": 10481,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "DraftFromSpellbook",
+          "line": 10482,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "ChooseOneOf",
+          "line": 10483,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Unimplemented",
+          "line": 10484,
+          "kind": "unit",
+          "field_names": [],
+          "doc": "",
+          "cr_refs": []
+        },
+        {
+          "name": "Equip",
+          "line": 10486,
           "kind": "unit",
           "field_names": [],
           "doc": "Engine-level equip action (not via an Effect handler).",
@@ -12210,7 +12252,7 @@
         },
         {
           "name": "Crew",
-          "line": 10478,
+          "line": 10488,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.122a: Engine-level crew action (not via an Effect handler).",
@@ -12220,7 +12262,7 @@
         },
         {
           "name": "Station",
-          "line": 10480,
+          "line": 10490,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.184a: Engine-level station action (not via an Effect handler).",
@@ -12230,7 +12272,7 @@
         },
         {
           "name": "Saddle",
-          "line": 10482,
+          "line": 10492,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.171a: Engine-level saddle action (not via an Effect handler).",
@@ -12240,7 +12282,7 @@
         },
         {
           "name": "Reveal",
-          "line": 10484,
+          "line": 10494,
           "kind": "unit",
           "field_names": [],
           "doc": "Trigger-condition placeholders — emitters not yet implemented.",
@@ -12248,7 +12290,7 @@
         },
         {
           "name": "Transform",
-          "line": 10485,
+          "line": 10495,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -12256,7 +12298,7 @@
         },
         {
           "name": "TurnFaceUp",
-          "line": 10486,
+          "line": 10496,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -12264,7 +12306,7 @@
         },
         {
           "name": "DayTimeChange",
-          "line": 10487,
+          "line": 10497,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -12380,13 +12422,13 @@
     },
     "EffectOutcomeSignal": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 11699,
+      "line": 11710,
       "doc": "Which previous-effect outcome a conditional sub-ability asks about.",
       "cr_refs": [],
       "variants": [
         {
           "name": "OptionalEffectPerformed",
-          "line": 11703,
+          "line": 11714,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 608.2c / CR 608.2d: \"if you do\", \"if that player does\", and \"if a player does\" all read whether the prompted optional effect was performed.",
@@ -12397,7 +12439,7 @@
         },
         {
           "name": "CurrentScopeSucceeded",
-          "line": 11706,
+          "line": 11717,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 101.3 + CR 608.2c: \"for each opponent who can't\" reads whether the current player-scope iteration's mandatory instruction succeeded.",
@@ -15884,21 +15926,23 @@
         },
         {
           "name": "DieRolled",
-          "line": 599,
+          "line": 601,
           "kind": "struct",
           "field_names": [
             "player_id",
             "sides",
             "result"
           ],
-          "doc": "CR 706: A die was rolled.",
+          "doc": "CR 706: A die was rolled. `result` is `None` when the roll has no numeric face value — the symbolic planar die (CR 901.9d / CR 706.7): the `RolledDie` trigger still fires, but numeric-result consumers ignore it.",
           "cr_refs": [
-            "CR 706"
+            "CR 706",
+            "CR 706.7",
+            "CR 901.9d"
           ]
         },
         {
           "name": "StartingPlayerContest",
-          "line": 612,
+          "line": 614,
           "kind": "struct",
           "field_names": [
             "rounds",
@@ -15912,7 +15956,7 @@
         },
         {
           "name": "CoinFlipped",
-          "line": 617,
+          "line": 619,
           "kind": "struct",
           "field_names": [
             "player_id",
@@ -15925,7 +15969,7 @@
         },
         {
           "name": "RingTemptsYou",
-          "line": 622,
+          "line": 624,
           "kind": "struct",
           "field_names": [
             "player_id"
@@ -15937,7 +15981,7 @@
         },
         {
           "name": "RoomEntered",
-          "line": 626,
+          "line": 628,
           "kind": "struct",
           "field_names": [
             "player_id",
@@ -15952,7 +15996,7 @@
         },
         {
           "name": "RoomDoorUnlocked",
-          "line": 633,
+          "line": 635,
           "kind": "struct",
           "field_names": [
             "player_id",
@@ -15967,7 +16011,7 @@
         },
         {
           "name": "BecomesPlotted",
-          "line": 640,
+          "line": 642,
           "kind": "struct",
           "field_names": [
             "object_id",
@@ -15980,7 +16024,7 @@
         },
         {
           "name": "DungeonCompleted",
-          "line": 645,
+          "line": 647,
           "kind": "struct",
           "field_names": [
             "player_id",
@@ -15992,8 +16036,49 @@
           ]
         },
         {
+          "name": "Planeswalked",
+          "line": 654,
+          "kind": "struct",
+          "field_names": [
+            "player_id",
+            "from",
+            "to"
+          ],
+          "doc": "CR 701.31 / CR 901.11: The planar controller planeswalked — the active plane/phenomenon (`from`) is put on the bottom of the planar deck face down and the new top card (`to`) is turned face up.",
+          "cr_refs": [
+            "CR 701.31",
+            "CR 901.11"
+          ]
+        },
+        {
+          "name": "ChaosEnsued",
+          "line": 661,
+          "kind": "struct",
+          "field_names": [
+            "plane_id"
+          ],
+          "doc": "CR 311.7 / CR 901.9b: Chaos ensued — the active plane's chaos-triggered ability triggers.",
+          "cr_refs": [
+            "CR 311.7",
+            "CR 901.9b"
+          ]
+        },
+        {
+          "name": "PlanarDieRolled",
+          "line": 665,
+          "kind": "struct",
+          "field_names": [
+            "player_id",
+            "face"
+          ],
+          "doc": "CR 901.9: The planar die was rolled, landing on the given face.",
+          "cr_refs": [
+            "CR 901.9"
+          ]
+        },
+        {
           "name": "InitiativeTaken",
-          "line": 650,
+          "line": 670,
           "kind": "struct",
           "field_names": [
             "player_id"
@@ -16005,7 +16090,7 @@
         },
         {
           "name": "AttractionOpened",
-          "line": 654,
+          "line": 674,
           "kind": "struct",
           "field_names": [
             "player_id",
@@ -16018,7 +16103,7 @@
         },
         {
           "name": "AttractionsRolledToVisit",
-          "line": 659,
+          "line": 679,
           "kind": "struct",
           "field_names": [
             "player_id",
@@ -16031,7 +16116,7 @@
         },
         {
           "name": "AttractionVisited",
-          "line": 664,
+          "line": 684,
           "kind": "struct",
           "field_names": [
             "player_id",
@@ -16046,7 +16131,7 @@
         },
         {
           "name": "Firebend",
-          "line": 670,
+          "line": 690,
           "kind": "struct",
           "field_names": [
             "source_id",
@@ -16057,7 +16142,7 @@
         },
         {
           "name": "Airbend",
-          "line": 675,
+          "line": 695,
           "kind": "struct",
           "field_names": [
             "source_id",
@@ -16068,7 +16153,7 @@
         },
         {
           "name": "Earthbend",
-          "line": 680,
+          "line": 700,
           "kind": "struct",
           "field_names": [
             "source_id",
@@ -16079,7 +16164,7 @@
         },
         {
           "name": "Waterbend",
-          "line": 685,
+          "line": 705,
           "kind": "struct",
           "field_names": [
             "source_id",
@@ -16090,7 +16175,7 @@
         },
         {
           "name": "CompanionRevealed",
-          "line": 690,
+          "line": 710,
           "kind": "struct",
           "field_names": [
             "player",
@@ -16103,7 +16188,7 @@
         },
         {
           "name": "CompanionMovedToHand",
-          "line": 695,
+          "line": 715,
           "kind": "struct",
           "field_names": [
             "player",
@@ -16116,7 +16201,7 @@
         },
         {
           "name": "NinjutsuActivated",
-          "line": 702,
+          "line": 722,
           "kind": "struct",
           "field_names": [
             "player_id",
@@ -16129,7 +16214,7 @@
         },
         {
           "name": "KeywordAbilityActivated",
-          "line": 712,
+          "line": 732,
           "kind": "struct",
           "field_names": [
             "ability_tag",
@@ -16146,7 +16231,7 @@
         },
         {
           "name": "CreatureExploited",
-          "line": 720,
+          "line": 740,
           "kind": "struct",
           "field_names": [
             "exploiter",
@@ -16159,7 +16244,7 @@
         },
         {
           "name": "EnergyChanged",
-          "line": 725,
+          "line": 745,
           "kind": "struct",
           "field_names": [
             "player",
@@ -16172,7 +16257,7 @@
         },
         {
           "name": "SpeedChanged",
-          "line": 730,
+          "line": 750,
           "kind": "struct",
           "field_names": [
             "player",
@@ -16186,7 +16271,7 @@
         },
         {
           "name": "PlayerCounterChanged",
-          "line": 736,
+          "line": 756,
           "kind": "struct",
           "field_names": [
             "player",
@@ -16200,7 +16285,7 @@
         },
         {
           "name": "ManaExpended",
-          "line": 742,
+          "line": 762,
           "kind": "struct",
           "field_names": [
             "player_id",
@@ -16214,7 +16299,7 @@
         },
         {
           "name": "Clash",
-          "line": 748,
+          "line": 768,
           "kind": "struct",
           "field_names": [
             "controller",
@@ -16230,7 +16315,7 @@
         },
         {
           "name": "VoteCast",
-          "line": 759,
+          "line": 779,
           "kind": "struct",
           "field_names": [
             "voter",
@@ -16244,7 +16329,7 @@
         },
         {
           "name": "VoteResolved",
-          "line": 767,
+          "line": 787,
           "kind": "struct",
           "field_names": [
             "source_id",
@@ -16257,7 +16342,7 @@
         },
         {
           "name": "PowerToughnessChanged",
-          "line": 773,
+          "line": 793,
           "kind": "struct",
           "field_names": [
             "object_id",
@@ -16271,7 +16356,7 @@
         },
         {
           "name": "CascadeMissed",
-          "line": 784,
+          "line": 804,
           "kind": "struct",
           "field_names": [
             "controller",
@@ -16285,7 +16370,7 @@
         },
         {
           "name": "DebugActionUsed",
-          "line": 792,
+          "line": 812,
           "kind": "struct",
           "field_names": [
             "player_id",
@@ -16296,7 +16381,7 @@
         },
         {
           "name": "DebugPermissionGranted",
-          "line": 798,
+          "line": 818,
           "kind": "struct",
           "field_names": [
             "host",
@@ -16307,7 +16392,7 @@
         },
         {
           "name": "DebugPermissionRevoked",
-          "line": 803,
+          "line": 823,
           "kind": "struct",
           "field_names": [
             "host",
@@ -16680,7 +16765,7 @@
     },
     "IterationKindBinding": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 11485,
+      "line": 11496,
       "doc": "CR 608.2c + CR 122.1: tags a `ChooseOneOf` branch whose effect must be rebound to the current counter-kind iteration before resolving. Used when a `repeat_for: DistinctCounterKindsAmong` loop drives a \"put your choice of a fixed counter or a counter of that kind\" choice — the dynamic branch carries `RebindToIteratedKind` so the loop rewrites its `PutCounter` counter type to the iteration's kind. Typed (not a bool) so future binding modes can extend.",
       "cr_refs": [
         "CR 122.1",
@@ -16689,7 +16774,7 @@
       "variants": [
         {
           "name": "RebindToIteratedKind",
-          "line": 11488,
+          "line": 11499,
           "kind": "unit",
           "field_names": [],
           "doc": "Rebind this branch's `PutCounter` counter type to the current iterated counter kind.",
@@ -18461,7 +18546,7 @@
     },
     "KeywordAction": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 14277,
+      "line": 14288,
       "doc": "Typed payload for activated keyword abilities resolved from the stack.  CR 113.3b requires activated abilities to go on the stack. CR 113.7a requires last-known-information carry-through when the source leaves its zone. Cost-payment snapshots (e.g. `Station::snapshot_power`) are captured at announcement time so resolution is safe even if the paid creature leaves the battlefield.",
       "cr_refs": [
         "CR 113.3b",
@@ -18470,7 +18555,7 @@
       "variants": [
         {
           "name": "Equip",
-          "line": 14279,
+          "line": 14290,
           "kind": "struct",
           "field_names": [
             "equipment_id",
@@ -18483,7 +18568,7 @@
         },
         {
           "name": "Crew",
-          "line": 14285,
+          "line": 14296,
           "kind": "struct",
           "field_names": [
             "vehicle_id",
@@ -18496,7 +18581,7 @@
         },
         {
           "name": "Saddle",
-          "line": 14291,
+          "line": 14302,
           "kind": "struct",
           "field_names": [
             "mount_id",
@@ -18509,7 +18594,7 @@
         },
         {
           "name": "Station",
-          "line": 14299,
+          "line": 14310,
           "kind": "struct",
           "field_names": [
             "spacecraft_id",
@@ -19674,7 +19759,7 @@
     },
     "KickerVariant": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 12128,
+      "line": 12139,
       "doc": "CR 702.33f: Discriminator for which kicker cost was paid on a spell that has more than one kicker cost (\"Kicker {A} and/or {B}\"). Per CR 702.33f, the abilities that gate on a specific kicker reference the kickers by *position* on the card (\"its [A] kicker\" / \"its [B] kicker\"), so the discriminator is the position, not the cost text.  For single-kicker spells (CR 702.33a) and multikicker (CR 702.33c), only `First` is meaningful — there is no second kicker cost. Multikicker count is expressed via `Vec<KickerVariant>` length on `SpellContext.kickers_paid` (each repeated payment pushes another `First` entry).",
       "cr_refs": [
         "CR 702.33a",
@@ -19684,7 +19769,7 @@
       "variants": [
         {
           "name": "First",
-          "line": 12130,
+          "line": 12141,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.33f: First kicker cost as listed on the card.",
@@ -19694,7 +19779,7 @@
         },
         {
           "name": "Second",
-          "line": 12133,
+          "line": 12144,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.33f: Second kicker cost as listed on the card. Only present when the card has \"Kicker {A} and/or {B}\" (CR 702.33b).",
@@ -20852,7 +20937,7 @@
     },
     "ManaModification": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 13464,
+      "line": 13475,
       "doc": "CR 106.3 + CR 614.1a: Mana-production replacement payload. Used by `ReplacementEvent::ProduceMana` to describe HOW the produced mana should be modified before entering the player's mana pool.",
       "cr_refs": [
         "CR 106.3",
@@ -20861,7 +20946,7 @@
       "variants": [
         {
           "name": "ReplaceWith",
-          "line": 13467,
+          "line": 13478,
           "kind": "struct",
           "field_names": [
             "mana_type"
@@ -20873,7 +20958,7 @@
         },
         {
           "name": "Multiply",
-          "line": 13470,
+          "line": 13481,
           "kind": "struct",
           "field_names": [
             "factor"
@@ -21135,7 +21220,7 @@
     },
     "ManaReplacementScope": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 13476,
+      "line": 13487,
       "doc": "CR 106.12b + CR 614.1a: Event scope for mana-production replacements.",
       "cr_refs": [
         "CR 106.12b",
@@ -21144,7 +21229,7 @@
       "variants": [
         {
           "name": "Any",
-          "line": 13479,
+          "line": 13490,
           "kind": "unit",
           "field_names": [],
           "doc": "Applies to any mana-production event.",
@@ -21152,7 +21237,7 @@
         },
         {
           "name": "TappedForMana",
-          "line": 13481,
+          "line": 13492,
           "kind": "unit",
           "field_names": [],
           "doc": "Applies only when a permanent is tapped for mana.",
@@ -21678,13 +21763,13 @@
     },
     "ModalSelectionCondition": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 10775,
+      "line": 10786,
       "doc": "Casting-time condition used by modal choice headers.",
       "cr_refs": [],
       "variants": [
         {
           "name": "Static",
-          "line": 10777,
+          "line": 10788,
           "kind": "struct",
           "field_names": [
             "condition"
@@ -21696,7 +21781,7 @@
         },
         {
           "name": "AdditionalCostPaid",
-          "line": 10780,
+          "line": 10791,
           "kind": "struct",
           "field_names": [
             "source",
@@ -21717,13 +21802,13 @@
     },
     "ModalSelectionConstraint": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 10755,
+      "line": 10766,
       "doc": "Selection constraints attached to a modal choice header.",
       "cr_refs": [],
       "variants": [
         {
           "name": "DifferentTargetPlayers",
-          "line": 10756,
+          "line": 10767,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -21731,7 +21816,7 @@
         },
         {
           "name": "ConditionalMaxChoices",
-          "line": 10759,
+          "line": 10770,
           "kind": "struct",
           "field_names": [
             "condition",
@@ -21746,7 +21831,7 @@
         },
         {
           "name": "NoRepeatThisTurn",
-          "line": 10766,
+          "line": 10777,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 700.2: Each mode may only be chosen once per turn for this source. Oracle text: \"choose one that hasn't been chosen this turn\"",
@@ -21756,7 +21841,7 @@
         },
         {
           "name": "NoRepeatThisGame",
-          "line": 10769,
+          "line": 10780,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 700.2: Each mode may only be chosen once total for this source. Oracle text: \"choose one that hasn't been chosen\"",
@@ -22046,7 +22131,7 @@
     },
     "OriginConstraint": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 12914,
+      "line": 12925,
       "doc": "CR 603.6c: source-zone constraint for one clause of a zone-change trigger. CR 400.1 enumerates the seven zones; a zone-change event's `from` field is `Some(zone)` for an object that moved between zones and `None` for an object created directly in its destination (CR 111.1 token creation).",
       "cr_refs": [
         "CR 111.1",
@@ -22056,7 +22141,7 @@
       "variants": [
         {
           "name": "Any",
-          "line": 12916,
+          "line": 12927,
           "kind": "unit",
           "field_names": [],
           "doc": "No source-zone restriction. Matches any `from`, including `None`.",
@@ -22064,7 +22149,7 @@
         },
         {
           "name": "Equals",
-          "line": 12918,
+          "line": 12929,
           "kind": "tuple",
           "field_names": [],
           "doc": "Matches only when the object moved from exactly this zone.",
@@ -22072,7 +22157,7 @@
         },
         {
           "name": "NotEquals",
-          "line": 12921,
+          "line": 12932,
           "kind": "tuple",
           "field_names": [],
           "doc": "\"from anywhere other than the battlefield\" — matches any source zone except this one. An object with `from = None` does not match.",
@@ -22080,7 +22165,7 @@
         },
         {
           "name": "OneOf",
-          "line": 12923,
+          "line": 12934,
           "kind": "tuple",
           "field_names": [],
           "doc": "Matches when the source zone is one of these. Subsumes inclusion sets.",
@@ -24186,7 +24271,7 @@
     },
     "PostReplacementContinuation": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 13584,
+      "line": 13595,
       "doc": "CR 614.12a + CR 615.5: Continuation effect that runs after a replacement effect's modifications complete. Stashed by the replacement pipeline, drained by callers (`engine_replacement`, `stack`, `deal_damage`, `engine`).  Two binding states share one slot: - `Template`: an `AbilityDefinition` AST that needs the replacement   source for resolution context (e.g. \"As ~ enters, choose a basic land   type\" — controller and source come from the resolving permanent). - `Resolved`: a `ResolvedAbility` that already carries selected targets   and resolution-time context, ready for direct dispatch (e.g. Phyrexian   Hydra's prevented-damage follow-up captures the source and counter   quantity from the resolution that created the prevention shield).",
       "cr_refs": [
         "CR 614.12a",
@@ -24195,7 +24280,7 @@
       "variants": [
         {
           "name": "Template",
-          "line": 13585,
+          "line": 13596,
           "kind": "tuple",
           "field_names": [],
           "doc": "",
@@ -24203,7 +24288,7 @@
         },
         {
           "name": "Resolved",
-          "line": 13586,
+          "line": 13597,
           "kind": "tuple",
           "field_names": [],
           "doc": "",
@@ -25062,7 +25147,7 @@
     },
     "QuantityModification": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 13430,
+      "line": 13441,
       "doc": "CR 614.1a: Quantity modification for replacement effects (tokens, counters). Modeled after DamageModification but for non-damage quantities.",
       "cr_refs": [
         "CR 614.1a"
@@ -25070,7 +25155,7 @@
       "variants": [
         {
           "name": "Double",
-          "line": 13432,
+          "line": 13443,
           "kind": "unit",
           "field_names": [],
           "doc": "count * 2 — Primal Vigor, Doubling Season, Parallel Lives, Anointed Procession",
@@ -25078,7 +25163,7 @@
         },
         {
           "name": "Plus",
-          "line": 13434,
+          "line": 13445,
           "kind": "struct",
           "field_names": [
             "value"
@@ -25088,7 +25173,7 @@
         },
         {
           "name": "Minus",
-          "line": 13436,
+          "line": 13447,
           "kind": "struct",
           "field_names": [
             "value"
@@ -25098,7 +25183,7 @@
         },
         {
           "name": "Prevent",
-          "line": 13456,
+          "line": 13467,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 113.6i + CR 614.17 + CR 614.6 + CR 614.7 + CR 122.1: Fully replace the quantity event with nothing — the proposed `AddCounter` / `CreateToken` event \"never happens\" (CR 614.6).  CR 113.6i is the *authorizing* rule for permanent-scoped counter prohibitions (\"an object's ability that states counters can't be put on that object functions as that object is entering the battlefield in addition to functioning while that object is on the battlefield\"). CR 614.17 is the framework for \"can't\" effects — they aren't replacement effects but follow similar rules — which is why we model the prohibition through the replacement pipeline. CR 122.1 (\"a counter is a marker placed on an object or player\") identifies the placement event the prohibition suppresses; CR 614.6/614.7 govern the resulting \"event never happens\" outcome.  Used by self-targeted counter-prohibition replacements (\"~ can't have counters put on it.\" — Melira's Keepers). Composes with `valid_card: SelfRef` for permanent-scoped protection and with player-scope filters for the future Solemnity-class global variant.",
@@ -26091,7 +26176,7 @@
     },
     "RenownSubject": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 12321,
+      "line": 12332,
       "doc": "CR 702.112: Which creature's renowned designation an `IsRenowned` condition reads.  Renowned (CR 702.112b) is a per-permanent designation other spells and abilities can identify, so a condition may reference either the ability's own permanent or a different (event-subject) creature.   - `Source` — the ability's own permanent (\"~\"), as in Renown's own     intervening-if (CR 702.112a, \"if it isn't renowned\" where \"it\" == this creature).   - `EventSubject` — the creature named by the triggering event (\"it\"), a creature     other than the source (CR 702.112b).",
       "cr_refs": [
         "CR 702.112",
@@ -26101,7 +26186,7 @@
       "variants": [
         {
           "name": "Source",
-          "line": 12322,
+          "line": 12333,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -26109,7 +26194,7 @@
         },
         {
           "name": "EventSubject",
-          "line": 12323,
+          "line": 12334,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -26120,7 +26205,7 @@
     },
     "RepeatContinuation": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 11461,
+      "line": 11472,
       "doc": "CR 608.2c + CR 107.1c: how a \"repeat this process\" loop decides whether to run another iteration. The non-count companion to `AbilityDefinition`'s `repeat_for` (a fixed `QuantityExpr` count) — this predicate decides per-iteration whether to re-follow the resolving ability's instructions.  Currently a single-variant enum: only the controller-decision form (\"you may repeat this process any number of times\") is modeled. The game-state predicate form (\"if you do, repeat this process\" — Primal Surge) is a separately-tracked deferred unit; it will add a `While(...)` variant once the optional-put pause semantics it depends on are designed.",
       "cr_refs": [
         "CR 107.1c",
@@ -26129,7 +26214,7 @@
       "variants": [
         {
           "name": "ControllerChoice",
-          "line": 11465,
+          "line": 11476,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 107.1c: \"you may repeat this process [any number of times]\" — after each iteration fully resolves, the controller is prompted (`WaitingFor::RepeatDecision`) to repeat or stop.",
@@ -26139,7 +26224,7 @@
         },
         {
           "name": "UntilStopConditions",
-          "line": 11471,
+          "line": 11482,
           "kind": "struct",
           "field_names": [
             "stop_on_put_to_hand",
@@ -26156,13 +26241,13 @@
     },
     "ReplacementCondition": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 12693,
+      "line": 12704,
       "doc": "Condition that gates whether a replacement effect applies. Checked when determining if the replacement is a candidate for an event.",
       "cr_refs": [],
       "variants": [
         {
           "name": "And",
-          "line": 12696,
+          "line": 12707,
           "kind": "struct",
           "field_names": [
             "conditions"
@@ -26174,7 +26259,7 @@
         },
         {
           "name": "UnlessControlsSubtype",
-          "line": 12702,
+          "line": 12713,
           "kind": "struct",
           "field_names": [
             "subtypes"
@@ -26184,7 +26269,7 @@
         },
         {
           "name": "UnlessControlsOtherLeq",
-          "line": 12709,
+          "line": 12720,
           "kind": "struct",
           "field_names": [
             "count",
@@ -26197,7 +26282,7 @@
         },
         {
           "name": "UnlessControlsMatching",
-          "line": 12714,
+          "line": 12725,
           "kind": "struct",
           "field_names": [
             "filter"
@@ -26209,7 +26294,7 @@
         },
         {
           "name": "UnlessControlsCountMatching",
-          "line": 12719,
+          "line": 12730,
           "kind": "struct",
           "field_names": [
             "minimum",
@@ -26222,7 +26307,7 @@
         },
         {
           "name": "UnlessPlayerLifeAtMost",
-          "line": 12722,
+          "line": 12733,
           "kind": "struct",
           "field_names": [
             "amount"
@@ -26234,7 +26319,7 @@
         },
         {
           "name": "UnlessMultipleOpponents",
-          "line": 12725,
+          "line": 12736,
           "kind": "unit",
           "field_names": [],
           "doc": "\"unless you have two or more opponents\" CR 614.1d — Battlebond lands (Luxury Suite, etc.)",
@@ -26244,7 +26329,7 @@
         },
         {
           "name": "UnlessYourTurn",
-          "line": 12728,
+          "line": 12739,
           "kind": "unit",
           "field_names": [],
           "doc": "\"unless it's your turn\" CR 614.1d + CR 500 — Replacement suppressed when active player is the controller.",
@@ -26255,7 +26340,7 @@
         },
         {
           "name": "UnlessQuantity",
-          "line": 12736,
+          "line": 12747,
           "kind": "struct",
           "field_names": [
             "lhs",
@@ -26268,7 +26353,7 @@
         },
         {
           "name": "OnlyIfQuantity",
-          "line": 12750,
+          "line": 12761,
           "kind": "struct",
           "field_names": [
             "lhs",
@@ -26281,7 +26366,7 @@
         },
         {
           "name": "HasMaxSpeed",
-          "line": 12759,
+          "line": 12770,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.178a + CR 702.179e: \"Max speed — [replacement]\" applies only while the replacement source's controller has max speed.",
@@ -26292,7 +26377,7 @@
         },
         {
           "name": "CastViaEscape",
-          "line": 12762,
+          "line": 12773,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.138c: \"escapes with\" — replacement applies only when the creature entered the battlefield via escape.",
@@ -26302,7 +26387,7 @@
         },
         {
           "name": "CastVariantPaid",
-          "line": 12768,
+          "line": 12779,
           "kind": "struct",
           "field_names": [
             "variant"
@@ -26314,7 +26399,7 @@
         },
         {
           "name": "CastFromZone",
-          "line": 12773,
+          "line": 12784,
           "kind": "struct",
           "field_names": [
             "zone"
@@ -26326,7 +26411,7 @@
         },
         {
           "name": "YouAttackedThisTurn",
-          "line": 12778,
+          "line": 12789,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 207.2c (Raid ability word) + CR 614.1c: \"if you attacked this turn\" — replacement applies only when the controller attacked with a creature earlier this turn. Evaluated against `state.creatures_attacked_this_turn` for the controller.",
@@ -26337,7 +26422,7 @@
         },
         {
           "name": "OpponentDamagedThisTurn",
-          "line": 12787,
+          "line": 12798,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.54a (Bloodthirst) + CR 614.1c: \"if an opponent was dealt damage this turn\" — replacement applies only when any opponent of the replacement's controller was the target of a damage event recorded in `state.damage_dealt_this_turn` earlier this turn. The damage need not have originated from the controller; ANY source dealing damage to ANY opponent satisfies CR 702.54a. Tracking is cleared at turn start via `start_next_turn` (CR 514.2 cleanup is one earlier mechanism; the per-turn store is cleared on the active player's next turn-start).",
@@ -26349,7 +26434,7 @@
         },
         {
           "name": "CastViaKicker",
-          "line": 12794,
+          "line": 12805,
           "kind": "struct",
           "field_names": [
             "variant",
@@ -26363,7 +26448,7 @@
         },
         {
           "name": "SourceTappedState",
-          "line": 12802,
+          "line": 12813,
           "kind": "struct",
           "field_names": [
             "tapped"
@@ -26373,7 +26458,7 @@
         },
         {
           "name": "DealtDamageThisTurnBySource",
-          "line": 12807,
+          "line": 12818,
           "kind": "struct",
           "field_names": [
             "source"
@@ -26387,7 +26472,7 @@
         },
         {
           "name": "EventSourceControlledBy",
-          "line": 12811,
+          "line": 12822,
           "kind": "struct",
           "field_names": [
             "controller"
@@ -26400,7 +26485,7 @@
         },
         {
           "name": "EffectCausedDiscard",
-          "line": 12816,
+          "line": 12827,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 614.1a + CR 701.9a: Replacement applies only when the discard was caused by resolving a spell or ability effect, not by paying a cost or by a turn-based action (cleanup hand-size discard). Used by Library of Leng (\"If an effect causes you to discard a card...\").",
@@ -26411,7 +26496,7 @@
         },
         {
           "name": "OnlyExtraTurn",
-          "line": 12821,
+          "line": 12832,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 500.7 + CR 614.10: Replacement applies only when the triggering event is an *extra* turn (granted by an effect, not a natural turn). Used by Stranglehold (\"If a player would begin an extra turn...\"). Evaluated by `begin_turn_matcher` against `ProposedEvent::BeginTurn`.",
@@ -26422,7 +26507,7 @@
         },
         {
           "name": "TokenSubtypeMatches",
-          "line": 12832,
+          "line": 12843,
           "kind": "struct",
           "field_names": [
             "subtypes"
@@ -26435,7 +26520,7 @@
         },
         {
           "name": "ExceptFirstDrawInDrawStep",
-          "line": 12843,
+          "line": 12854,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 121.1 + CR 504.1 + CR 614.6: \"except the first one you draw in each of your draw steps\" — the replacement applies to every card-draw EXCEPT the draw step's mandatory first draw (the active player's CR 504.1 turn-based action). Used by Alhammarret's Archive (\"If you would draw a card except the first one you draw in each of your draw steps, draw two cards instead.\"). Evaluated against `ProposedEvent::Draw`: returns `false` (suppress) when the drawing player is the active player, the current phase is the draw step, AND the player has not yet drawn a card during this step (`cards_drawn_this_step == 0`); otherwise `true` (apply replacement).",
@@ -26447,7 +26532,7 @@
         },
         {
           "name": "IfControlsMatching",
-          "line": 12851,
+          "line": 12862,
           "kind": "struct",
           "field_names": [
             "minimum",
@@ -26460,7 +26545,7 @@
         },
         {
           "name": "ClassLevelGE",
-          "line": 12861,
+          "line": 12872,
           "kind": "struct",
           "field_names": [
             "level"
@@ -26472,7 +26557,7 @@
         },
         {
           "name": "Unrecognized",
-          "line": 12866,
+          "line": 12877,
           "kind": "struct",
           "field_names": [
             "text"
@@ -26888,13 +26973,13 @@
     },
     "ReplacementMode": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 13550,
+      "line": 13561,
       "doc": "Whether a replacement effect is mandatory or offers the affected player a choice.",
       "cr_refs": [],
       "variants": [
         {
           "name": "Mandatory",
-          "line": 13553,
+          "line": 13564,
           "kind": "unit",
           "field_names": [],
           "doc": "Always applies (default). Used for \"enters tapped\", \"prevent damage\", etc.",
@@ -26902,7 +26987,7 @@
         },
         {
           "name": "Optional",
-          "line": 13555,
+          "line": 13566,
           "kind": "struct",
           "field_names": [
             "decline"
@@ -26912,7 +26997,7 @@
         },
         {
           "name": "MayCost",
-          "line": 13562,
+          "line": 13573,
           "kind": "struct",
           "field_names": [
             "cost",
@@ -26929,7 +27014,7 @@
     },
     "ReplacementPlayerScope": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 13538,
+      "line": 13549,
       "doc": "CR 614.1a: Which player(s) a replacement effect applies to, scoped relative to the replacement source player. For permanents/spells this is the source's controller; for cards outside the battlefield/stack, CR 109.4 + CR 108.4a make this the owner. `valid_player: None` keeps the source-player default; `Some(You)` is the explicit source-player scope, `Some(Opponent)` an opponent-scoped replacement (Tainted Remedy), and `Some(AnyPlayer)` a global all-players replacement (Rain of Gore).  Serialized as a bare string (no `#[serde(tag)]`) to match the prior `Option<ControllerRef>` field encoding — existing persisted / in-flight `valid_player` values (`\"You\"` / `\"Opponent\"`) deserialize unchanged.",
       "cr_refs": [
         "CR 108.4a",
@@ -26939,7 +27024,7 @@
       "variants": [
         {
           "name": "You",
-          "line": 13540,
+          "line": 13551,
           "kind": "unit",
           "field_names": [],
           "doc": "The replacement source player.",
@@ -26947,7 +27032,7 @@
         },
         {
           "name": "Opponent",
-          "line": 13542,
+          "line": 13553,
           "kind": "unit",
           "field_names": [],
           "doc": "Any opponent of the replacement source player.",
@@ -26955,7 +27040,7 @@
         },
         {
           "name": "AnyPlayer",
-          "line": 13544,
+          "line": 13555,
           "kind": "unit",
           "field_names": [],
           "doc": "Every player in the game, regardless of who controls the source.",
@@ -29687,7 +29772,7 @@
     },
     "SubAbilityLink": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 11426,
+      "line": 11437,
       "doc": "CR 608.2c: How a `sub_ability` relates to its parent in the resolution chain. Determines whether the sub is part of the parent's action (skipped when an optional parent is declined) or an independent following instruction (always resolves). Derived at parse time from the `ClauseBoundary` separating the two clauses in the printed Oracle text.",
       "cr_refs": [
         "CR 608.2c"
@@ -29695,7 +29780,7 @@
       "variants": [
         {
           "name": "ContinuationStep",
-          "line": 11434,
+          "line": 11445,
           "kind": "unit",
           "field_names": [],
           "doc": "Within-sentence continuation (comma / \"then\" joined). The sub is a resolution step of the parent's instruction — Squadron Hawk \"...put them into your hand, then shuffle.\" Skipped when an optional parent is declined. This is the default: an unmarked sub is a continuation, preserving today's runtime behavior for every existing chain.",
@@ -29703,7 +29788,7 @@
         },
         {
           "name": "SequentialSibling",
-          "line": 11439,
+          "line": 11450,
           "kind": "unit",
           "field_names": [],
           "doc": "Separate-sentence sibling instruction (sentence boundary). The sub is the NEXT printed instruction, independent of the parent — Ponder \"You may shuffle.\" \"Draw a card.\" Always resolves, even when an optional parent is declined (CR 608.2c \"in the order written\").",
@@ -29716,7 +29801,7 @@
     },
     "SubtypeSet": {
       "file": "crates/engine/src/types/card_type.rs",
-      "line": 161,
+      "line": 176,
       "doc": "CR 205.3: The classification of subtype sets. Each card type has its own correlated subtype pool — creature types, land types, artifact types, etc. Used by `ContinuousModification::RemoveAllSubtypes` to express \"loses all other creature types\" without enumerating individual subtypes.",
       "cr_refs": [
         "CR 205.3"
@@ -29724,7 +29809,7 @@
       "variants": [
         {
           "name": "Creature",
-          "line": 163,
+          "line": 178,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 205.3m: Creature subtypes (creature types).",
@@ -29734,7 +29819,7 @@
         },
         {
           "name": "Land",
-          "line": 165,
+          "line": 180,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 205.3i: Land subtypes (land types).",
@@ -29744,7 +29829,7 @@
         },
         {
           "name": "Artifact",
-          "line": 167,
+          "line": 182,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 205.3g: Artifact subtypes.",
@@ -29754,7 +29839,7 @@
         },
         {
           "name": "Enchantment",
-          "line": 169,
+          "line": 184,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 205.3h: Enchantment subtypes.",
@@ -29764,7 +29849,7 @@
         },
         {
           "name": "Planeswalker",
-          "line": 171,
+          "line": 186,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 205.3j: Planeswalker subtypes.",
@@ -29774,7 +29859,7 @@
         },
         {
           "name": "Spell",
-          "line": 173,
+          "line": 188,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 205.3k: Spell subtypes (instant/sorcery).",
@@ -29784,7 +29869,7 @@
         },
         {
           "name": "Battle",
-          "line": 175,
+          "line": 190,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 205.3q: Battle subtypes.",
@@ -29914,7 +29999,7 @@
     },
     "TargetChoiceTiming": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 10985,
+      "line": 10996,
       "doc": "CR 601.2c + CR 603.3d + CR 608.2d: Whether object/player choices for an ability are announced while casting/putting the ability on the stack, or chosen later during resolution by the resolving instruction.",
       "cr_refs": [
         "CR 601.2c",
@@ -29924,7 +30009,7 @@
       "variants": [
         {
           "name": "Stack",
-          "line": 10987,
+          "line": 10998,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -29932,7 +30017,7 @@
         },
         {
           "name": "Resolution",
-          "line": 10988,
+          "line": 10999,
           "kind": "unit",
           "field_names": [],
           "doc": "",
@@ -30390,13 +30475,13 @@
     },
     "TargetRef": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 14259,
+      "line": 14270,
       "doc": "Unified target reference for creatures and players.",
       "cr_refs": [],
       "variants": [
         {
           "name": "Object",
-          "line": 14260,
+          "line": 14271,
           "kind": "tuple",
           "field_names": [],
           "doc": "",
@@ -30404,7 +30489,7 @@
         },
         {
           "name": "Player",
-          "line": 14261,
+          "line": 14272,
           "kind": "tuple",
           "field_names": [],
           "doc": "",
@@ -30706,13 +30791,13 @@
     },
     "TriggerCondition": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 12340,
+      "line": 12351,
       "doc": "Intervening-if condition for triggered abilities. Checked both when the trigger would fire and when it resolves on the stack.  Predicates are leaf conditions (\"you gained life\", \"you descended\"). `And`/`Or` compose multiple predicates for compound conditions (\"if you gained and lost life this turn\").  Adding a new condition: 1. Add a variant here with the predicate's natural subject baked in 2. Add a match arm in `check_trigger_condition` (game/triggers.rs) 3. Add parser support in `extract_if_condition` (parser/oracle_trigger.rs) 4. Add any per-turn tracking fields to `Player` / `GameState` if needed",
       "cr_refs": [],
       "variants": [
         {
           "name": "GainedLife",
-          "line": 12343,
+          "line": 12354,
           "kind": "struct",
           "field_names": [
             "minimum"
@@ -30722,7 +30807,7 @@
         },
         {
           "name": "LostLife",
-          "line": 12345,
+          "line": 12356,
           "kind": "unit",
           "field_names": [],
           "doc": "\"if you lost life this turn\"",
@@ -30730,7 +30815,7 @@
         },
         {
           "name": "Descended",
-          "line": 12347,
+          "line": 12358,
           "kind": "unit",
           "field_names": [],
           "doc": "\"if you descended this turn\" (a permanent card was put into your graveyard)",
@@ -30738,7 +30823,7 @@
         },
         {
           "name": "ControlsType",
-          "line": 12349,
+          "line": 12360,
           "kind": "struct",
           "field_names": [
             "filter"
@@ -30748,7 +30833,7 @@
         },
         {
           "name": "NoSpellsCastLastTurn",
-          "line": 12351,
+          "line": 12362,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 603.4: \"if no spells were cast last turn\" — werewolf transform condition.",
@@ -30758,7 +30843,7 @@
         },
         {
           "name": "TwoOrMoreSpellsCastLastTurn",
-          "line": 12353,
+          "line": 12364,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 603.4: \"if two or more spells were cast last turn\" — werewolf reverse transform.",
@@ -30768,7 +30853,7 @@
         },
         {
           "name": "DuringPlayersTurn",
-          "line": 12363,
+          "line": 12374,
           "kind": "struct",
           "field_names": [
             "player"
@@ -30781,7 +30866,7 @@
         },
         {
           "name": "SourceEnteredThisTurn",
-          "line": 12366,
+          "line": 12377,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 400.7 + CR 603.4: True when the source permanent entered the battlefield this turn.",
@@ -30792,7 +30877,7 @@
         },
         {
           "name": "EchoDue",
-          "line": 12369,
+          "line": 12380,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.30a: Echo intervening-if for a permanent that has not yet had its next-controller-upkeep echo payment handled.",
@@ -30802,7 +30887,7 @@
         },
         {
           "name": "MinCoAttackers",
-          "line": 12382,
+          "line": 12393,
           "kind": "struct",
           "field_names": [
             "minimum",
@@ -30816,7 +30901,7 @@
         },
         {
           "name": "SolveConditionMet",
-          "line": 12389,
+          "line": 12400,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 719.2: Intervening-if for Case auto-solve. True when the source Case is unsolved AND its solve condition is met.",
@@ -30826,7 +30911,7 @@
         },
         {
           "name": "ClassLevelGE",
-          "line": 12392,
+          "line": 12403,
           "kind": "struct",
           "field_names": [
             "level"
@@ -30838,7 +30923,7 @@
         },
         {
           "name": "AttractionVisitRoll",
-          "line": 12395,
+          "line": 12406,
           "kind": "struct",
           "field_names": [
             "min",
@@ -30852,7 +30937,7 @@
         },
         {
           "name": "WasCast",
-          "line": 12398,
+          "line": 12409,
           "kind": "struct",
           "field_names": [
             "zone",
@@ -30866,7 +30951,7 @@
         },
         {
           "name": "WasPlayed",
-          "line": 12407,
+          "line": 12418,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 305.1 + CR 603.4: Intervening/event condition for zone-change triggers whose subject must have been played as a land. Negation (\"without being played\") is expressed via `Not { Box::new(WasPlayed) }`.",
@@ -30877,7 +30962,7 @@
         },
         {
           "name": "AdditionalCostPaid",
-          "line": 12412,
+          "line": 12423,
           "kind": "struct",
           "field_names": [
             "source",
@@ -30895,7 +30980,7 @@
         },
         {
           "name": "SourceIsAttacking",
-          "line": 12432,
+          "line": 12443,
           "kind": "unit",
           "field_names": [],
           "doc": "\"if it's attacking\" — true when the trigger source object is currently an attacker. CR 508.1: Used by ninjutsu ETB triggers (e.g., Thousand-Faced Shadow).",
@@ -30905,7 +30990,7 @@
         },
         {
           "name": "CastVariantPaid",
-          "line": 12438,
+          "line": 12449,
           "kind": "struct",
           "field_names": [
             "variant"
@@ -30920,7 +31005,7 @@
         },
         {
           "name": "CastVariantPaidPersistent",
-          "line": 12443,
+          "line": 12454,
           "kind": "struct",
           "field_names": [
             "variant"
@@ -30933,7 +31018,7 @@
         },
         {
           "name": "ActivatedAbilityIsNonMana",
-          "line": 12447,
+          "line": 12458,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 605.1a + CR 603.4: Event qualifier for \"that isn't a mana ability\" on activated-ability trigger events.",
@@ -30944,7 +31029,7 @@
         },
         {
           "name": "DealtDamageBySourceThisTurn",
-          "line": 12451,
+          "line": 12462,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 700.4 + CR 120.1: \"a creature dealt damage by ~ this turn dies\" — death trigger gated on the dying creature having been dealt damage by the trigger source this turn.",
@@ -30955,7 +31040,7 @@
         },
         {
           "name": "WasType",
-          "line": 12456,
+          "line": 12467,
           "kind": "struct",
           "field_names": [
             "card_type"
@@ -30968,7 +31053,7 @@
         },
         {
           "name": "LifeTotalGE",
-          "line": 12459,
+          "line": 12470,
           "kind": "struct",
           "field_names": [
             "minimum"
@@ -30980,7 +31065,7 @@
         },
         {
           "name": "ControlCount",
-          "line": 12463,
+          "line": 12474,
           "kind": "struct",
           "field_names": [
             "minimum",
@@ -30993,7 +31078,7 @@
         },
         {
           "name": "ControlsNone",
-          "line": 12467,
+          "line": 12478,
           "kind": "struct",
           "field_names": [
             "filter"
@@ -31005,7 +31090,7 @@
         },
         {
           "name": "AttackedThisTurn",
-          "line": 12471,
+          "line": 12482,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 603.4: \"if you attacked this turn\" — true when the controller declared attackers during this turn's combat phase.",
@@ -31015,7 +31100,7 @@
         },
         {
           "name": "FirstCombatPhaseOfTurn",
-          "line": 12474,
+          "line": 12485,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 500.8 + CR 506.1 + CR 603.4: \"if it's the first combat phase of the turn\". True during the first combat phase started this turn, including its steps.",
@@ -31027,7 +31112,7 @@
         },
         {
           "name": "CastSpellThisTurn",
-          "line": 12478,
+          "line": 12489,
           "kind": "struct",
           "field_names": [
             "filter"
@@ -31039,7 +31124,7 @@
         },
         {
           "name": "QuantityComparison",
-          "line": 12481,
+          "line": 12492,
           "kind": "struct",
           "field_names": [
             "lhs",
@@ -31051,7 +31136,7 @@
         },
         {
           "name": "HasMaxSpeed",
-          "line": 12487,
+          "line": 12498,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.178a: The trigger functions only while its controller has max speed.",
@@ -31061,7 +31146,7 @@
         },
         {
           "name": "IsMonarch",
-          "line": 12490,
+          "line": 12501,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 725.1: \"if you're the monarch\" is true when the controller is the monarch.",
@@ -31071,7 +31156,7 @@
         },
         {
           "name": "IsInitiative",
-          "line": 12493,
+          "line": 12504,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 726.3: \"if you have the initiative\" is true when the controller has the initiative designation.",
@@ -31081,7 +31166,7 @@
         },
         {
           "name": "NoMonarch",
-          "line": 12496,
+          "line": 12507,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 725.1: \"if there is no monarch\" is true when no player holds the monarch designation. Distinct from `Not(IsMonarch)`.",
@@ -31091,7 +31176,7 @@
         },
         {
           "name": "WasStartingPlayer",
-          "line": 12503,
+          "line": 12514,
           "kind": "struct",
           "field_names": [
             "controller"
@@ -31103,7 +31188,7 @@
         },
         {
           "name": "SpellCastWithVariantThisTurn",
-          "line": 12508,
+          "line": 12519,
           "kind": "struct",
           "field_names": [
             "variant"
@@ -31115,7 +31200,7 @@
         },
         {
           "name": "HasCityBlessing",
-          "line": 12512,
+          "line": 12523,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.131a: \"if you have the city's blessing\" — true when the controller has Ascend.",
@@ -31125,7 +31210,7 @@
         },
         {
           "name": "CompletedDungeon",
-          "line": 12517,
+          "line": 12528,
           "kind": "struct",
           "field_names": [
             "specific"
@@ -31137,7 +31222,7 @@
         },
         {
           "name": "SourceIsTapped",
-          "line": 12523,
+          "line": 12534,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 110.5b: \"if this [permanent] is tapped\" — checks the source's tapped status. Negation (\"untapped\") is expressed via `Not { Box::new(SourceIsTapped) }`.",
@@ -31147,7 +31232,7 @@
         },
         {
           "name": "SourceIsTransformed",
-          "line": 12528,
+          "line": 12539,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 701.27g: \"if this [permanent] is transformed\" — checks the source's transformed status. A \"transformed permanent\" is a double-faced permanent on the battlefield with its back face up. Negation (\"not transformed\") is expressed via `Not { Box::new(SourceIsTransformed) }`.",
@@ -31157,7 +31242,7 @@
         },
         {
           "name": "SourceIsFaceUp",
-          "line": 12531,
+          "line": 12542,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 708.2: \"if this [permanent] is face-up\" — checks the source's face-up status. Negation (\"face-down\") is expressed via `Not { Box::new(SourceIsFaceUp) }`.",
@@ -31167,7 +31252,7 @@
         },
         {
           "name": "SourceIsFaceDown",
-          "line": 12534,
+          "line": 12545,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 708.2: \"if this [permanent] is face-down\" — checks the source's face-down status. Negation (\"face-up\") is expressed via `Not { Box::new(SourceIsFaceDown) }`.",
@@ -31177,7 +31262,7 @@
         },
         {
           "name": "SourceInZone",
-          "line": 12536,
+          "line": 12547,
           "kind": "struct",
           "field_names": [
             "zone"
@@ -31189,7 +31274,7 @@
         },
         {
           "name": "CounterAddedThisTurn",
-          "line": 12539,
+          "line": 12550,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 122.1: \"if you put a counter on a permanent this turn\" — true when the controller added any counter to any permanent this turn.",
@@ -31199,7 +31284,7 @@
         },
         {
           "name": "LostLifeLastTurn",
-          "line": 12543,
+          "line": 12554,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 603.4: \"if an opponent lost life this turn\" / \"if that player lost life this turn\" — checks whether a specific player reference lost life (this turn or last turn).",
@@ -31209,7 +31294,7 @@
         },
         {
           "name": "DefendingPlayerControlsNone",
-          "line": 12547,
+          "line": 12558,
           "kind": "struct",
           "field_names": [
             "filter"
@@ -31222,7 +31307,7 @@
         },
         {
           "name": "TributeNotPaid",
-          "line": 12550,
+          "line": 12561,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 702.104a: \"if tribute wasn't paid\" — Tribute mechanic intervening-if.",
@@ -31232,7 +31317,7 @@
         },
         {
           "name": "CastDuringPhase",
-          "line": 12554,
+          "line": 12565,
           "kind": "struct",
           "field_names": [
             "phases"
@@ -31245,7 +31330,7 @@
         },
         {
           "name": "CastTimingPermission",
-          "line": 12557,
+          "line": 12568,
           "kind": "struct",
           "field_names": [
             "permission"
@@ -31258,7 +31343,7 @@
         },
         {
           "name": "ManaColorSpent",
-          "line": 12559,
+          "line": 12570,
           "kind": "struct",
           "field_names": [
             "color",
@@ -31271,7 +31356,7 @@
         },
         {
           "name": "ManaSpentCondition",
-          "line": 12561,
+          "line": 12572,
           "kind": "struct",
           "field_names": [
             "text"
@@ -31283,7 +31368,7 @@
         },
         {
           "name": "HadCounters",
-          "line": 12563,
+          "line": 12574,
           "kind": "struct",
           "field_names": [
             "counter_type"
@@ -31295,7 +31380,7 @@
         },
         {
           "name": "ControlsCommander",
-          "line": 12567,
+          "line": 12578,
           "kind": "struct",
           "field_names": [
             "ownership"
@@ -31309,7 +31394,7 @@
         },
         {
           "name": "IsRenowned",
-          "line": 12574,
+          "line": 12585,
           "kind": "struct",
           "field_names": [
             "subject"
@@ -31323,7 +31408,7 @@
         },
         {
           "name": "HasCounters",
-          "line": 12579,
+          "line": 12590,
           "kind": "struct",
           "field_names": [
             "counters",
@@ -31338,7 +31423,7 @@
         },
         {
           "name": "ZoneChangeObjectMatchesFilter",
-          "line": 12590,
+          "line": 12601,
           "kind": "struct",
           "field_names": [
             "origin",
@@ -31354,7 +31439,7 @@
         },
         {
           "name": "ZoneChangeObjectIsTapped",
-          "line": 12605,
+          "line": 12616,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 603.4 + CR 603.6a + CR 110.5b: Intervening-if for an \"enters tapped\" rider whose subject is the permanent named by the trigger event (the entering permanent), NOT the permanent that owns the ability. Distinct from `SourceIsTapped`, which checks the ability's own source. Used by \"Whenever a [filter] enters tapped\" observer triggers (Amulet of Vigor, Tiller Engine) and, via `Not`, \"enters untapped\" (Charismatic Conqueror). Mirrors the source-vs-event-object split already established by `SourceMatchesFilter` / `ZoneChangeObjectMatchesFilter`.",
@@ -31366,7 +31451,7 @@
         },
         {
           "name": "SourceMatchesFilter",
-          "line": 12608,
+          "line": 12619,
           "kind": "struct",
           "field_names": [
             "filter"
@@ -31379,7 +31464,7 @@
         },
         {
           "name": "EventDamageSourceMatchesFilter",
-          "line": 12621,
+          "line": 12632,
           "kind": "struct",
           "field_names": [
             "filter"
@@ -31392,7 +31477,7 @@
         },
         {
           "name": "ChosenLabelIs",
-          "line": 12631,
+          "line": 12642,
           "kind": "struct",
           "field_names": [
             "label"
@@ -31406,7 +31491,7 @@
         },
         {
           "name": "AttackersDeclaredCount",
-          "line": 12645,
+          "line": 12656,
           "kind": "struct",
           "field_names": [
             "subject",
@@ -31423,7 +31508,7 @@
         },
         {
           "name": "ExceptFirstDrawInDrawStep",
-          "line": 12659,
+          "line": 12670,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 121.1 + CR 504.1 + CR 603.4: \"except the first one [you|they] draw in each of [your|their] draw steps\" — the trigger fires for every card-draw EXCEPT the draw step's mandatory first draw. Used by Orcish Bowmasters (\"Whenever an opponent draws a card except the first one they draw in each of their draw steps, ~ deals 1 damage to any target.\"). Reads the `nth_in_step` ordinal embedded in the `GameEvent::CardDrawn` event: returns `false` when the drawing player is the active player, the current phase is the draw step, AND `nth_in_step == 1`; otherwise `true`.",
@@ -31435,7 +31520,7 @@
         },
         {
           "name": "PlacedByAbilitySource",
-          "line": 12670,
+          "line": 12681,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 603.4 + CR 603.6a + CR 400.7: \"if it was put onto the battlefield with this ability\" — true when the triggering zone-change object's `entered_via_ability_source` equals the trigger's own source id (i.e. THIS ability placed it). Used by anti-recursion ETB guards (Kodama of the East Tree). The negation (\"if it wasn't ... with this ability\") wraps via `Not { condition: Box::new(PlacedByAbilitySource) }`, mirroring `Not(WasCast)` — no `negated: bool`. Resolves the entering object from the `GameEvent::ZoneChanged` event, falling back to the trigger source for self-referential cases.",
@@ -31447,7 +31532,7 @@
         },
         {
           "name": "And",
-          "line": 12674,
+          "line": 12685,
           "kind": "struct",
           "field_names": [
             "conditions"
@@ -31457,7 +31542,7 @@
         },
         {
           "name": "Or",
-          "line": 12676,
+          "line": 12687,
           "kind": "struct",
           "field_names": [
             "conditions"
@@ -31467,7 +31552,7 @@
         },
         {
           "name": "Not",
-          "line": 12686,
+          "line": 12697,
           "kind": "struct",
           "field_names": [
             "condition"
@@ -31483,13 +31568,13 @@
     },
     "TriggerConstraint": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 12872,
+      "line": 12883,
       "doc": "Rate-limiting constraint for triggered abilities.",
       "cr_refs": [],
       "variants": [
         {
           "name": "OncePerTurn",
-          "line": 12874,
+          "line": 12885,
           "kind": "unit",
           "field_names": [],
           "doc": "\"This ability triggers only once each turn.\"",
@@ -31497,7 +31582,7 @@
         },
         {
           "name": "OncePerGame",
-          "line": 12876,
+          "line": 12887,
           "kind": "unit",
           "field_names": [],
           "doc": "\"This ability triggers only once.\"",
@@ -31505,7 +31590,7 @@
         },
         {
           "name": "OnlyDuringYourTurn",
-          "line": 12878,
+          "line": 12889,
           "kind": "unit",
           "field_names": [],
           "doc": "\"This ability triggers only during your turn.\"",
@@ -31513,7 +31598,7 @@
         },
         {
           "name": "NthSpellThisTurn",
-          "line": 12883,
+          "line": 12894,
           "kind": "struct",
           "field_names": [
             "n",
@@ -31524,7 +31609,7 @@
         },
         {
           "name": "NthDrawThisTurn",
-          "line": 12890,
+          "line": 12901,
           "kind": "struct",
           "field_names": [
             "n"
@@ -31534,7 +31619,7 @@
         },
         {
           "name": "OnlyDuringOpponentsTurn",
-          "line": 12892,
+          "line": 12903,
           "kind": "unit",
           "field_names": [],
           "doc": "\"At the beginning of each opponent's [phase]\"",
@@ -31542,7 +31627,7 @@
         },
         {
           "name": "OnlyDuringYourMainPhase",
-          "line": 12896,
+          "line": 12907,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 505.1: Trigger fires only during the controller's main phase (precombat or postcombat). Used by cards that print \"during your main phase\" as a trigger timing restriction.",
@@ -31552,7 +31637,7 @@
         },
         {
           "name": "AtClassLevel",
-          "line": 12898,
+          "line": 12909,
           "kind": "struct",
           "field_names": [
             "level"
@@ -31564,7 +31649,7 @@
         },
         {
           "name": "MaxTimesPerTurn",
-          "line": 12901,
+          "line": 12912,
           "kind": "struct",
           "field_names": [
             "max"
@@ -31576,7 +31661,7 @@
         },
         {
           "name": "OncePerOpponentPerTurn",
-          "line": 12905,
+          "line": 12916,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 603.2: \"for the first time during each of their turns\" — fires once per opponent per turn. Used by Valgavoth, Harrower of Souls: \"Whenever an opponent loses life for the first time during each of their turns, ...\"",
@@ -34083,7 +34168,7 @@
     },
     "VoterScope": {
       "file": "crates/engine/src/types/ability.rs",
-      "line": 9096,
+      "line": 9101,
       "doc": "CR 701.38a + CR 800.4g: Which players cast votes for an `Effect::Vote`.  `AllPlayers` is the classic Council's-dilemma shape (\"starting with you, each player votes for...\"). `EachOpponent` covers \"each opponent chooses...\" patterns (Master of Ceremonies, etc.) where the source's controller does NOT vote — they instead receive a per-choice effect via `PlayerFilter::VotedFor` (\"you and that player each ...\").  Per CR 800.4g, when every opponent has left the game in a multiplayer session, an `EachOpponent` vote produces an empty voter queue and the resolver emits `EffectResolved` with no tally instead of waiting forever on a non-existent voter.",
       "cr_refs": [
         "CR 701.38a",
@@ -34092,7 +34177,7 @@
       "variants": [
         {
           "name": "AllPlayers",
-          "line": 9099,
+          "line": 9104,
           "kind": "unit",
           "field_names": [],
           "doc": "Every non-eliminated player votes, in APNAP order from `starting_with`. CR 701.38a — the canonical Council's-dilemma voter set.",
@@ -34102,7 +34187,7 @@
         },
         {
           "name": "EachOpponent",
-          "line": 9103,
+          "line": 9108,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 800.4g: Every non-eliminated opponent of the ability controller votes. The controller does not vote — they receive per-choice sub-effects via `PlayerFilter::VotedFor` against the recorded ballots.",
@@ -34112,7 +34197,7 @@
         },
         {
           "name": "ControllerLabels",
-          "line": 9111,
+          "line": 9116,
           "kind": "unit",
           "field_names": [],
           "doc": "CR 101.4 + CR 608.2: Battlebond's friend-or-foe keyword action has no dedicated CR section. The spell controller alone makes one choice per non-eliminated player, in APNAP order from the controller. The \"voter\" slot in each ballot records the LABELED player (subject), not the actor — the actor is always the controller. Used by Pir's Whim, Khorvath's Fury, Regna's Sanction, Virtus's Maneuver, and Zndrsplt's Judgment.",

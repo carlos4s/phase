@@ -373,6 +373,11 @@ pub fn mark_public_state_from_events(state: &mut GameState, events: &[GameEvent]
             | GameEvent::RoomDoorUnlocked { .. }
             | GameEvent::BecomesPlotted { .. }
             | GameEvent::DungeonCompleted { .. }
+            // Planechase events: the planar deck / controller are authoritative
+            // state serialized directly; they carry no per-object display delta.
+            | GameEvent::Planeswalked { .. }
+            | GameEvent::ChaosEnsued { .. }
+            | GameEvent::PlanarDieRolled { .. }
             | GameEvent::Firebend { .. }
             | GameEvent::Airbend { .. }
             | GameEvent::Earthbend { .. }

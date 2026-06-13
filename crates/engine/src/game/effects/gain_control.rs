@@ -1046,7 +1046,7 @@ mod tests {
         let roll = events
             .iter()
             .find_map(|e| match e {
-                GameEvent::DieRolled { result, .. } => Some(*result as usize),
+                GameEvent::DieRolled { result, .. } => result.map(usize::from),
                 _ => None,
             })
             .expect("RollDie must emit a DieRolled event");

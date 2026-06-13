@@ -494,6 +494,13 @@ pub fn start_next_turn(state: &mut GameState, events: &mut Vec<GameEvent>) {
     // CR 500: Track per-player turn count for "your Nth turn of the game" conditions.
     state.players[state.active_player.0 as usize].turns_taken += 1;
 
+    // CR 311.5 / CR 312.4 / CR 901.6: the planar controller is normally whoever
+    // the active player is. The turn has committed here (past both turn-skip
+    // early-returns above), so `active_player` is final for this invocation —
+    // sync the planar controller (and the active plane's `.controller`) to it.
+    // No-op outside a Planechase game.
+    crate::game::planechase::set_planar_controller(state, state.active_player, events);
+
     if let Some(scheduled) = state
         .scheduled_turn_controls
         .iter()

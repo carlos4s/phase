@@ -601,6 +601,12 @@ fn keys_from_event(event: &GameEvent, state: &GameState) -> Keys {
         GameEvent::RoomEntered { .. } | GameEvent::DungeonCompleted { .. } => {
             push(TriggerEventKey::DungeonOrClassOrCase);
         }
+        // Planechase trigger modes (PlaneswalkedFrom/To, ChaosEnsues) route to the
+        // always-checked unclassified bucket in `keys_from_trigger_def`, so these
+        // events need no dedicated index key — their matchers are always consulted.
+        GameEvent::Planeswalked { .. }
+        | GameEvent::ChaosEnsued { .. }
+        | GameEvent::PlanarDieRolled { .. } => {}
         GameEvent::RoomDoorUnlocked { .. } | GameEvent::BecomesPlotted { .. } => {}
         GameEvent::InitiativeTaken { .. } => push(TriggerEventKey::MonarchOrInitiative),
         GameEvent::AttractionOpened { .. } | GameEvent::AttractionsRolledToVisit { .. } => {}
@@ -779,6 +785,7 @@ fn keys_from_effect_kind(kind: EffectKind, push: &mut impl FnMut(TriggerEventKey
         | EffectKind::VentureIntoDungeon
         | EffectKind::VentureInto
         | EffectKind::TakeTheInitiative
+        | EffectKind::Planeswalk
         | EffectKind::OpenAttractions
         | EffectKind::RollToVisitAttractions
         | EffectKind::ProcessRadCounters

@@ -129,6 +129,7 @@ pub mod pair_with;
 pub mod paradigm;
 pub mod pay;
 pub mod phase_out;
+pub mod planeswalk;
 pub mod player_counter;
 pub mod populate;
 pub mod prepare;
@@ -2407,6 +2408,7 @@ pub fn resolve_effect(
             venture::resolve_venture_into(state, ability, *dungeon, events)
         }
         Effect::TakeTheInitiative => venture::resolve_take_initiative(state, ability, events),
+        Effect::Planeswalk => planeswalk::resolve(state, ability, events),
         Effect::OpenAttractions { .. } | Effect::RollToVisitAttractions => {
             attractions::resolve(state, ability, events)
         }

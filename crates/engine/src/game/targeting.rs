@@ -1055,9 +1055,11 @@ pub(crate) fn extract_amount_from_event(event: &crate::types::events::GameEvent)
         // attackers that satisfied the trigger subject, so "that many" reads
         // the size of that contextual attack event.
         GameEvent::AttackersDeclared { attacker_ids, .. } => Some(attacker_ids.len() as i32),
-        // CR 706.2: the final number of a die roll is its result. Lets
-        // `EventContextAmount` resolve "where X is the result" pump effects.
-        GameEvent::DieRolled { result, .. } => Some(*result as i32),
+        // CR 706.2 / CR 706.7: the final number of a die roll is its result. Lets
+        // `EventContextAmount` resolve "where X is the result" pump effects. The
+        // symbolic planar die has no numeric result (`None`, CR 901.9d), so such
+        // effects ignore it.
+        GameEvent::DieRolled { result, .. } => result.map(i32::from),
         // CR 120.1 + CR 603.7c: total combat damage dealt to this player by the
         // matching source set. For DamageDoneOnceByController triggers, this is
         // the filtered total stamped by matching_damage_done_once_by_controller_event.
@@ -3710,9 +3712,22 @@ mod tests {
         let event = crate::types::events::GameEvent::DieRolled {
             player_id: PlayerId(0),
             sides: 8,
-            result: 7,
+            result: Some(7),
         };
         assert_eq!(extract_amount_from_event(&event), Some(7));
+    }
+
+    /// CR 901.9d / CR 706.7: the symbolic planar die has no numeric result, so a
+    /// `DieRolled { result: None }` yields no amount — numeric-result effects
+    /// (e.g. "where X is the result") ignore the planar die.
+    #[test]
+    fn extract_amount_from_resultless_die_rolled_returns_none() {
+        let event = crate::types::events::GameEvent::DieRolled {
+            player_id: PlayerId(0),
+            sides: 6,
+            result: None,
+        };
+        assert_eq!(extract_amount_from_event(&event), None);
     }
 
     /// CR 602.2a: For Burning-Tree Shaman / Flamescroll Celebrant's "deals 1

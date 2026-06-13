@@ -118,6 +118,11 @@ pub fn trigger_matcher(mode: TriggerMode) -> Option<TriggerMatcher> {
         TriggerMode::Vote => match_vote_resolved,
         TriggerMode::RingTemptsYou => match_ring_tempts_you,
         TriggerMode::DungeonCompleted => match_dungeon_completed,
+        // CR 311.7 / CR 901.9b: "Whenever chaos ensues" fires for the active plane.
+        TriggerMode::ChaosEnsues => match_chaos_ensues,
+        // CR 701.31d: planeswalked-away-from / planeswalked-to (encounter) endpoints.
+        TriggerMode::PlaneswalkedFrom => match_planeswalked_from,
+        TriggerMode::PlaneswalkedTo => match_planeswalked_to,
         TriggerMode::RoomEntered => match_room_entered,
         TriggerMode::UnlockDoor => match_unlock_door,
         TriggerMode::FullyUnlock => match_fully_unlock,
@@ -162,9 +167,6 @@ pub fn trigger_matcher(mode: TriggerMode) -> Option<TriggerMatcher> {
         | TriggerMode::NewGame
         | TriggerMode::Championed
         | TriggerMode::PlanarDice
-        | TriggerMode::PlaneswalkedFrom
-        | TriggerMode::PlaneswalkedTo
-        | TriggerMode::ChaosEnsues
         | TriggerMode::Copied
         | TriggerMode::ConjureAll
         | TriggerMode::Abandoned
@@ -375,6 +377,10 @@ pub fn build_trigger_registry() -> HashMap<TriggerMode, TriggerMatcher> {
 
     // CR 309 / CR 701.49: Dungeon triggers
     r.insert(TriggerMode::DungeonCompleted, match_dungeon_completed);
+    // CR 311.7 / CR 701.31 / CR 901.9b: Planechase triggers
+    r.insert(TriggerMode::ChaosEnsues, match_chaos_ensues);
+    r.insert(TriggerMode::PlaneswalkedFrom, match_planeswalked_from);
+    r.insert(TriggerMode::PlaneswalkedTo, match_planeswalked_to);
     r.insert(TriggerMode::RoomEntered, match_room_entered);
     r.insert(TriggerMode::UnlockDoor, match_unlock_door);
     r.insert(TriggerMode::FullyUnlock, match_fully_unlock);
@@ -443,9 +449,9 @@ pub fn build_trigger_registry() -> HashMap<TriggerMode, TriggerMatcher> {
         // TriggerMode::DungeonCompleted — moved to real matcher above
         // TriggerMode::RoomEntered — moved to real matcher above
         TriggerMode::PlanarDice,
-        TriggerMode::PlaneswalkedFrom,
-        TriggerMode::PlaneswalkedTo,
-        TriggerMode::ChaosEnsues,
+        // TriggerMode::PlaneswalkedFrom — moved to real matcher above
+        // TriggerMode::PlaneswalkedTo — moved to real matcher above
+        // TriggerMode::ChaosEnsues — moved to real matcher above
         TriggerMode::Copied,
         TriggerMode::ConjureAll,
         TriggerMode::Abandoned,
@@ -862,6 +868,9 @@ fn count_matching_trigger_event_subjects(
         | GameEvent::RoomDoorUnlocked { .. }
         | GameEvent::BecomesPlotted { .. }
         | GameEvent::DungeonCompleted { .. }
+        | GameEvent::Planeswalked { .. }
+        | GameEvent::ChaosEnsued { .. }
+        | GameEvent::PlanarDieRolled { .. }
         | GameEvent::InitiativeTaken { .. }
         | GameEvent::AttractionOpened { .. }
         | GameEvent::AttractionsRolledToVisit { .. }
@@ -3499,6 +3508,57 @@ pub(super) fn match_dungeon_completed(
     }
 }
 
+/// CR 311.7 / CR 901.9b: "Whenever chaos ensues" — fires for the plane whose
+/// chaos ability is the source (the active face-up plane).
+pub(super) fn match_chaos_ensues(
+    event: &GameEvent,
+    _trigger: &TriggerDefinition,
+    source_id: ObjectId,
+    _state: &GameState,
+) -> bool {
+    matches!(event, GameEvent::ChaosEnsued { plane_id } if *plane_id == source_id)
+}
+
+/// CR 701.31d: "Whenever you planeswalk away from [this plane]" — fires when the
+/// source plane/phenomenon is the card planeswalked away from.
+pub(super) fn match_planeswalked_from(
+    event: &GameEvent,
+    trigger: &TriggerDefinition,
+    source_id: ObjectId,
+    state: &GameState,
+) -> bool {
+    if let GameEvent::Planeswalked {
+        from: Some(f),
+        player_id,
+        ..
+    } = event
+    {
+        *f == source_id && valid_player_matches(trigger, state, *player_id, source_id)
+    } else {
+        false
+    }
+}
+
+/// CR 312.5 / CR 701.31d: "When you encounter / planeswalk to [this card]" —
+/// fires when the source plane/phenomenon is the card turned face up.
+pub(super) fn match_planeswalked_to(
+    event: &GameEvent,
+    trigger: &TriggerDefinition,
+    source_id: ObjectId,
+    state: &GameState,
+) -> bool {
+    if let GameEvent::Planeswalked {
+        to: Some(t),
+        player_id,
+        ..
+    } = event
+    {
+        *t == source_id && valid_player_matches(trigger, state, *player_id, source_id)
+    } else {
+        false
+    }
+}
+
 /// CR 104.3a: "Whenever a player loses the game" — fires when any player's
 /// loss event is recorded. The `valid_target` filter (if set) restricts
 /// which player's loss triggers the ability. Cards: Withengar Unbound,
@@ -4289,7 +4349,7 @@ mod tests {
             &GameEvent::DieRolled {
                 player_id: PlayerId(0),
                 sides: 20,
-                result: 13,
+                result: Some(13),
             },
             &trigger,
             source,
@@ -4299,7 +4359,7 @@ mod tests {
             &GameEvent::DieRolled {
                 player_id: PlayerId(0),
                 sides: 6,
-                result: 4,
+                result: Some(4),
             },
             &trigger,
             source,
@@ -4309,7 +4369,7 @@ mod tests {
             &GameEvent::DieRolled {
                 player_id: PlayerId(1),
                 sides: 20,
-                result: 13,
+                result: Some(13),
             },
             &trigger,
             source,

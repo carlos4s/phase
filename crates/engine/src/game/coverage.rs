@@ -1672,6 +1672,8 @@ fn fmt_core_type(ct: &CoreType) -> &'static str {
         CoreType::Battle => "battle",
         CoreType::Kindred => "kindred",
         CoreType::Dungeon => "dungeon",
+        CoreType::Plane => "plane",
+        CoreType::Phenomenon => "phenomenon",
     }
 }
 
@@ -2649,6 +2651,7 @@ fn effect_details(effect: &Effect) -> Vec<(String, String)> {
         | Effect::VentureIntoDungeon
         | Effect::VentureInto { .. }
         | Effect::TakeTheInitiative
+        | Effect::Planeswalk
         | Effect::OpenAttractions { .. }
         | Effect::RollToVisitAttractions
         | Effect::ProcessRadCounters

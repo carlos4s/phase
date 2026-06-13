@@ -6355,6 +6355,15 @@ pub struct GameState {
     /// CR 309 / CR 701.49: Per-player dungeon venture progress.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub dungeon_progress: HashMap<PlayerId, crate::game::dungeon::DungeonProgress>,
+    /// CR 901.15: The planar deck (single-deck Planechase option). Front = top;
+    /// the active face-up plane/phenomenon lives in the command zone, NOT here.
+    #[serde(default, skip_serializing_if = "im::Vector::is_empty")]
+    pub planar_deck: im::Vector<ObjectId>,
+    /// CR 311.5: The planar controller — the player designated to roll the
+    /// planar die and resolve the active plane's abilities. `None` outside a
+    /// Planechase game.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planar_controller: Option<PlayerId>,
     /// CR 725: The initiative designation (like monarch — one player at a time).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initiative: Option<PlayerId>,
@@ -6897,6 +6906,8 @@ impl GameState {
             ring_level: HashMap::new(),
             ring_bearer: HashMap::new(),
             dungeon_progress: HashMap::new(),
+            planar_deck: im::Vector::new(),
+            planar_controller: None,
             initiative: None,
             combat_prevention_tally: None,
             cancelled_casts: Vec::new(),
@@ -7308,6 +7319,8 @@ impl PartialEq for GameState {
             && self.exiled_from_hand_this_resolution == other.exiled_from_hand_this_resolution
             && self.lki_cache == other.lki_cache
             && self.city_blessing == other.city_blessing
+            && self.planar_deck == other.planar_deck
+            && self.planar_controller == other.planar_controller
     }
 }
 

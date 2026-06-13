@@ -8109,6 +8109,11 @@ pub enum Effect {
     /// CR 726.1 + CR 726.2: Take the initiative. Grants the initiative
     /// designation and triggers venture into Undercity.
     TakeTheInitiative,
+    /// CR 901.8 / CR 901.9c: The synthetic "planeswalking ability." When a
+    /// player rolls the Planeswalker symbol on the planar die, this ability
+    /// triggers and is put on the stack; on resolution its controller (the
+    /// roller, CR 901.8) planeswalks (CR 701.31).
+    Planeswalk,
     /// CR 701.51b: Open N Attractions by putting cards from the top of your
     /// Attraction deck onto the battlefield.
     OpenAttractions {
@@ -9618,6 +9623,7 @@ impl Effect {
             | Effect::VentureIntoDungeon
             | Effect::VentureInto { .. }
             | Effect::TakeTheInitiative
+            | Effect::Planeswalk
             | Effect::OpenAttractions { .. }
             | Effect::RollToVisitAttractions
             | Effect::ProcessRadCounters
@@ -9874,6 +9880,7 @@ impl Effect {
             | Effect::SolveCase
             | Effect::Specialize
             | Effect::TakeTheInitiative
+            | Effect::Planeswalk
             | Effect::Unimplemented { .. }
             | Effect::VentureInto { .. }
             | Effect::VentureIntoDungeon
@@ -10073,6 +10080,7 @@ impl Effect {
             | Effect::SolveCase
             | Effect::Specialize
             | Effect::TakeTheInitiative
+            | Effect::Planeswalk
             | Effect::Unimplemented { .. }
             | Effect::VentureInto { .. }
             | Effect::VentureIntoDungeon
@@ -10212,6 +10220,7 @@ pub fn effect_variant_name(effect: &Effect) -> &str {
         Effect::VentureIntoDungeon => "VentureIntoDungeon",
         Effect::VentureInto { .. } => "VentureInto",
         Effect::TakeTheInitiative => "TakeTheInitiative",
+        Effect::Planeswalk => "Planeswalk",
         Effect::OpenAttractions { .. } => "OpenAttractions",
         Effect::RollToVisitAttractions => "RollToVisitAttractions",
         Effect::ProcessRadCounters => "ProcessRadCounters",
@@ -10411,6 +10420,7 @@ pub enum EffectKind {
     VentureIntoDungeon,
     VentureInto,
     TakeTheInitiative,
+    Planeswalk,
     OpenAttractions,
     RollToVisitAttractions,
     ProcessRadCounters,
@@ -10621,6 +10631,7 @@ impl From<&Effect> for EffectKind {
             Effect::VentureIntoDungeon => EffectKind::VentureIntoDungeon,
             Effect::VentureInto { .. } => EffectKind::VentureInto,
             Effect::TakeTheInitiative => EffectKind::TakeTheInitiative,
+            Effect::Planeswalk => EffectKind::Planeswalk,
             Effect::OpenAttractions { .. } => EffectKind::OpenAttractions,
             Effect::RollToVisitAttractions => EffectKind::RollToVisitAttractions,
             Effect::ProcessRadCounters => EffectKind::ProcessRadCounters,

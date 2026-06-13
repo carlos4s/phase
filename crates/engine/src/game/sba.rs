@@ -162,6 +162,17 @@ pub fn check_state_based_actions(state: &mut GameState, events: &mut Vec<GameEve
         // and no room ability from that dungeon is on the stack, complete the dungeon.
         check_dungeon_completion(state, events, &mut any_performed);
 
+        // CR 704.6f / CR 312.7: In a Planechase game, if a phenomenon is face up
+        // in the command zone and none of its triggered abilities are on the
+        // stack, its controller planeswalks. Gated on an active Planechase game.
+        if state.planar_controller.is_some() {
+            crate::game::planechase::check_phenomenon_planeswalk_sba(
+                state,
+                events,
+                &mut any_performed,
+            );
+        }
+
         if !any_performed {
             break;
         }
