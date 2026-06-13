@@ -11034,6 +11034,17 @@ mod tests {
                 ..
             }
         ));
+
+        // CR 312.5 / CR 701.31d: the "When you planeswalk here" arrival clause
+        // must also map to PlaneswalkedTo — the end-step assertion above does not
+        // cover the arrival trigger, so assert it explicitly.
+        assert!(
+            result
+                .triggers
+                .iter()
+                .any(|t| t.mode == TriggerMode::PlaneswalkedTo),
+            "Ghirapur Grand Prix's 'When you planeswalk here' must produce a PlaneswalkedTo trigger",
+        );
     }
 
     #[test]

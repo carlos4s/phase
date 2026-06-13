@@ -7402,13 +7402,27 @@ fn try_parse_named_trigger_mode(lower: &str) -> Option<(TriggerMode, TriggerDefi
         return Some((TriggerMode::PlaneswalkedFrom, def));
     }
 
-    // CR 312.5 / CR 701.31d: encounter == planeswalked-to face-up endpoint.
-    // "Whenever you planeswalk to ~" and "When you encounter ~" both fire when
-    // this plane/phenomenon is the card turned face up.
+    // CR 312.5 / CR 701.31d: encounter == the planeswalked-to face-up endpoint.
+    // A plane/phenomenon's arrival trigger fires when it becomes the face-up
+    // card. Oracle text names that arrival several ways — all one phrase axis,
+    // composed with a single `alt` rather than enumerated as whole sentences:
+    //   * "planeswalk here"            (e.g. Ghirapur Grand Prix)
+    //   * "planeswalk to ~"            (the card naming itself, normalized to ~)
+    //   * "planeswalk to this plane"   (literal self-reference)
+    //   * "encounter ~"                (the phenomenon naming itself, normalized)
+    //   * "encounter this phenomenon"  (literal self-reference)
+    // "this plane"/"this phenomenon" are absent from `SELF_REF_TYPE_PHRASES`, so
+    // they survive normalization as literals — hence the explicit literal arms.
     if (
         alt((tag::<_, _, OracleError<'_>>("whenever "), tag("when "))),
         tag("you "),
-        alt((tag("planeswalk to ~"), tag("encounter ~"))),
+        alt((
+            tag("planeswalk here"),
+            tag("planeswalk to ~"),
+            tag("planeswalk to this plane"),
+            tag("encounter ~"),
+            tag("encounter this phenomenon"),
+        )),
     )
         .parse(lower)
         .is_ok()
@@ -20280,6 +20294,49 @@ mod tests {
         );
         assert_eq!(def.mode, TriggerMode::PlaneswalkedTo);
         assert_eq!(def.valid_card, Some(TargetFilter::SelfRef));
+    }
+
+    #[test]
+    fn trigger_arrival_phrase_axis_all_map_to_planeswalked_to() {
+        // CR 312.5 / CR 701.31d: every arrival/encounter phrasing in the class
+        // maps to PlaneswalkedTo with the controller target filter — including
+        // the "here" and literal "this plane"/"this phenomenon" forms that do
+        // NOT normalize to ~ (so they exercise the literal arms of the axis).
+        for (oracle, name) in [
+            // "planeswalk here" — Ghirapur Grand Prix's arrival trigger.
+            (
+                "When you planeswalk here, draw a card.",
+                "Ghirapur Grand Prix",
+            ),
+            ("Whenever you planeswalk here, draw a card.", "Some Plane"),
+            // literal "this plane" (not a SELF_REF_TYPE_PHRASE → stays literal).
+            (
+                "When you planeswalk to this plane, draw a card.",
+                "Some Plane",
+            ),
+            // literal "this phenomenon".
+            (
+                "When you encounter this phenomenon, draw a card.",
+                "Some Phenomenon",
+            ),
+        ] {
+            let def = parse_trigger_line(oracle, name);
+            assert_eq!(
+                def.mode,
+                TriggerMode::PlaneswalkedTo,
+                "`{oracle}` should map to PlaneswalkedTo",
+            );
+            assert_eq!(
+                def.valid_card,
+                Some(TargetFilter::SelfRef),
+                "`{oracle}` arrival trigger is self-referential",
+            );
+            assert_eq!(
+                def.valid_target,
+                Some(TargetFilter::Controller),
+                "`{oracle}` resolves the arrival for the planar controller",
+            );
+        }
     }
 
     #[test]
