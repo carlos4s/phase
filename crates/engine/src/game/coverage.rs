@@ -1680,6 +1680,7 @@ fn fmt_core_type(ct: &CoreType) -> &'static str {
         CoreType::Dungeon => "dungeon",
         CoreType::Plane => "plane",
         CoreType::Phenomenon => "phenomenon",
+        CoreType::Scheme => "scheme",
     }
 }
 
