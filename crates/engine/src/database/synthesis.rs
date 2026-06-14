@@ -8771,12 +8771,7 @@ pub fn synthesize_archenemy(face: &mut CardFace) {
 /// schemes and `synthesize_planechase` for planes/phenomena. Idempotent: only
 /// stamps when `Zone::Command` is not already present.
 pub fn synthesize_conspiracy(face: &mut CardFace) {
-    let is_conspiracy = face
-        .card_type
-        .core_types
-        .iter()
-        .any(|ct| matches!(ct, CoreType::Conspiracy));
-    if !is_conspiracy {
+    if !face.card_type.core_types.contains(&CoreType::Conspiracy) {
         return;
     }
     for trigger in face.triggers.iter_mut() {

@@ -56,11 +56,14 @@ pub fn functions_from_command_zone(obj: &GameObject) -> bool {
     obj.zone == Zone::Command && !obj.face_down && is_conspiracy(obj)
 }
 
-/// CR 905.4 / CR 905.5: The face-up conspiracies a player controls in the
-/// command zone. Face-down hidden-agenda conspiracies are excluded — they aren't
-/// yet functioning (CR 905.4a) — as are conspiracies controlled by other
-/// players.
-pub fn conspiracies_in_command_zone(state: &GameState, controller: PlayerId) -> Vec<ObjectId> {
+/// CR 905.4 / CR 905.5: The face-up conspiracies a player owns in the command
+/// zone. Face-down hidden-agenda conspiracies are excluded — they aren't yet
+/// functioning (CR 905.4a) — as are conspiracies owned by other players.
+///
+/// CR 404.2: the command zone is a non-battlefield zone, so this player-scoped
+/// query filters by `obj.owner`. For conspiracies this is also the controller —
+/// CR 905.5 makes a conspiracy's owner its controller.
+pub fn conspiracies_in_command_zone(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
     state
         .command_zone
         .iter()
@@ -69,7 +72,7 @@ pub fn conspiracies_in_command_zone(state: &GameState, controller: PlayerId) -> 
             state
                 .objects
                 .get(&id)
-                .is_some_and(|obj| functions_from_command_zone(obj) && obj.controller == controller)
+                .is_some_and(|obj| functions_from_command_zone(obj) && obj.owner == player)
         })
         .collect()
 }
@@ -84,12 +87,17 @@ pub fn conspiracies_in_command_zone(state: &GameState, controller: PlayerId) -> 
 /// gathered on the next layer pass (the static-source index keys on the
 /// command-zone source set, which this changes).
 ///
-/// No-op if `id` is not a known object. Idempotent with respect to the command
-/// zone: the id is appended only if not already present.
+/// No-op if `id` is not a known object or is not a conspiracy card. Idempotent
+/// with respect to the command zone: the id is appended only if not already
+/// present.
 pub fn start_with_conspiracy(state: &mut GameState, id: ObjectId, hidden_agenda: bool) {
     let Some(obj) = state.objects.get_mut(&id) else {
         return;
     };
+    // CR 905.4: only conspiracy cards begin the game in the command zone this way.
+    if !is_conspiracy(obj) {
+        return;
+    }
     obj.zone = Zone::Command;
     // CR 905.4a: hidden-agenda conspiracies start face down; others face up.
     obj.face_down = hidden_agenda;
@@ -108,20 +116,18 @@ pub fn start_with_conspiracy(state: &mut GameState, id: ObjectId, hidden_agenda:
 /// CR 905.4a + CR 702.106: Turn a face-down hidden-agenda conspiracy face up.
 ///
 /// A player may do this any time they have priority. No-op (returns `false`)
-/// unless `id` is a face-down conspiracy that `player` controls in the command
-/// zone. On success the conspiracy turns face up and begins functioning, so
-/// layers are marked dirty to gather its now-active command-zone statics
-/// (CR 611.2).
+/// unless `id` is a face-down conspiracy that `player` owns in the command zone
+/// (CR 404.2 / CR 905.5: a conspiracy's owner is its controller). On success the
+/// conspiracy turns face up and begins functioning, so layers are marked dirty
+/// to gather its now-active command-zone statics (CR 611.2).
 pub fn turn_hidden_agenda_face_up(state: &mut GameState, id: ObjectId, player: PlayerId) -> bool {
-    let eligible = state.objects.get(&id).is_some_and(|obj| {
-        obj.zone == Zone::Command && obj.face_down && obj.controller == player && is_conspiracy(obj)
-    });
-    if !eligible {
+    let Some(obj) = state.objects.get_mut(&id) else {
+        return false;
+    };
+    if !(obj.zone == Zone::Command && obj.face_down && obj.owner == player && is_conspiracy(obj)) {
         return false;
     }
-    if let Some(obj) = state.objects.get_mut(&id) {
-        obj.face_down = false;
-    }
+    obj.face_down = false;
     crate::game::layers::mark_layers_full(state);
     true
 }
