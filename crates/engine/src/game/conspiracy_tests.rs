@@ -12,6 +12,9 @@ use super::conspiracy::{
     conspiracies_in_command_zone, functions_from_command_zone, is_conspiracy,
     start_with_conspiracy, turn_hidden_agenda_face_up,
 };
+use super::functioning_abilities::{
+    active_static_definitions, active_trigger_definitions, game_functioning_statics,
+};
 use crate::database::synthesis::synthesize_conspiracy;
 use crate::types::ability::{StaticDefinition, TriggerDefinition};
 use crate::types::card::CardFace;
@@ -274,6 +277,49 @@ fn synthesize_conspiracy_ignores_non_conspiracy_faces() {
     assert!(!face.static_abilities[0]
         .active_zones
         .contains(&Zone::Command));
+}
+
+#[test]
+fn face_down_conspiracy_opt_in_abilities_do_not_function() {
+    let mut state = GameState::new_two_player(7);
+    let face = synthesized_conspiracy_face(
+        vec![continuous_static()],
+        vec![TriggerDefinition::new(TriggerMode::SpellCast)],
+    );
+    let id = create_conspiracy_object(&mut state, "Secret Summoning", &face, P0);
+    start_with_conspiracy(&mut state, id, true);
+
+    let obj = state.objects.get(&id).unwrap();
+    assert_eq!(
+        active_static_definitions(&state, obj).count(),
+        0,
+        "CR 905.4a: a face-down hidden-agenda conspiracy's statics do not function"
+    );
+    assert_eq!(
+        active_trigger_definitions(&state, obj).count(),
+        0,
+        "CR 905.4a: a face-down hidden-agenda conspiracy's triggers do not function"
+    );
+    assert!(
+        !game_functioning_statics(&state).any(|(source, _)| source.id == id),
+        "the game-scope static iterator must also exclude face-down conspiracies"
+    );
+}
+
+#[test]
+fn face_up_conspiracy_opt_in_abilities_function() {
+    let mut state = GameState::new_two_player(7);
+    let face = synthesized_conspiracy_face(
+        vec![continuous_static()],
+        vec![TriggerDefinition::new(TriggerMode::SpellCast)],
+    );
+    let id = create_conspiracy_object(&mut state, "Worldknit", &face, P0);
+    start_with_conspiracy(&mut state, id, false);
+
+    let obj = state.objects.get(&id).unwrap();
+    assert_eq!(active_static_definitions(&state, obj).count(), 1);
+    assert_eq!(active_trigger_definitions(&state, obj).count(), 1);
+    assert!(game_functioning_statics(&state).any(|(source, _)| source.id == id));
 }
 
 // ---------------------------------------------------------------------------
