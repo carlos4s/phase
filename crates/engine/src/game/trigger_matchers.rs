@@ -2068,6 +2068,7 @@ pub(super) fn match_discarded(
     if let GameEvent::Discarded {
         player_id,
         object_id,
+        ..
     } = event
     {
         // CR 603.2: The trigger event includes which player discarded; scope
@@ -2607,6 +2608,7 @@ pub(super) fn match_cycled_or_discarded(
     if let GameEvent::Discarded {
         player_id,
         object_id,
+        ..
     } = event
     {
         if !valid_player_matches(trigger, state, *player_id, source_id) {
@@ -4405,6 +4407,7 @@ mod tests {
             &GameEvent::Discarded {
                 player_id: PlayerId(1),
                 object_id: discarded,
+                source_id: None,
             },
             &trigger,
             source,
@@ -4414,6 +4417,7 @@ mod tests {
             &GameEvent::Discarded {
                 player_id: PlayerId(0),
                 object_id: discarded,
+                source_id: None,
             },
             &trigger,
             source,
@@ -4477,6 +4481,7 @@ mod tests {
             &GameEvent::Discarded {
                 player_id: PlayerId(1),
                 object_id: card,
+                source_id: None,
             },
             &trigger,
             source,
@@ -4486,6 +4491,7 @@ mod tests {
             &GameEvent::Discarded {
                 player_id: PlayerId(0),
                 object_id: card,
+                source_id: None,
             },
             &trigger,
             source,
