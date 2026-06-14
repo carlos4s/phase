@@ -5,17 +5,14 @@
 //! assert the resulting command-zone / scheme-deck / event output. Several are
 //! deliberately discriminating: they fail if the corresponding fix is reverted.
 //!
-//! Exactly-once trigger collection is NOT asserted on the direct-call tests —
-//! `set_in_motion` deliberately does not self-collect (the post-action scan owns
-//! that), and `abandon` self-collects while the scheme is still face up in the
-//! command zone and then removes it, so no later scan can re-collect it (the same
-//! leave-the-command-zone pattern as `planechase::planeswalk`). That coverage
-//! lives in the pipeline-driven runtime tests
-//! `set_in_motion_collects_trigger_exactly_once` and
-//! `abandon_collects_trigger_exactly_once`, which drive
-//! `apply_as_current(PassPriority)` through `run_post_action_pipeline` and assert
-//! `scheme_trigger_instances == 1` (the set_in_motion test reads 2 if its fix is
-//! reverted; the abandon test guards the collect-before-leave ordering).
+//! Exactly-once trigger collection is NOT asserted on the direct-call
+//! set-in-motion tests — `set_in_motion` deliberately does not self-collect (the
+//! post-action scan owns that). The pipeline-driven
+//! `set_in_motion_collects_trigger_exactly_once` test drives
+//! `apply_as_current(PassPriority)` through `run_post_action_pipeline` and reads
+//! 2 if its fix is reverted. `abandon` is tested directly because CR 701.33a only
+//! allows face-up ongoing schemes to be abandoned; the CR 904.10 non-ongoing SBA
+//! is not an abandon action and must not fire `SchemeAbandoned`.
 
 use super::archenemy::{
     abandon, active_schemes, check_scheme_abandon_sba, is_scheme_object, set_in_motion, top_scheme,
@@ -378,12 +375,12 @@ fn ongoing_scheme_static_applies_only_while_face_up() {
 }
 
 // ---------------------------------------------------------------------------
-// 6. non-ongoing scheme abandons on resolution (DISCRIMINATING)
+// 6. non-ongoing scheme is turned down on resolution (DISCRIMINATING)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn nonongoing_scheme_abandons_on_resolution() {
-    // DISCRIMINATING: fails if `check_scheme_abandon_sba` no longer abandons a
+fn nonongoing_scheme_turns_down_on_resolution() {
+    // DISCRIMINATING: fails if `check_scheme_abandon_sba` no longer turns down a
     // face-up non-ongoing scheme, or if it stops respecting an on-stack scheme
     // trigger.
     let mut state = GameState::new_two_player(7);
@@ -428,12 +425,13 @@ fn nonongoing_scheme_abandons_on_resolution() {
         "scheme still face up while its ability is on the stack"
     );
 
-    // Clear the stack: now the SBA abandons the scheme.
+    // Clear the stack: now the SBA turns the scheme face down and puts it on
+    // the bottom of the scheme deck.
     state.stack.clear();
     let mut events2 = Vec::new();
     let mut any2 = false;
     check_scheme_abandon_sba(&mut state, &mut events2, &mut any2);
-    assert!(any2, "abandon once the ability leaves the stack");
+    assert!(any2, "turn down once the ability leaves the stack");
     assert!(
         state.objects.get(&scheme_id).unwrap().face_down,
         "abandoned scheme is face down"
@@ -553,20 +551,21 @@ fn ongoing_scheme_not_abandoned_by_sba() {
 }
 
 // ---------------------------------------------------------------------------
-// 9. abandon fires the Abandoned trigger
+// 9. abandon fires the Abandoned trigger for ongoing schemes
 // ---------------------------------------------------------------------------
 
 #[test]
 fn abandon_fires_abandoned_trigger() {
     // `abandon` intentionally retains its inline self-collect (single authority):
-    // it runs inside SBAs reachable from callers that don't re-scan SBA events,
-    // and it collects the trigger while the scheme is still face up in the command
-    // zone, then removes it — so no later scan can re-collect it (no pipeline
-    // filter needed). This direct call defers the trigger exactly once.
+    // CR 701.33a allows only face-up ongoing schemes to be abandoned, and it
+    // collects the trigger while the scheme is still face up in the command zone,
+    // then removes it — so no later scan can re-collect it (no pipeline filter
+    // needed). This direct call defers the trigger exactly once.
     let mut state = GameState::new_two_player(7);
     let arch = PlayerId(0);
     state.active_player = arch;
-    let scheme = synthesized_scheme_face(vec![abandoned_trigger()], vec![], vec![]);
+    let scheme =
+        synthesized_scheme_face(vec![abandoned_trigger()], vec![], vec![Supertype::Ongoing]);
     let scheme_id = setup_active_scheme(&mut state, arch, "Abandon Scheme", &scheme);
 
     let mut events = Vec::new();
@@ -739,23 +738,16 @@ fn set_in_motion_collects_trigger_exactly_once() {
 }
 
 // ---------------------------------------------------------------------------
-// 13. abandon collects the trigger EXACTLY ONCE through the real pipeline
-//     (REORDER GUARD — guards the collect-before-leave-command-zone ordering in
-//     `abandon`; the count drifts off 1 if that ordering is broken)
+// 13. non-ongoing SBA is NOT an abandon action
 // ---------------------------------------------------------------------------
 
 #[test]
-fn abandon_collects_trigger_exactly_once() {
-    // Drives the REAL pipeline's SBA loop. `check_scheme_abandon_sba` calls
-    // `abandon`, which collects the SchemeAbandoned trigger while the scheme is
-    // still face up in the command zone, THEN removes it from the command zone.
-    // The pipeline's SBA-loop scan re-scans the freshly emitted SchemeAbandoned
-    // event, but the scheme has already left the command zone, so that scan can
-    // no longer find it to re-collect — the count stays 1 with no pipeline filter
-    // (same leave-the-command-zone pattern as planechase::planeswalk). This guards
-    // the collect-before-leave ordering: reordering `abandon` to remove the scheme
-    // from the command zone before the self-collect would drop the count off 1
-    // (the trigger can no longer be scanned once its source has left the zone).
+fn nonongoing_sba_does_not_fire_abandoned_trigger() {
+    // DISCRIMINATING: CR 904.10 / CR 314.6 turn a non-ongoing scheme face down
+    // and put it on the bottom of the scheme deck as an SBA, but CR 701.33a says
+    // only face-up ongoing schemes can be abandoned. A non-ongoing scheme with a
+    // synthetic Abandoned trigger must therefore NOT get `SchemeAbandoned` or a
+    // deferred Abandoned trigger from the SBA path.
     use crate::types::actions::GameAction;
     use crate::types::phase::Phase;
 
@@ -778,11 +770,11 @@ fn abandon_collects_trigger_exactly_once() {
     state.priority_pass_count = 0;
 
     // A single PassPriority drives `run_post_action_pipeline`, whose SBA loop
-    // abandons the face-up non-ongoing scheme.
-    apply_as_current(&mut state, GameAction::PassPriority).unwrap();
+    // turns the face-up non-ongoing scheme down.
+    let result = apply_as_current(&mut state, GameAction::PassPriority).unwrap();
 
-    // The scheme was abandoned: face down, out of the command zone, on the
-    // bottom of the scheme deck.
+    // The scheme was turned face down, out of the command zone, on the bottom of
+    // the scheme deck.
     assert!(
         state.objects.get(&scheme_id).unwrap().face_down,
         "abandoned scheme is face down"
@@ -796,11 +788,18 @@ fn abandon_collects_trigger_exactly_once() {
         Some(scheme_id),
         "abandoned scheme is on the bottom of the scheme deck"
     );
-    // EXACTLY ONCE.
+    assert!(
+        !result
+            .events
+            .iter()
+            .any(|event| matches!(event, GameEvent::SchemeAbandoned { .. })),
+        "non-ongoing SBA is not an abandon action"
+    );
+    // NOT abandoned: no SchemeAbandoned trigger/event was collected.
     assert_eq!(
         scheme_trigger_instances(&state, scheme_id),
-        1,
-        "SchemeAbandoned trigger collected exactly once, got {} (stack={:?}, deferred={:?})",
+        0,
+        "non-ongoing SBA must not collect an Abandoned trigger, got {} (stack={:?}, deferred={:?})",
         scheme_trigger_instances(&state, scheme_id),
         state.stack,
         state.deferred_triggers,
