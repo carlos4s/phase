@@ -1,15 +1,27 @@
 //! Tests for the Archenemy runtime (CR 904 / CR 314). Declared from
 //! `game/mod.rs` so `archenemy.rs` stays implementation-only (no inline tests).
 //!
-//! These drive the real pipeline: set-in-motion / abandon / SBA functions emit
-//! events, the trigger machinery (`collect_triggers_into_deferred`) collects
-//! them, and assertions check the resulting deferred-queue / command-zone /
-//! event output. Several tests are deliberately discriminating: they fail if the
-//! corresponding fix is reverted.
+//! Most tests call the set-in-motion / abandon / SBA functions directly and
+//! assert the resulting command-zone / scheme-deck / event output. Several are
+//! deliberately discriminating: they fail if the corresponding fix is reverted.
+//!
+//! Exactly-once trigger collection is NOT asserted on the direct-call tests —
+//! `set_in_motion` deliberately does not self-collect (the post-action scan owns
+//! that), and `abandon` self-collects while the scheme is still face up in the
+//! command zone and then removes it, so no later scan can re-collect it (the same
+//! leave-the-command-zone pattern as `planechase::planeswalk`). That coverage
+//! lives in the pipeline-driven runtime tests
+//! `set_in_motion_collects_trigger_exactly_once` and
+//! `abandon_collects_trigger_exactly_once`, which drive
+//! `apply_as_current(PassPriority)` through `run_post_action_pipeline` and assert
+//! `scheme_trigger_instances == 1` (the set_in_motion test reads 2 if its fix is
+//! reverted; the abandon test guards the collect-before-leave ordering).
 
 use super::archenemy::{
     abandon, active_schemes, check_scheme_abandon_sba, is_scheme_object, set_in_motion, top_scheme,
 };
+use super::engine::apply_as_current;
+use super::triggers::{DeferredTrigger, PendingTrigger};
 use crate::database::synthesis::synthesize_archenemy;
 use crate::types::ability::{
     AbilityDefinition, AbilityKind, Effect, QuantityExpr, ResolvedAbility, StaticDefinition,
@@ -18,7 +30,7 @@ use crate::types::ability::{
 use crate::types::card::CardFace;
 use crate::types::card_type::{CoreType, Supertype};
 use crate::types::events::GameEvent;
-use crate::types::game_state::{GameState, StackEntry, StackEntryKind};
+use crate::types::game_state::{GameState, StackEntry, StackEntryKind, WaitingFor};
 use crate::types::identifiers::{CardId, ObjectId};
 use crate::types::player::PlayerId;
 use crate::types::statics::StaticMode;
@@ -138,6 +150,23 @@ fn setup_active_scheme(
     id
 }
 
+/// Count live trigger instances sourced from `scheme_id`: stack entries whose
+/// source is the scheme + deferred-queue entries whose pending source is the
+/// scheme. Exactly-once == 1. Mirrors the on-stack / waiting-to-be-put-on-stack
+/// split of `scheme_trigger_on_stack_or_pending` (CR 904.10).
+fn scheme_trigger_instances(state: &GameState, scheme_id: ObjectId) -> usize {
+    state
+        .stack
+        .iter()
+        .filter(|e| e.source_id == scheme_id)
+        .count()
+        + state
+            .deferred_triggers
+            .iter()
+            .filter(|d| d.pending.source_id == scheme_id)
+            .count()
+}
+
 // ---------------------------------------------------------------------------
 // 1. CoreType round-trip
 // ---------------------------------------------------------------------------
@@ -155,14 +184,15 @@ fn coretype_scheme_roundtrip() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. set_in_motion promotes the top scheme and fires its trigger (DISCRIMINATING)
+// 2. set_in_motion promotes the top scheme, emits the event, and stamps the
+//    controller (DISCRIMINATING). Exactly-once trigger collection is covered by
+//    the pipeline-driven runtime test `set_in_motion_collects_trigger_exactly_once`.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn set_in_motion_promotes_top_and_fires_trigger() {
+fn set_in_motion_promotes_event_and_stamps_controller() {
     // DISCRIMINATING: fails if `set_in_motion` stops turning the scheme face up /
-    // stamping the controller, or if `match_set_in_motion` is reverted (the
-    // SetInMotion trigger would never be collected).
+    // stamping the controller, or stops emitting `SchemeSetInMotion`.
     let mut state = GameState::new_two_player(7);
     let arch = PlayerId(0);
     let non_arch = PlayerId(1);
@@ -209,15 +239,10 @@ fn set_in_motion_promotes_top_and_fires_trigger() {
         )),
         "SchemeSetInMotion event emitted, got {events:?}"
     );
-    // CR 603.3: the SetInMotion trigger is collected into the deferred queue.
-    assert!(
-        state
-            .deferred_triggers
-            .iter()
-            .any(|d| d.pending.source_id == scheme_id),
-        "SetInMotion trigger from {scheme_id:?} must be collected, got {:?}",
-        state.deferred_triggers
-    );
+    // NOTE: exactly-once trigger collection is asserted by the pipeline-driven
+    // `set_in_motion_collects_trigger_exactly_once` runtime test, not here.
+    // `set_in_motion` deliberately does NOT self-collect (the post-action scan
+    // owns that), so a direct call leaves `deferred_triggers` empty.
 }
 
 // ---------------------------------------------------------------------------
@@ -436,20 +461,49 @@ fn deferred_scheme_trigger_blocks_abandon() {
     let mut state = GameState::new_two_player(7);
     let arch = PlayerId(0);
     state.active_player = arch;
-    // A scheme whose SetInMotion trigger lands in the deferred queue.
-    let scheme = synthesized_scheme_face(vec![set_in_motion_trigger()], vec![], vec![]);
-    let deck_ids = setup_scheme_deck(&mut state, arch, &[("Trigger Scheme", &scheme)]);
-    let scheme_id = deck_ids[0];
+    // A face-up non-ongoing scheme that the SBA would otherwise abandon.
+    let scheme = synthesized_scheme_face(vec![], vec![], vec![]);
+    let scheme_id = setup_active_scheme(&mut state, arch, "Trigger Scheme", &scheme);
 
-    // Set in motion: face up, and its SetInMotion trigger is now deferred.
-    let mut events = Vec::new();
-    set_in_motion(&mut state, &mut events);
+    // Seed the deferred queue directly with a scheme-sourced pending trigger
+    // (NOT yet on the stack). `set_in_motion` no longer self-collects, so this
+    // test seeds the "waiting to be put on the stack" state explicitly — the
+    // analogue of `nonongoing_scheme_abandons_on_resolution` seeding an on-stack
+    // `StackEntry`.
+    let pending = PendingTrigger {
+        source_id: scheme_id,
+        controller: arch,
+        condition: None,
+        ability: ResolvedAbility::new(
+            Effect::Draw {
+                count: QuantityExpr::Fixed { value: 1 },
+                target: TargetFilter::Controller,
+            },
+            vec![],
+            scheme_id,
+            arch,
+        ),
+        timestamp: 0,
+        target_constraints: vec![],
+        distribute: None,
+        trigger_event: None,
+        modal: None,
+        mode_abilities: vec![],
+        description: None,
+        may_trigger_origin: None,
+        subject_match_count: None,
+        die_result: None,
+    };
+    state.deferred_triggers.push(DeferredTrigger {
+        pending,
+        trigger_events: vec![],
+    });
     assert!(
         state
             .deferred_triggers
             .iter()
             .any(|d| d.pending.source_id == scheme_id),
-        "scheme trigger must be deferred (waiting to be put on the stack)"
+        "scheme trigger is deferred (waiting to be put on the stack)"
     );
 
     // The abandon SBA must do nothing while the trigger is waiting (CR 904.10).
@@ -462,6 +516,10 @@ fn deferred_scheme_trigger_blocks_abandon() {
     );
     assert!(
         state.command_zone.contains(&scheme_id),
+        "scheme stays face up while its trigger is deferred"
+    );
+    assert!(
+        !state.objects.get(&scheme_id).unwrap().face_down,
         "scheme stays face up while its trigger is deferred"
     );
 }
@@ -500,6 +558,11 @@ fn ongoing_scheme_not_abandoned_by_sba() {
 
 #[test]
 fn abandon_fires_abandoned_trigger() {
+    // `abandon` intentionally retains its inline self-collect (single authority):
+    // it runs inside SBAs reachable from callers that don't re-scan SBA events,
+    // and it collects the trigger while the scheme is still face up in the command
+    // zone, then removes it — so no later scan can re-collect it (no pipeline
+    // filter needed). This direct call defers the trigger exactly once.
     let mut state = GameState::new_two_player(7);
     let arch = PlayerId(0);
     state.active_player = arch;
@@ -597,4 +660,149 @@ fn archenemy_none_skips_abandon_sba() {
         "scheme untouched when there is no archenemy"
     );
     assert!(events.is_empty(), "no events when archenemy is None");
+}
+
+// ---------------------------------------------------------------------------
+// 12. set_in_motion collects the trigger EXACTLY ONCE through the real pipeline
+//     (DISCRIMINATING — fails with count 2 if the inline self-collect is
+//     restored, because the post-action scan would then collect it a second time)
+// ---------------------------------------------------------------------------
+
+/// Give each player a library card so the Draw step's draw turn-based action
+/// doesn't pause the pipeline on an empty-library / loss condition.
+fn seed_libraries(state: &mut GameState) {
+    for (seat, pid) in [PlayerId(0), PlayerId(1)].into_iter().enumerate() {
+        let id = ObjectId(state.next_object_id);
+        state.next_object_id += 1;
+        let obj = crate::game::game_object::GameObject::new(
+            id,
+            CardId(id.0),
+            pid,
+            format!("Filler {seat}"),
+            Zone::Library,
+        );
+        state.objects.insert(id, obj);
+        state.players[seat].library.push_back(id);
+    }
+}
+
+#[test]
+fn set_in_motion_collects_trigger_exactly_once() {
+    // DISCRIMINATING: drives the REAL priority pipeline from the archenemy's Draw
+    // step into PreCombatMain. `finish_enter_phase` calls `set_in_motion`, then
+    // `run_post_action_pipeline`'s post-action scan collects the SchemeSetInMotion
+    // trigger. If `set_in_motion` were also self-collecting (the reverted bug),
+    // the trigger would be collected TWICE and the count below would be 2.
+    use crate::types::actions::GameAction;
+    use crate::types::phase::Phase;
+
+    let mut state = GameState::new_two_player(7);
+    let arch = PlayerId(0);
+    state.turn_number = 2; // not turn 1, so the Draw step is not skipped
+    state.active_player = arch;
+    seed_libraries(&mut state);
+
+    let scheme = synthesized_scheme_face(vec![set_in_motion_trigger()], vec![], vec![]);
+    let deck_ids = setup_scheme_deck(&mut state, arch, &[("Pipeline Scheme", &scheme)]);
+    let scheme_id = deck_ids[0];
+
+    // Park at the archenemy's Draw-step priority window so an all-pass advances
+    // into PreCombatMain through `pass_priority_once_with_pipeline`.
+    state.phase = Phase::Draw;
+    state.priority_player = arch;
+    state.waiting_for = WaitingFor::Priority { player: arch };
+    state.priority_passes.clear();
+    state.priority_pass_count = 0;
+
+    // Drive PassPriority for each living player until the step advances.
+    apply_as_current(&mut state, GameAction::PassPriority).unwrap();
+    apply_as_current(&mut state, GameAction::PassPriority).unwrap();
+
+    assert_eq!(
+        state.phase,
+        Phase::PreCombatMain,
+        "all-pass on the Draw step advanced into PreCombatMain"
+    );
+    assert!(
+        state.command_zone.contains(&scheme_id),
+        "the top scheme was set in motion entering PreCombatMain"
+    );
+    // EXACTLY ONCE: stack + deferred combined hold a single instance.
+    assert_eq!(
+        scheme_trigger_instances(&state, scheme_id),
+        1,
+        "SchemeSetInMotion trigger collected exactly once, got {} (stack={:?}, deferred={:?})",
+        scheme_trigger_instances(&state, scheme_id),
+        state.stack,
+        state.deferred_triggers,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 13. abandon collects the trigger EXACTLY ONCE through the real pipeline
+//     (REORDER GUARD — guards the collect-before-leave-command-zone ordering in
+//     `abandon`; the count drifts off 1 if that ordering is broken)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn abandon_collects_trigger_exactly_once() {
+    // Drives the REAL pipeline's SBA loop. `check_scheme_abandon_sba` calls
+    // `abandon`, which collects the SchemeAbandoned trigger while the scheme is
+    // still face up in the command zone, THEN removes it from the command zone.
+    // The pipeline's SBA-loop scan re-scans the freshly emitted SchemeAbandoned
+    // event, but the scheme has already left the command zone, so that scan can
+    // no longer find it to re-collect — the count stays 1 with no pipeline filter
+    // (same leave-the-command-zone pattern as planechase::planeswalk). This guards
+    // the collect-before-leave ordering: reordering `abandon` to remove the scheme
+    // from the command zone before the self-collect would drop the count off 1
+    // (the trigger can no longer be scanned once its source has left the zone).
+    use crate::types::actions::GameAction;
+    use crate::types::phase::Phase;
+
+    let mut state = GameState::new_two_player(7);
+    let arch = PlayerId(0);
+    state.turn_number = 2;
+    state.active_player = arch;
+    seed_libraries(&mut state);
+
+    // Face-up non-ongoing scheme with an Abandoned trigger; stack + deferred empty.
+    let scheme = synthesized_scheme_face(vec![abandoned_trigger()], vec![], vec![]);
+    let scheme_id = setup_active_scheme(&mut state, arch, "Pipeline Abandon Scheme", &scheme);
+    assert!(state.stack.is_empty() && state.deferred_triggers.is_empty());
+
+    // Park at a Priority window so the pipeline's SBA loop runs the abandon SBA.
+    state.phase = Phase::PreCombatMain;
+    state.priority_player = arch;
+    state.waiting_for = WaitingFor::Priority { player: arch };
+    state.priority_passes.clear();
+    state.priority_pass_count = 0;
+
+    // A single PassPriority drives `run_post_action_pipeline`, whose SBA loop
+    // abandons the face-up non-ongoing scheme.
+    apply_as_current(&mut state, GameAction::PassPriority).unwrap();
+
+    // The scheme was abandoned: face down, out of the command zone, on the
+    // bottom of the scheme deck.
+    assert!(
+        state.objects.get(&scheme_id).unwrap().face_down,
+        "abandoned scheme is face down"
+    );
+    assert!(
+        !state.command_zone.contains(&scheme_id),
+        "abandoned scheme left the command zone"
+    );
+    assert_eq!(
+        state.scheme_deck.back().copied(),
+        Some(scheme_id),
+        "abandoned scheme is on the bottom of the scheme deck"
+    );
+    // EXACTLY ONCE.
+    assert_eq!(
+        scheme_trigger_instances(&state, scheme_id),
+        1,
+        "SchemeAbandoned trigger collected exactly once, got {} (stack={:?}, deferred={:?})",
+        scheme_trigger_instances(&state, scheme_id),
+        state.stack,
+        state.deferred_triggers,
+    );
 }

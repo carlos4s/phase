@@ -18,13 +18,29 @@
 //! in motion ([`set_in_motion`]), abandoning a scheme ([`abandon`]), and the
 //! abandon state-based action ([`check_scheme_abandon_sba`]).
 //!
-//! Trigger collection mirrors planechase: scheme triggers function from the
-//! command zone because `synthesize_archenemy` stamps
-//! `trigger_zones = [Zone::Command]` onto them (CR 113.6b / CR 314.4 /
-//! CR 904.8). The set-in-motion and abandon turn-based/state-based actions don't
-//! use the stack (CR 904.9 / CR 904.10), but the resulting triggered abilities
-//! are deferred to the next priority via `collect_triggers_into_deferred`
-//! (CR 603.3).
+//! Trigger collection: scheme triggers function from the command zone because
+//! `synthesize_archenemy` stamps `trigger_zones = [Zone::Command]` onto them
+//! (CR 113.6b / CR 314.4 / CR 904.8). The set-in-motion and abandon
+//! turn-based/state-based actions don't use the stack (CR 904.9 / CR 904.10),
+//! but the resulting triggered abilities are collected the next time a player
+//! would receive priority (CR 603.2 / CR 603.3). The two actions collect their
+//! triggers via DIFFERENT mechanisms, and this asymmetry is deliberate:
+//!
+//! - [`set_in_motion`] does NOT self-collect. Every real path to it runs through
+//!   `finish_enter_phase` during a `pass_priority_once_with_pipeline`, which is
+//!   immediately followed by `run_post_action_pipeline`'s normal post-action
+//!   event scan; that scan collects the `SchemeSetInMotion` trigger exactly once
+//!   (it may place it directly on the stack rather than deferring — rules-
+//!   equivalent under CR 603.2 / CR 603.3).
+//! - [`abandon`] DOES self-collect (single authority), because it runs inside
+//!   state-based actions reachable from `check_state_based_actions` callers that
+//!   do not re-scan SBA-generated events. It collects the `SchemeAbandoned`
+//!   trigger while the scheme is still face up in the command zone (CR 314.4 /
+//!   CR 904.8), THEN turns it face down and removes it from the command zone, so
+//!   the normal post-action / SBA-loop trigger scan — which only inspects objects
+//!   currently in the command zone — never sees the departed scheme and cannot
+//!   double-collect. No special pipeline handling is needed: this is the same
+//!   leave-the-command-zone self-collect pattern `planechase::planeswalk` uses.
 //!
 //! The two-scheme-deck Supervillain Rumble option (CR 904.12) is deferred: this
 //! module models the single-archenemy game (CR 904.2a).
@@ -74,10 +90,16 @@ pub fn active_schemes(state: &GameState) -> Vec<ObjectId> {
 /// "you"-scoped SetInMotion trigger resolves for the archenemy), and pushed
 /// into the command zone.
 ///
-/// CR 603.3: the `SchemeSetInMotion` event triggers the scheme's "When you set
-/// this scheme in motion" ability (`SetInMotion`). The turn-based action itself
-/// doesn't use the stack (CR 904.9), but the resulting trigger is deferred to
-/// the next priority.
+/// CR 603.2 / CR 603.3: the `SchemeSetInMotion` event triggers the scheme's
+/// "When you set this scheme in motion" ability (`SetInMotion`). The turn-based
+/// action itself doesn't use the stack (CR 904.9). This function does NOT
+/// self-collect the trigger: every real path that sets a scheme in motion runs
+/// through `finish_enter_phase` during a `pass_priority_once_with_pipeline`,
+/// which is immediately followed by `run_post_action_pipeline`'s normal
+/// post-action event scan — that scan collects the `SchemeSetInMotion` trigger
+/// exactly once. (The scan may place the trigger directly on the stack via
+/// `process_triggers` rather than deferring it; this is rules-equivalent under
+/// CR 603.2 / CR 603.3.) Self-collecting here in addition would double-collect.
 pub fn set_in_motion(state: &mut GameState, events: &mut Vec<GameEvent>) {
     let Some(archenemy) = state.archenemy else {
         return;
@@ -95,15 +117,16 @@ pub fn set_in_motion(state: &mut GameState, events: &mut Vec<GameEvent>) {
     // CR 314.2 / CR 904.9: the scheme stays in the command zone, now face up.
     state.command_zone.push_back(scheme_id);
 
-    // CR 904.9 / CR 701.32b: announce that the scheme was set in motion.
+    // CR 904.9 / CR 701.32b: announce that the scheme was set in motion. The
+    // SetInMotion trigger is collected by the normal post-action event scan in
+    // `run_post_action_pipeline` (CR 603.2 / CR 603.3), which always follows the
+    // `finish_enter_phase` that called this function — so this function must not
+    // self-collect it here (that would double-collect).
     let event = GameEvent::SchemeSetInMotion {
         player_id: archenemy,
         scheme_id,
     };
-    events.push(event.clone());
-
-    // CR 603.3: defer the SetInMotion trigger to the next priority.
-    crate::game::triggers::collect_triggers_into_deferred(state, &[event]);
+    events.push(event);
 }
 
 /// CR 904.10 / CR 314.6: True if any scheme's triggered ability is on the stack
@@ -127,8 +150,19 @@ pub fn scheme_trigger_on_stack_or_pending(state: &GameState) -> bool {
 /// CR 701.33b / CR 904.10: Abandon a scheme — turn it face down and put it on
 /// the bottom of its owner's scheme deck.
 ///
-/// CR 603.3: the `SchemeAbandoned` event triggers the scheme's "When you
-/// abandon this scheme" ability (`Abandoned`), deferred to the next priority.
+/// CR 603.2 / CR 603.3: the `SchemeAbandoned` event triggers the scheme's "When
+/// you abandon this scheme" ability (`Abandoned`). Unlike `set_in_motion`, this
+/// function self-collects that trigger (single authority): `abandon` fires only
+/// from `check_scheme_abandon_sba`, an SBA reachable from
+/// `check_state_based_actions` callers that do NOT re-scan SBA-generated events
+/// (e.g. upkeep, the loss-SBA epilogue, end-of-combat / end-of-turn cleanup).
+/// Self-collecting here makes the `Abandoned` trigger robust against ALL such
+/// callers — named or not. CR 314.4 / CR 904.8: the trigger is collected while
+/// the scheme is still face up in the command zone, and only then is the scheme
+/// turned face down and removed from the command zone. The normal post-action /
+/// SBA-loop trigger scan inspects only objects currently in the command zone, so
+/// once the scheme departs no later scan can re-collect `SchemeAbandoned` — no
+/// pipeline filtering is required. This mirrors `planechase::planeswalk`.
 pub fn abandon(state: &mut GameState, scheme_id: ObjectId, events: &mut Vec<GameEvent>) {
     // CR 904.7 / CR 314.5: the owner/controller of a scheme is the archenemy.
     let owner = state
@@ -142,13 +176,17 @@ pub fn abandon(state: &mut GameState, scheme_id: ObjectId, events: &mut Vec<Game
     };
     events.push(event.clone());
 
-    // CR 314.4 / CR 904.8 + CR 603.3: a scheme's triggered abilities may trigger
-    // only while it is face up in the command zone, so collect its "when you
-    // abandon this scheme" trigger while the scheme is still face up — BEFORE the
-    // face-down flip below — and defer it to the next priority. (Unlike
-    // `planechase::planeswalk`, which must flip the departing plane face down
-    // first so the arriving face-up plane can share a single trigger scan, abandon
-    // touches one scheme, so it collects the trigger while that scheme is face up.)
+    // CR 314.4 / CR 904.8 + CR 603.2 / CR 603.3: a scheme's triggered abilities
+    // may trigger only while it is face up in the command zone, so collect its
+    // "when you abandon this scheme" trigger while the scheme is still face up —
+    // BEFORE the face-down flip below. This self-collect is the single authority
+    // for the `Abandoned` trigger: `abandon` runs inside the abandon SBA, which
+    // is reachable from `check_state_based_actions` callers that do not re-scan
+    // SBA events, so collecting here is the only place guaranteed to fire on
+    // every path. Because the scheme leaves the command zone immediately below,
+    // and every later trigger scan only inspects objects still in the command
+    // zone, no scan can re-collect `SchemeAbandoned` after this point — no
+    // pipeline filtering is required (same pattern as `planechase::planeswalk`).
     crate::game::triggers::collect_triggers_into_deferred(state, &[event]);
 
     // CR 701.33b / CR 314.2: now turn the scheme face down and put it on the
