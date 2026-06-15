@@ -18,7 +18,9 @@ use engine::types::player::PlayerId;
 use super::context::PolicyContext;
 use super::registry::{DecisionKind, PolicyId, PolicyReason, PolicyVerdict, TacticalPolicy};
 use crate::ability_chain::collect_chain_effects;
-use crate::features::lifegain::{is_lifegain_source_parts, COMMITMENT_FLOOR};
+use crate::features::lifegain::{
+    is_lifegain_source_parts, is_lifegain_source_trigger, COMMITMENT_FLOOR,
+};
 use crate::features::DeckFeatures;
 
 pub struct LifegainPayoffPolicy;
@@ -65,7 +67,11 @@ impl TacticalPolicy for LifegainPayoffPolicy {
             .iter()
             .flat_map(collect_chain_effects)
             .collect();
-        if is_lifegain_source_parts(&object.keywords, &effects) {
+        let trigger_borne_source = object
+            .trigger_definitions
+            .iter_unchecked()
+            .any(is_lifegain_source_trigger);
+        if is_lifegain_source_parts(&object.keywords, &effects) || trigger_borne_source {
             return PolicyVerdict::score(
                 ctx.penalties().lifegain_source_bonus,
                 PolicyReason::new("lifegain_source_for_payoff"),

@@ -19,7 +19,9 @@
 //! redundancy penalty) are unaffected.
 
 use engine::game::DeckEntry;
-use engine::types::ability::{AbilityDefinition, Effect, TargetFilter};
+use engine::types::ability::{
+    AbilityDefinition, ControllerRef, Effect, TargetFilter, TriggerDefinition,
+};
 use engine::types::card::CardFace;
 use engine::types::card_type::CoreType;
 use engine::types::keywords::Keyword;
@@ -108,21 +110,13 @@ fn is_lifegain_source(face: &CardFace) -> bool {
     }
     // "At the beginning of your upkeep, you gain 1 life" and similar trigger-borne
     // sources. CR 603.6a.
-    face.triggers.iter().any(|t| {
-        t.execute.as_ref().is_some_and(|exec| {
-            collect_chain_effects(exec)
-                .iter()
-                .any(effect_gains_you_life)
-        })
-    })
+    face.triggers.iter().any(is_lifegain_source_trigger)
 }
 
 /// A lifegain *payoff*: a `LifeGained` trigger ("whenever you gain life, …").
 /// CR 603.6a.
 fn is_lifegain_payoff(face: &CardFace) -> bool {
-    face.triggers
-        .iter()
-        .any(|t| t.mode == TriggerMode::LifeGained)
+    face.triggers.iter().any(trigger_rewards_your_lifegain)
 }
 
 /// Single authority for the "these *parts* make a lifegain source" check —
@@ -133,6 +127,37 @@ fn is_lifegain_payoff(face: &CardFace) -> bool {
 /// `GameObject`.
 pub(crate) fn is_lifegain_source_parts(keywords: &[Keyword], effects: &[&Effect]) -> bool {
     keywords.contains(&Keyword::Lifelink) || effects.iter().any(effect_gains_you_life)
+}
+
+/// True when a trigger's executed effect chain makes the controller gain life.
+/// Shared with the live policy so trigger-borne sources such as Soul Warden
+/// variants are valued the same way they are detected at deck-analysis time.
+pub(crate) fn is_lifegain_source_trigger(trigger: &TriggerDefinition) -> bool {
+    trigger.execute.as_ref().is_some_and(|exec| {
+        collect_chain_effects(exec)
+            .iter()
+            .any(effect_gains_you_life)
+    })
+}
+
+/// True when a `LifeGained` trigger rewards the source controller's lifegain.
+/// Opponent-only life-gain triggers punish or react to opponents; they are not
+/// payoffs for the AI's own lifegain plan.
+fn trigger_rewards_your_lifegain(trigger: &TriggerDefinition) -> bool {
+    trigger.mode == TriggerMode::LifeGained
+        && !filter_is_opponent_scoped(trigger.valid_target.as_ref())
+}
+
+fn filter_is_opponent_scoped(filter: Option<&TargetFilter>) -> bool {
+    let Some(filter) = filter else {
+        return false;
+    };
+    match filter {
+        TargetFilter::Typed(typed) => matches!(typed.controller, Some(ControllerRef::Opponent)),
+        TargetFilter::Or { filters } => filters.iter().all(|f| filter_is_opponent_scoped(Some(f))),
+        TargetFilter::And { filters } => filters.iter().any(|f| filter_is_opponent_scoped(Some(f))),
+        _ => false,
+    }
 }
 
 /// True if the effect makes you (the controller) gain life. CR 119.3. Opponent-

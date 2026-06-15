@@ -7,7 +7,8 @@
 
 use engine::game::DeckEntry;
 use engine::types::ability::{
-    AbilityDefinition, AbilityKind, Effect, QuantityExpr, TargetFilter, TriggerDefinition,
+    AbilityDefinition, AbilityKind, ControllerRef, Effect, QuantityExpr, TargetFilter,
+    TriggerDefinition, TypedFilter,
 };
 use engine::types::card::CardFace;
 use engine::types::card_type::{CardType, CoreType};
@@ -95,6 +96,19 @@ fn other_player_gain_life_is_not_your_source() {
 fn life_gained_trigger_is_payoff() {
     let f = detect(&[entry(lifegain_payoff("Ajani's Pridemate"), 1)]);
     assert_eq!(f.payoff_count, 1);
+}
+
+#[test]
+fn opponent_life_gained_trigger_is_not_your_payoff() {
+    let mut face = card_face("Punisher", vec![CoreType::Creature]);
+    let mut trigger = TriggerDefinition::new(TriggerMode::LifeGained);
+    trigger.valid_target = Some(TargetFilter::Typed(
+        TypedFilter::default().controller(ControllerRef::Opponent),
+    ));
+    face.triggers.push(trigger);
+
+    let f = detect(&[entry(face, 1)]);
+    assert_eq!(f.payoff_count, 0);
 }
 
 #[test]

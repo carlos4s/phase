@@ -6,13 +6,16 @@ use std::sync::Arc;
 
 use engine::ai_support::{ActionMetadata, AiDecisionContext, CandidateAction, TacticalClass};
 use engine::game::zones::create_object;
-use engine::types::ability::{AbilityDefinition, AbilityKind, Effect, QuantityExpr, TargetFilter};
+use engine::types::ability::{
+    AbilityDefinition, AbilityKind, Effect, QuantityExpr, TargetFilter, TriggerDefinition,
+};
 use engine::types::actions::GameAction;
 use engine::types::card_type::{CardType, CoreType};
 use engine::types::game_state::{CastPaymentMode, GameState, WaitingFor};
 use engine::types::identifiers::{CardId, ObjectId};
 use engine::types::keywords::Keyword;
 use engine::types::player::PlayerId;
+use engine::types::triggers::TriggerMode;
 use engine::types::zones::Zone;
 
 use crate::config::AiConfig;
@@ -174,6 +177,43 @@ fn gain_life_spell_scored() {
             },
         ),
     );
+
+    let candidate = cast_candidate(oid);
+    let decision = decision();
+    let (context, config) = ai_context(0.8, 4);
+    let ctx = PolicyContext {
+        state: &state,
+        decision: &decision,
+        candidate: &candidate,
+        ai_player: AI,
+        config: &config,
+        context: &context,
+        cast_facts: None,
+    };
+
+    let (delta, kind) = delta_of(LifegainPayoffPolicy.verdict(&ctx));
+    assert_eq!(kind, "lifegain_source_for_payoff");
+    assert!(delta > 0.0, "expected a positive delta, got {delta}");
+}
+
+#[test]
+fn trigger_borne_lifegain_source_scored() {
+    let mut state = GameState::new_two_player(7);
+    let oid = spell_object(&mut state, 4, vec![CoreType::Creature]);
+    state
+        .objects
+        .get_mut(&oid)
+        .unwrap()
+        .trigger_definitions
+        .push(
+            TriggerDefinition::new(TriggerMode::ChangesZone).execute(AbilityDefinition::new(
+                AbilityKind::Spell,
+                Effect::GainLife {
+                    amount: QuantityExpr::Fixed { value: 1 },
+                    player: TargetFilter::Controller,
+                },
+            )),
+        );
 
     let candidate = cast_candidate(oid);
     let decision = decision();
