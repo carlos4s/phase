@@ -8,6 +8,7 @@
 
 pub mod aggro_pressure;
 pub mod aristocrats;
+pub mod artifacts;
 pub mod commitment;
 pub mod control;
 pub mod enchantments;
@@ -24,6 +25,7 @@ pub mod tests;
 
 pub use aggro_pressure::AggroPressureFeature;
 pub use aristocrats::AristocratsFeature;
+pub use artifacts::ArtifactsFeature;
 pub use control::ControlFeature;
 pub use enchantments::EnchantmentsFeature;
 pub use landfall::LandfallFeature;
@@ -56,6 +58,7 @@ pub struct DeckFeatures {
     pub control: ControlFeature,
     pub enchantments: EnchantmentsFeature,
     pub aristocrats: AristocratsFeature,
+    pub artifacts: ArtifactsFeature,
     pub aggro_pressure: AggroPressureFeature,
     pub tokens_wide: TokensWideFeature,
     pub plus_one_counters: PlusOneCountersFeature,
@@ -94,6 +97,7 @@ impl DeckFeatures {
             control: control::detect(deck),
             enchantments: enchantments::detect(deck),
             aristocrats: aristocrats::detect(deck),
+            artifacts: artifacts::detect(deck),
             aggro_pressure: aggro_pressure::detect(deck),
             tokens_wide: tokens_wide::detect(deck),
             plus_one_counters: plus_one_counters::detect(deck),
