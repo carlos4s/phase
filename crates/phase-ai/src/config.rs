@@ -306,6 +306,12 @@ pub struct PolicyPenalties {
     /// decks.
     #[serde(default = "default_lifegain_source_bonus")]
     pub lifegain_source_bonus: f64,
+    /// CR 601.2i / CR 603.6a: Bonus for casting an enchantment in a deck that has
+    /// enchantment payoffs (enchantress / constellation) — each enchantment feeds
+    /// those payoffs. Consumed by `EnchantmentsPayoffPolicy`, which is
+    /// payoff-gated so this never applies to decks with no enchantment payoff.
+    #[serde(default = "default_enchantment_cast_bonus")]
+    pub enchantment_cast_bonus: f64,
 }
 
 impl Default for PolicyPenalties {
@@ -348,6 +354,7 @@ impl Default for PolicyPenalties {
             own_chalice_counter_penalty: default_own_chalice_counter_penalty(),
             opponent_chalice_counter_penalty: default_opponent_chalice_counter_penalty(),
             lifegain_source_bonus: default_lifegain_source_bonus(),
+            enchantment_cast_bonus: default_enchantment_cast_bonus(),
         }
     }
 }
@@ -415,6 +422,9 @@ fn default_opponent_chalice_counter_penalty() -> f64 {
 fn default_lifegain_source_bonus() -> f64 {
     0.4
 }
+fn default_enchantment_cast_bonus() -> f64 {
+    0.4
+}
 
 /// Policy penalty fields present in the active CMA-ES `--group penalties`
 /// vector. Adding a `PolicyPenalties` field requires listing it here or in
@@ -460,10 +470,16 @@ pub const ACTIVE_POLICY_PENALTY_FIELDS: &[&str] = &[
 
 /// Policy penalties intentionally not present in an active CMA-ES parameter
 /// vector yet.
-pub const UNTUNED_POLICY_PENALTY_FIELDS: &[(&str, &str)] = &[(
-    "lifegain_source_bonus",
-    "new LifegainPayoffPolicy knob; awaiting a paired-seed ai-gate calibration before joining the CMA-ES vector",
-)];
+pub const UNTUNED_POLICY_PENALTY_FIELDS: &[(&str, &str)] = &[
+    (
+        "lifegain_source_bonus",
+        "new LifegainPayoffPolicy knob; awaiting a paired-seed ai-gate calibration before joining the CMA-ES vector",
+    ),
+    (
+        "enchantment_cast_bonus",
+        "new EnchantmentsPayoffPolicy knob; awaiting a paired-seed ai-gate calibration before joining the CMA-ES vector",
+    ),
+];
 
 /// Full AI configuration combining difficulty, search, and evaluation settings.
 #[derive(Debug, Clone)]

@@ -11,6 +11,7 @@ use super::chalice_avoidance::ChaliceAvoidancePolicy;
 use super::context::PolicyContext;
 use super::copy_value::CopyValuePolicy;
 use super::effect_timing::EffectTimingPolicy;
+use super::enchantments_payoff::EnchantmentsPayoffPolicy;
 use super::etb_value::EtbValuePolicy;
 use super::evasion_removal_priority::EvasionRemovalPriorityPolicy;
 use super::free_outlet_activation::FreeOutletActivationPolicy;
@@ -50,6 +51,7 @@ pub enum PolicyId {
     AntiSelfHarm,
     BoardDevelopment,
     EtbValue,
+    EnchantmentsPayoff,
     CopyValue,
     Tutor,
     HandDisruption,
@@ -267,6 +269,7 @@ impl Default for PolicyRegistry {
             Box::new(AntiSelfHarmPolicy),
             Box::new(BoardDevelopmentPolicy),
             Box::new(EtbValuePolicy),
+            Box::new(EnchantmentsPayoffPolicy),
             Box::new(CopyValuePolicy),
             Box::new(TutorPolicy),
             Box::new(HandDisruptionPolicy),
