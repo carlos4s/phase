@@ -49,6 +49,7 @@ use engine::types::player::PlayerId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PolicyId {
     AntiSelfHarm,
+    ArtifactSynergyTactical,
     BoardDevelopment,
     EtbValue,
     CopyValue,
@@ -267,6 +268,7 @@ impl Default for PolicyRegistry {
     fn default() -> Self {
         let policies: Vec<Box<dyn TacticalPolicy>> = vec![
             Box::new(AntiSelfHarmPolicy),
+            Box::new(super::artifact_synergy::ArtifactSynergyPolicy),
             Box::new(BoardDevelopmentPolicy),
             Box::new(EtbValuePolicy),
             Box::new(CopyValuePolicy),
