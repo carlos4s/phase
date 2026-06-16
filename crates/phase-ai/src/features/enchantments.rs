@@ -159,9 +159,13 @@ fn filter_matches_enchantment_you_control(filter: &TargetFilter) -> bool {
     match filter {
         TargetFilter::Typed(typed) => typed_filter_is_enchantment_you_control(typed),
         TargetFilter::Or { filters } => filters.iter().any(filter_matches_enchantment_you_control),
-        // CR 109.3: every constraint of an `And` must hold for it to be an
-        // "enchantment you control" match (mirrors `engine::game::filter`).
-        TargetFilter::And { filters } => filters.iter().all(filter_matches_enchantment_you_control),
+        // CR 109.3: an `And` matches the *intersection* of its sub-filters, so if
+        // ANY conjunct already restricts the match to "enchantment you control",
+        // the whole conjunction is guaranteed to be enchantments you control (an
+        // extra "nontoken" / "creature" conjunct only narrows it further). Using
+        // `all` here would wrongly reject compound constellation triggers like
+        // "whenever a nontoken enchantment you control enters".
+        TargetFilter::And { filters } => filters.iter().any(filter_matches_enchantment_you_control),
         _ => false,
     }
 }

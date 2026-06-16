@@ -103,6 +103,30 @@ fn constellation_trigger_is_payoff() {
 }
 
 #[test]
+fn compound_and_constellation_is_payoff() {
+    // "Whenever a nontoken/creature enchantment you control enters" — the
+    // `valid_card` is an `And` whose enchantment-you-control conjunct is combined
+    // with an extra constraint. The extra conjunct only narrows the match, so the
+    // trigger is still a constellation payoff (regression guard for the And arm).
+    let mut face = card_face("Compound Constellation", vec![CoreType::Enchantment]);
+    face.triggers.push(
+        TriggerDefinition::new(TriggerMode::ChangesZone)
+            .valid_card(TargetFilter::And {
+                filters: vec![
+                    TargetFilter::Typed(
+                        TypedFilter::new(TypeFilter::Enchantment).controller(ControllerRef::You),
+                    ),
+                    TargetFilter::Typed(TypedFilter::creature()),
+                ],
+            })
+            .destination(Zone::Battlefield)
+            .execute(draw_ability()),
+    );
+    let f = detect(&[entry(face, 1)]);
+    assert_eq!(f.payoff_count, 1);
+}
+
+#[test]
 fn cast_creature_trigger_is_not_enchantment_payoff() {
     // "Whenever you cast a creature spell" must NOT count as an enchantments payoff.
     let mut face = card_face("Creature Caster", vec![CoreType::Creature]);
