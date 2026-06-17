@@ -8,7 +8,7 @@
 use engine::game::DeckEntry;
 use engine::types::ability::{
     AbilityDefinition, AbilityKind, ControllerRef, Effect, QuantityExpr, TargetFilter,
-    TriggerDefinition, TypedFilter,
+    TriggerDefinition, TypeFilter, TypedFilter,
 };
 use engine::types::card::CardFace;
 use engine::types::card_type::{CardType, CoreType};
@@ -155,6 +155,29 @@ fn opponent_exile_then_return_is_not_flicker() {
     assert!(!is_flicker_enabler(&c));
 }
 
+#[test]
+fn cross_ability_exile_and_return_is_not_flicker() {
+    // A card with two separate, unrelated abilities — one that exiles a friendly
+    // permanent and another that returns a permanent to the battlefield — must NOT
+    // register as a flicker enabler. The exile and return live in independent
+    // chains and do not constitute a flicker cycle.
+    //
+    // This test fails if is_flicker_enabler reverts to the flattened
+    // collect_face_effects approach (which merged all chains into one slice and
+    // triggered a false positive on the cross-ability exile+return pair).
+    let mut c = face("Unrelated Exile Return", vec![CoreType::Instant]);
+    // Ability A: exile only — no return step in this chain.
+    c.abilities
+        .push(spell(change_zone(None, Zone::Exile, friendly_creature())));
+    // Ability B: return a tracked set to battlefield — no exile step in this chain.
+    c.abilities.push(spell(change_zone(
+        None,
+        Zone::Battlefield,
+        tracked_return(),
+    )));
+    assert!(!is_flicker_enabler(&c));
+}
+
 // ─── ETB-payoff detection ───────────────────────────────────────────────────────
 
 #[test]
@@ -225,6 +248,59 @@ fn non_creature_with_value_etb_is_not_payoff() {
     // artifact with the same ETB value trigger does not count.
     let mut c = face("Etb Artifact", vec![CoreType::Artifact]);
     c.triggers.push(value_etb_trigger());
+    assert!(!is_etb_payoff(&c));
+}
+
+#[test]
+fn compound_and_etb_filter_with_creature_conjunct_is_payoff() {
+    // An ETB trigger whose valid_card is an And filter that contains a creature
+    // conjunct alongside another type conjunct (e.g. "whenever a creature or
+    // artifact you control enters") must register as a payoff. The creature check
+    // uses .any() over And conjuncts — at least one conjunct must name a creature.
+    //
+    // This test fails if etb_filter_is_self_or_friendly_creature reverts to the
+    // old .all() arm, which required every And conjunct to pass the creature check
+    // and wrongly rejected this filter.
+    let mut c = face("Compound ETB Engine", vec![CoreType::Creature]);
+    c.triggers.push(
+        TriggerDefinition::new(TriggerMode::ChangesZone)
+            .valid_card(TargetFilter::And {
+                filters: vec![
+                    TargetFilter::Typed(TypedFilter::creature()),
+                    TargetFilter::Typed(TypedFilter::new(TypeFilter::Artifact)),
+                ],
+            })
+            .destination(Zone::Battlefield)
+            .execute(spell(Effect::Draw {
+                count: QuantityExpr::Fixed { value: 1 },
+                target: TargetFilter::Controller,
+            })),
+    );
+    assert!(is_etb_payoff(&c));
+}
+
+#[test]
+fn compound_and_etb_filter_opponent_scoped_is_not_payoff() {
+    // An And filter where a conjunct is opponent-scoped must be rejected even if
+    // another conjunct names a creature — the opponent-scope check uses .all() so
+    // any opponent-scoped conjunct disqualifies the whole filter.
+    let mut c = face("Opponent ETB Engine", vec![CoreType::Creature]);
+    c.triggers.push(
+        TriggerDefinition::new(TriggerMode::ChangesZone)
+            .valid_card(TargetFilter::And {
+                filters: vec![
+                    TargetFilter::Typed(
+                        TypedFilter::creature().controller(ControllerRef::Opponent),
+                    ),
+                    TargetFilter::Typed(TypedFilter::new(TypeFilter::Artifact)),
+                ],
+            })
+            .destination(Zone::Battlefield)
+            .execute(spell(Effect::Draw {
+                count: QuantityExpr::Fixed { value: 1 },
+                target: TargetFilter::Controller,
+            })),
+    );
     assert!(!is_etb_payoff(&c));
 }
 
