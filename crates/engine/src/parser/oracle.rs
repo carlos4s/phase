@@ -15485,6 +15485,74 @@ mod tests {
         );
     }
 
+    /// Walk every parsed ability (and its `sub_ability` chain) looking for the
+    /// first `Effect::GenericEffect` whose `static_abilities` contains a
+    /// `CantUntap` static, and return that static's `affected` filter. Used to
+    /// assert the spell-form "that [type] doesn't untap" anaphor binds to the
+    /// single tapped object (`ParentTarget`) rather than broadcasting `Typed`.
+    fn first_cant_untap_affected(r: &ParsedAbilities) -> Option<TargetFilter> {
+        for ability in &r.abilities {
+            let mut cursor = Some(ability);
+            while let Some(def) = cursor {
+                if let Effect::GenericEffect {
+                    static_abilities, ..
+                } = def.effect.as_ref()
+                {
+                    if let Some(static_def) = static_abilities
+                        .iter()
+                        .find(|s| s.mode == crate::types::statics::StaticMode::CantUntap)
+                    {
+                        return static_def.affected.clone();
+                    }
+                }
+                cursor = def.sub_ability.as_deref();
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn spell_form_that_type_doesnt_untap_binds_parent_target() {
+        // CR 608.2c: spell-form "Tap target X. That X doesn't untap" is an
+        // anaphor to the single tapped object — the CantUntap static's
+        // `affected` must be `ParentTarget`, NOT a broadcast `Typed(...)` that
+        // would lock every matching permanent. Revert-discriminating: without
+        // `|| inherits_parent` in `static_affected_for_application`, `affected`
+        // is `Typed(Land)` / `Typed(Creature)` and these asserts fail.
+
+        // Chandra's Revolution: damage clause has its own target; the tap+lock
+        // clause binds the tapped LAND, not the damaged creature.
+        let chandra = parse(
+            "Chandra's Revolution deals 4 damage to target creature. Tap target land. That land doesn't untap during its controller's next untap step.",
+            "Chandra's Revolution",
+            &[],
+            &["Sorcery"],
+            &[],
+        );
+        assert_eq!(
+            first_cant_untap_affected(&chandra),
+            Some(TargetFilter::ParentTarget),
+            "Chandra's Revolution CantUntap static must bind ParentTarget, got {:?}",
+            first_cant_untap_affected(&chandra)
+        );
+
+        // Glacial Grasp: "Tap target creature. Its controller mills two cards.
+        // That creature doesn't untap…" → ParentTarget, not Typed(Creature).
+        let glacial = parse(
+            "Tap target creature. Its controller mills two cards. That creature doesn't untap during its controller's next untap step. Draw a card.",
+            "Glacial Grasp",
+            &[],
+            &["Instant"],
+            &[],
+        );
+        assert_eq!(
+            first_cant_untap_affected(&glacial),
+            Some(TargetFilter::ParentTarget),
+            "Glacial Grasp CantUntap static must bind ParentTarget, got {:?}",
+            first_cant_untap_affected(&glacial)
+        );
+    }
+
     #[test]
     fn spell_counter_tap_plus_doesnt_untap() {
         let r = parse(

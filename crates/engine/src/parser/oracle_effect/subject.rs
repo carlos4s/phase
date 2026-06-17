@@ -1747,8 +1747,18 @@ fn subject_filter_application(filter: TargetFilter, targeted: bool) -> Option<Su
 /// self-documenting and matches the convention used by sibling counter
 /// sub_abilities (`PutCounter { target: ParentTarget }`) and the
 /// `LastCreated` rewrite for token anaphors.
+///
+/// CR 608.2c + CR 502.3: also bind to the inherited target when the subject is
+/// an anaphor to a previously-mentioned single object (`inherits_parent`,
+/// e.g. spell-form "Tap target land. That land doesn't untap" — Chandra's
+/// Revolution, Glacial Grasp). Without this, the static's `affected` would
+/// broadcast the CantUntap lock over every matching permanent. The
+/// transient-effect resolver already binds `ParentTarget` to the inherited
+/// (immediately-preceding) object target, so this resolves to exactly the one
+/// tapped object. Mirrors `build_pump_effect`, which honors `inherits_parent`
+/// the same way for the Pump family.
 pub(super) fn static_affected_for_application(application: &SubjectApplication) -> TargetFilter {
-    if application.target.is_some() {
+    if application.target.is_some() || application.inherits_parent {
         TargetFilter::ParentTarget
     } else {
         application.affected.clone()

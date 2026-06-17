@@ -40451,13 +40451,17 @@ mod tests {
         let static_def = static_abilities
             .first()
             .expect("lifelink grant must carry a static definition");
-        assert!(
-            matches!(
-                static_def.affected.as_ref(),
-                Some(TargetFilter::Typed(tf))
-                    if tf.type_filters == [TypeFilter::Creature]
-            ),
-            "chain parser binds 'that creature' to a creature filter, got {:?}",
+        // CR 608.2c: "that creature" is an anaphor to the single chosen object,
+        // so `static_affected_for_application` binds the grant's `affected` to
+        // `ParentTarget` (via `inherits_parent`) — matching the outer
+        // GenericEffect `target` slot above. The runtime resolver
+        // (`generic_effect_application_filter`) treats both the inherited-ref
+        // `affected` and the `target` slot identically, so this is the
+        // self-consistent shape for an anaphoric grant.
+        assert_eq!(
+            static_def.affected.as_ref(),
+            Some(&TargetFilter::ParentTarget),
+            "chain parser binds 'that creature' to the parent target, got {:?}",
             static_def.affected
         );
         assert!(
