@@ -33,9 +33,7 @@
 //! unaffected.
 
 use engine::game::DeckEntry;
-use engine::types::ability::{
-    ControllerRef, Effect, TargetFilter, TriggerDefinition, TypeFilter, TypedFilter,
-};
+use engine::types::ability::{ControllerRef, Effect, TargetFilter, TriggerDefinition, TypeFilter};
 use engine::types::card::CardFace;
 use engine::types::card_type::CoreType;
 use engine::types::triggers::TriggerMode;
@@ -131,7 +129,7 @@ pub fn detect(deck: &[DeckEntry]) -> BlinkFeature {
 /// (≈36 nonland) gives flicker density ≈1.67 and ETB density ≈3.33 → geometric
 /// mean ≈0.26, below the floor, so the policy stays inert.
 fn blink_commitment(flicker_count: u32, etb_payoff_count: u32, total_nonland: u32) -> f32 {
-    if flicker_count == 0 || etb_payoff_count == 0 {
+    if flicker_count == 0 || etb_payoff_count == 0 || total_nonland == 0 {
         return 0.0;
     }
 
@@ -144,10 +142,24 @@ fn blink_commitment(flicker_count: u32, etb_payoff_count: u32, total_nonland: u3
     commitment::geometric_mean(&[flicker, payoff]).min(1.0)
 }
 
-/// True if this face is a flicker enabler — its ability/trigger effect chains
-/// exile a friendly permanent and return it to the battlefield. CR 603.7.
+/// True if this face is a flicker enabler — at least one of its ability or
+/// trigger effect chains BOTH exiles a friendly permanent AND returns it to
+/// the battlefield within that same chain. CR 603.7.
+///
+/// Each chain is checked in isolation so that two independent, unrelated
+/// abilities (e.g. one that exiles and one that puts something onto the
+/// battlefield for a different reason) cannot combine to produce a false
+/// positive.
 pub fn is_flicker_enabler(face: &CardFace) -> bool {
-    effects_include_flicker(&collect_face_effects(face))
+    face.abilities
+        .iter()
+        .any(|ability| effects_include_flicker(&collect_chain_effects(ability)))
+        || face.triggers.iter().any(|trigger| {
+            trigger
+                .execute
+                .as_deref()
+                .is_some_and(|execute| effects_include_flicker(&collect_chain_effects(execute)))
+        })
 }
 
 /// True if this face is a value-ETB payoff: a creature with a self/friendly
@@ -235,24 +247,26 @@ fn effect_is_flicker_return(effect: &Effect) -> bool {
 /// CR 603.6a: the trigger fires on the source itself entering (`SelfRef`, the
 /// common "When ~ enters" self-ETB) or on a friendly creature entering (an
 /// "whenever a creature you control enters" engine). An opponent-scoped or
-/// land-scoped filter is not a creature-ETB-value payoff.
+/// non-creature filter is not a creature-ETB-value payoff.
+///
+/// Separated into two orthogonal checks so that compound filters like
+/// "friendly white creature" (`And { [Typed(Creature), Typed(White)] }`) are
+/// accepted: the creature check uses `.any()` over `And` conjuncts (at least
+/// one conjunct must name a creature type), while the opponent-scope check
+/// delegates to `target_is_not_opponent_scoped` which uses `.all()` (no
+/// conjunct may be opponent-scoped).
 fn etb_filter_is_self_or_friendly_creature(filter: &TargetFilter) -> bool {
-    match filter {
-        TargetFilter::SelfRef => true,
-        TargetFilter::Typed(typed) => typed_filter_is_friendly_creature(typed),
-        TargetFilter::Or { filters } => filters.iter().any(etb_filter_is_self_or_friendly_creature),
-        TargetFilter::And { filters } => {
-            filters.iter().all(etb_filter_is_self_or_friendly_creature)
-        }
-        _ => false,
-    }
+    target_is_not_opponent_scoped(filter) && filter_contains_creature(filter)
 }
 
-fn typed_filter_is_friendly_creature(typed: &TypedFilter) -> bool {
-    if matches!(typed.controller, Some(ControllerRef::Opponent)) {
-        return false;
+fn filter_contains_creature(filter: &TargetFilter) -> bool {
+    match filter {
+        TargetFilter::SelfRef => true,
+        TargetFilter::Typed(typed) => typed.type_filters.iter().any(type_filter_is_creature),
+        TargetFilter::Or { filters } => filters.iter().any(filter_contains_creature),
+        TargetFilter::And { filters } => filters.iter().any(filter_contains_creature),
+        _ => false,
     }
-    typed.type_filters.iter().any(type_filter_is_creature)
 }
 
 fn type_filter_is_creature(tf: &TypeFilter) -> bool {
@@ -301,19 +315,4 @@ fn effect_is_etb_value(effect: &Effect) -> bool {
 /// CR 302.1: a creature card — the body a blink deck flickers to re-use its ETB.
 fn face_is_creature(face: &CardFace) -> bool {
     face.card_type.core_types.contains(&CoreType::Creature)
-}
-
-/// Flatten a face's ability chains and trigger-executed chains into the effect
-/// slice the flicker predicate inspects. A flicker can live in a `Spell` ability
-/// (Ephemerate), an activated ability (Deadeye Navigator), or a trigger's
-/// executed chain (Soulherder's combat trigger, Restoration Angel's ETB), so all
-/// are walked.
-fn collect_face_effects(face: &CardFace) -> Vec<&Effect> {
-    let ability_effects = face.abilities.iter().flat_map(collect_chain_effects);
-    let trigger_effects = face
-        .triggers
-        .iter()
-        .filter_map(|trigger| trigger.execute.as_deref())
-        .flat_map(collect_chain_effects);
-    ability_effects.chain(trigger_effects).collect()
 }

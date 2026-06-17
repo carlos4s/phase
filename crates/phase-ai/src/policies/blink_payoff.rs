@@ -71,24 +71,24 @@ impl TacticalPolicy for BlinkPayoffPolicy {
         };
 
         // Re-classify the live object structurally (shared with the deck-time
-        // detector) so the two never drift. A flicker can live in a Spell/
-        // activated ability or a trigger's executed chain, so both are walked.
-        let effects: Vec<_> = object
+        // detector) so the two never drift. Each ability/trigger chain is
+        // checked in isolation — merging all chains into one flat slice could
+        // produce false positives if two unrelated abilities happen to contain
+        // an exile step and a battlefield-return step independently.
+        let has_flicker = object
             .abilities
             .iter()
-            .flat_map(collect_chain_effects)
-            .chain(
-                object
-                    .trigger_definitions
-                    .iter_unchecked()
-                    .filter_map(|trigger| trigger.execute.as_deref())
-                    .flat_map(collect_chain_effects),
-            )
-            .collect();
+            .any(|ability| effects_include_flicker(&collect_chain_effects(ability)))
+            || object.trigger_definitions.iter_unchecked().any(|trigger| {
+                trigger
+                    .execute
+                    .as_deref()
+                    .is_some_and(|execute| effects_include_flicker(&collect_chain_effects(execute)))
+            });
 
         // Deploying the flicker engine is the marquee play — `activation` has
         // ensured the deck has ETB payoffs worth re-triggering.
-        if effects_include_flicker(&effects) {
+        if has_flicker {
             return PolicyVerdict::score(
                 ctx.penalties().deploy_flicker_engine_bonus,
                 PolicyReason::new("deploy_flicker_engine"),
