@@ -40,6 +40,7 @@ mod planeswalker_loyalty;
 mod plus_one_counters;
 mod ramp_timing;
 mod reactive_self_protection;
+mod reanimator_payoff;
 mod recursion_awareness;
 mod redundancy_avoidance;
 pub mod registry;

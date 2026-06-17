@@ -323,6 +323,18 @@ pub struct PolicyPenalties {
     /// payoff-gated so this never applies to decks with no enchantment payoff.
     #[serde(default = "default_enchantment_cast_bonus")]
     pub enchantment_cast_bonus: f64,
+    /// CR 404.1 + CR 110.1: Bonus for casting a reanimation spell (graveyard →
+    /// battlefield) in a reanimator deck that has a worthwhile target — cheating
+    /// a fat body into play ahead of curve. Consumed by `ReanimatorPayoffPolicy`,
+    /// which is payoff-gated so this never applies to non-reanimator decks.
+    #[serde(default = "default_reanimation_cast_bonus")]
+    pub reanimation_cast_bonus: f64,
+    /// CR 701.17a / CR 701.9a: Bonus for casting a graveyard enabler (self-mill /
+    /// discard outlet) in a reanimator deck — loading the graveyard so a
+    /// reanimation has fuel. Consumed by `ReanimatorPayoffPolicy`; smaller than
+    /// the reanimation bonus because it is setup, not the payoff.
+    #[serde(default = "default_graveyard_enabler_bonus")]
+    pub graveyard_enabler_bonus: f64,
 }
 
 impl Default for PolicyPenalties {
@@ -368,6 +380,8 @@ impl Default for PolicyPenalties {
             deploy_artifact_bonus: default_deploy_artifact_bonus(),
             lifegain_source_bonus: default_lifegain_source_bonus(),
             enchantment_cast_bonus: default_enchantment_cast_bonus(),
+            reanimation_cast_bonus: default_reanimation_cast_bonus(),
+            graveyard_enabler_bonus: default_graveyard_enabler_bonus(),
         }
     }
 }
@@ -444,6 +458,12 @@ fn default_lifegain_source_bonus() -> f64 {
 fn default_enchantment_cast_bonus() -> f64 {
     0.4
 }
+fn default_reanimation_cast_bonus() -> f64 {
+    0.5
+}
+fn default_graveyard_enabler_bonus() -> f64 {
+    0.3
+}
 
 /// Policy penalty fields present in the active CMA-ES `--group penalties`
 /// vector. Adding a `PolicyPenalties` field requires listing it here or in
@@ -505,6 +525,14 @@ pub const UNTUNED_POLICY_PENALTY_FIELDS: &[(&str, &str)] = &[
     (
         "lifegain_source_bonus",
         "new LifegainPayoffPolicy knob; awaiting a paired-seed ai-gate calibration before joining the CMA-ES vector",
+    ),
+    (
+        "reanimation_cast_bonus",
+        "new ReanimatorPayoffPolicy knob; awaiting a paired-seed ai-gate calibration before joining the CMA-ES vector",
+    ),
+    (
+        "graveyard_enabler_bonus",
+        "new ReanimatorPayoffPolicy knob; awaiting a paired-seed ai-gate calibration before joining the CMA-ES vector",
     ),
 ];
 

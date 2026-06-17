@@ -234,7 +234,14 @@ pub static MATCHUPS: &[MatchupSpec] = &[
         p1_label: "Orzhov Greasefang (P1)",
         p0: snap("pioneer", "orzhov-greasefang.json"),
         p1: snap("pioneer", "orzhov-greasefang.json"),
-        exercises: &[FeatureKind::Aristocrats],
+        // Orzhov Greasefang is the canonical reanimator list: discard outlets
+        // (Fleeting Spirit, Iron-Shield Elf, Guardian of New Benalia) pitch
+        // Parhelion II, then Greasefang / Lively Dirge return it from the
+        // graveyard to the battlefield. It clears `reanimator::COMMITMENT_FLOOR`,
+        // so this matchup is the gate's exercise of `ReanimatorPayoffPolicy`
+        // (verified by `greasefang_mirror_deck_activates_reanimator_payoff`
+        // below). It also exercises the aristocrats axis via its sacrifice value.
+        exercises: &[FeatureKind::Aristocrats, FeatureKind::Reanimator],
         expected: Expected::Mirror {
             tolerance: MIRROR_TOLERANCE,
         },

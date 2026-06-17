@@ -56,6 +56,7 @@ fn expected_policies(kind: FeatureKind) -> &'static [&'static str] {
         FeatureKind::TokensWide => &["TokensWide", "AnthemPriority"],
         FeatureKind::PlusOneCounters => &["PlusOneCountersTactical"],
         FeatureKind::SpellslingerProwess => &["SpellslingerCasting"],
+        FeatureKind::Reanimator => &["ReanimatorPayoff"],
     }
 }
 

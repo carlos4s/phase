@@ -27,6 +27,7 @@ use super::payment_selection::PaymentSelectionPolicy;
 use super::plus_one_counters::PlusOneCountersPolicy;
 use super::ramp_timing::RampTimingPolicy;
 use super::reactive_self_protection::ReactiveSelfProtectionPolicy;
+use super::reanimator_payoff::ReanimatorPayoffPolicy;
 use super::recursion_awareness::RecursionAwarenessPolicy;
 use super::redundancy_avoidance::RedundancyAvoidancePolicy;
 use super::sacrifice_value::SacrificeValuePolicy;
@@ -70,6 +71,7 @@ pub enum PolicyId {
     BlightValue,
     EvasionRemovalPriority,
     RecursionAwareness,
+    ReanimatorPayoff,
     BoardWipeTelegraph,
     LifeTotalResource,
     LifegainPayoff,
@@ -323,6 +325,7 @@ impl Default for PolicyRegistry {
             Box::new(ChaliceAvoidancePolicy),
             Box::new(PaymentSelectionPolicy),
             Box::new(SeparatePilesTimingPolicy),
+            Box::new(ReanimatorPayoffPolicy),
         ];
         let mut by_kind: HashMap<DecisionKind, Vec<usize>> = HashMap::new();
         for (idx, policy) in policies.iter().enumerate() {
