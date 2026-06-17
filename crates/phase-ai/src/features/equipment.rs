@@ -181,7 +181,7 @@ pub(crate) fn parts_are_equipment_payoff(
 /// CR 701.23 / CR 301.5: an effect that fetches an Equipment (tutor) or attaches
 /// one for free (auto-attacher). The Equipment's own equip ability attaches
 /// `SelfRef`, not an Equipment-filtered target, so it does not match here.
-fn effect_is_equipment_support(effect: &Effect) -> bool {
+pub(crate) fn effect_is_equipment_support(effect: &Effect) -> bool {
     match effect {
         Effect::SearchLibrary { filter, .. } => target_filter_references_equipment(filter),
         Effect::Attach { attachment, .. } => target_filter_references_equipment(attachment),
@@ -191,7 +191,7 @@ fn effect_is_equipment_support(effect: &Effect) -> bool {
 
 /// CR 601.2: a trigger that fires off your Equipment (cast or ETB) — the
 /// equipment-cast payoff (Puresteel Paladin's draw).
-fn trigger_references_equipment(trigger: &TriggerDefinition) -> bool {
+pub(crate) fn trigger_references_equipment(trigger: &TriggerDefinition) -> bool {
     trigger
         .valid_card
         .as_ref()
@@ -200,7 +200,7 @@ fn trigger_references_equipment(trigger: &TriggerDefinition) -> bool {
 
 /// CR 702.6: a static that grants the Equip keyword (typically a cheaper equip,
 /// e.g. Puresteel Paladin's `equip {0}`) to your Equipment.
-fn static_grants_equip(static_def: &StaticDefinition) -> bool {
+pub(crate) fn static_grants_equip(static_def: &StaticDefinition) -> bool {
     static_def.modifications.iter().any(|modification| {
         matches!(
             modification,

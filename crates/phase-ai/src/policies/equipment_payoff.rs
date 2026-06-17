@@ -17,7 +17,6 @@
 //! `EquipmentPriorityPolicy`, which vetoes wasteful same-host re-equips. Keeping
 //! this policy on the cast step avoids fighting that anti-over-equip guard.
 
-use engine::types::ability::{Effect, StaticDefinition, TriggerDefinition};
 use engine::types::actions::GameAction;
 use engine::types::game_state::GameState;
 use engine::types::player::PlayerId;
@@ -26,7 +25,8 @@ use super::context::PolicyContext;
 use super::registry::{DecisionKind, PolicyId, PolicyReason, PolicyVerdict, TacticalPolicy};
 use crate::ability_chain::collect_chain_effects;
 use crate::features::equipment::{
-    parts_are_equipment_payoff, subtypes_contain_equipment, COMMITMENT_FLOOR,
+    effect_is_equipment_support, static_grants_equip, subtypes_contain_equipment,
+    trigger_references_equipment, COMMITMENT_FLOOR,
 };
 use crate::features::DeckFeatures;
 
@@ -78,25 +78,31 @@ impl TacticalPolicy for EquipmentPayoffPolicy {
             );
         }
 
-        // Re-classify the live object structurally (shared with the deck-time
-        // detector) to value casting an equipment-matters support card.
-        let effects: Vec<&Effect> = object
-            .abilities
-            .iter()
-            .flat_map(collect_chain_effects)
-            .chain(
-                object
-                    .trigger_definitions
-                    .iter_unchecked()
-                    .filter_map(|trigger| trigger.execute.as_deref())
-                    .flat_map(collect_chain_effects),
-            )
-            .collect();
-        let triggers: Vec<&TriggerDefinition> =
-            object.trigger_definitions.iter_unchecked().collect();
-        let statics: Vec<&StaticDefinition> = object.static_definitions.iter_unchecked().collect();
+        // Re-classify the live object lazily — statics, triggers, then effects —
+        // short-circuiting as soon as any condition passes. The Equipment guard
+        // above already returned, so checking subtypes again is not needed.
+        let is_payoff = object
+            .static_definitions
+            .iter_unchecked()
+            .any(static_grants_equip)
+            || object
+                .trigger_definitions
+                .iter_unchecked()
+                .any(trigger_references_equipment)
+            || object
+                .abilities
+                .iter()
+                .flat_map(collect_chain_effects)
+                .chain(
+                    object
+                        .trigger_definitions
+                        .iter_unchecked()
+                        .filter_map(|trigger| trigger.execute.as_deref())
+                        .flat_map(collect_chain_effects),
+                )
+                .any(effect_is_equipment_support);
 
-        if parts_are_equipment_payoff(&object.card_types.subtypes, &effects, &triggers, &statics) {
+        if is_payoff {
             return PolicyVerdict::score(
                 ctx.penalties().equipment_payoff_cast_bonus,
                 PolicyReason::new("equipment_payoff_cast"),
