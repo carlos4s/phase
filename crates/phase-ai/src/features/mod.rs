@@ -12,6 +12,7 @@ pub mod artifacts;
 pub mod commitment;
 pub mod control;
 pub mod enchantments;
+pub mod equipment;
 pub mod landfall;
 pub mod lifegain;
 pub mod mana_ramp;
@@ -29,6 +30,7 @@ pub use aristocrats::AristocratsFeature;
 pub use artifacts::ArtifactsFeature;
 pub use control::ControlFeature;
 pub use enchantments::EnchantmentsFeature;
+pub use equipment::EquipmentFeature;
 pub use landfall::LandfallFeature;
 pub use lifegain::LifegainFeature;
 pub use mana_ramp::ManaRampFeature;
@@ -59,6 +61,7 @@ pub struct DeckFeatures {
     pub tribal: TribalFeature,
     pub control: ControlFeature,
     pub enchantments: EnchantmentsFeature,
+    pub equipment: EquipmentFeature,
     pub aristocrats: AristocratsFeature,
     pub artifacts: ArtifactsFeature,
     pub aggro_pressure: AggroPressureFeature,
@@ -99,6 +102,7 @@ impl DeckFeatures {
             tribal: tribal::detect(deck),
             control: control::detect(deck),
             enchantments: enchantments::detect(deck),
+            equipment: equipment::detect(deck),
             aristocrats: aristocrats::detect(deck),
             artifacts: artifacts::detect(deck),
             aggro_pressure: aggro_pressure::detect(deck),

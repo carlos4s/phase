@@ -42,6 +42,7 @@ pub enum FeatureKind {
     PlusOneCounters,
     SpellslingerProwess,
     Reanimator,
+    Equipment,
 }
 
 impl FeatureKind {
@@ -60,6 +61,7 @@ impl FeatureKind {
         FeatureKind::PlusOneCounters,
         FeatureKind::SpellslingerProwess,
         FeatureKind::Reanimator,
+        FeatureKind::Equipment,
     ];
 }
 

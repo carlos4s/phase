@@ -351,6 +351,23 @@ pub static MATCHUPS: &[MatchupSpec] = &[
         },
     },
     MatchupSpec {
+        id: "equipment-mirror",
+        p0_label: "Mono-White Equipment (P0)",
+        p1_label: "Mono-White Equipment (P1)",
+        p0: snap("modern", "mono-white-equipment.json"),
+        p1: snap("modern", "mono-white-equipment.json"),
+        // Mono-White Equipment is the canonical voltron list: a dense Equipment
+        // package (Bonesplitter, Vulshok Morningstar, Armory of Iroas, …) plus
+        // equipment-matters support (Stoneforge Mystic, Puresteel Paladin, Kor
+        // Outfitter, Steelshaper's Gift). It clears `equipment::COMMITMENT_FLOOR`,
+        // so this matchup is the gate's exercise of `EquipmentPayoffPolicy`
+        // (verified by `equipment_mirror_deck_activates_equipment_payoff` below).
+        exercises: &[FeatureKind::Equipment],
+        expected: Expected::Mirror {
+            tolerance: MIRROR_TOLERANCE,
+        },
+    },
+    MatchupSpec {
         id: "landfall-vs-niv",
         p0_label: "Mono-Green Landfall",
         p1_label: "Niv to Light",

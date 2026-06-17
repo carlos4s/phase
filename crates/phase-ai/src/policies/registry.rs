@@ -12,6 +12,7 @@ use super::context::PolicyContext;
 use super::copy_value::CopyValuePolicy;
 use super::effect_timing::EffectTimingPolicy;
 use super::enchantments_payoff::EnchantmentsPayoffPolicy;
+use super::equipment_payoff::EquipmentPayoffPolicy;
 use super::etb_value::EtbValuePolicy;
 use super::evasion_removal_priority::EvasionRemovalPriorityPolicy;
 use super::fetch_land_patience::FetchLandPatiencePolicy;
@@ -56,6 +57,7 @@ pub enum PolicyId {
     BoardDevelopment,
     EtbValue,
     EnchantmentsPayoff,
+    EquipmentPayoff,
     CopyValue,
     Tutor,
     HandDisruption,
@@ -278,6 +280,7 @@ impl Default for PolicyRegistry {
             Box::new(BoardDevelopmentPolicy),
             Box::new(EtbValuePolicy),
             Box::new(EnchantmentsPayoffPolicy),
+            Box::new(EquipmentPayoffPolicy),
             Box::new(CopyValuePolicy),
             Box::new(TutorPolicy),
             Box::new(HandDisruptionPolicy),

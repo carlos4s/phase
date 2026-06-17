@@ -18,6 +18,7 @@ mod downside_awareness;
 pub(crate) mod effect_classify;
 mod effect_timing;
 mod enchantments_payoff;
+mod equipment_payoff;
 mod equipment_priority;
 mod etb_value;
 mod evasion_removal_priority;
