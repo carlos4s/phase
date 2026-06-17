@@ -4,6 +4,7 @@ use super::aggro_pressure::AggroPressurePolicy;
 use super::anthem_priority::AnthemPriorityPolicy;
 use super::anti_self_harm::AntiSelfHarmPolicy;
 use super::blight_value::BlightValuePolicy;
+use super::blink_payoff::BlinkPayoffPolicy;
 use super::board_development::BoardDevelopmentPolicy;
 use super::board_wipe_telegraph::BoardWipeTelegraphPolicy;
 use super::card_advantage::CardAdvantagePolicy;
@@ -58,6 +59,7 @@ pub enum PolicyId {
     EtbValue,
     EnchantmentsPayoff,
     EquipmentPayoff,
+    BlinkPayoff,
     CopyValue,
     Tutor,
     HandDisruption,
@@ -329,6 +331,7 @@ impl Default for PolicyRegistry {
             Box::new(PaymentSelectionPolicy),
             Box::new(SeparatePilesTimingPolicy),
             Box::new(ReanimatorPayoffPolicy),
+            Box::new(BlinkPayoffPolicy),
         ];
         let mut by_kind: HashMap<DecisionKind, Vec<usize>> = HashMap::new();
         for (idx, policy) in policies.iter().enumerate() {

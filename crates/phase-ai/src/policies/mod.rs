@@ -4,6 +4,7 @@ mod anthem_priority;
 mod anti_self_harm;
 mod artifact_synergy;
 mod blight_value;
+mod blink_payoff;
 mod board_development;
 mod board_wipe_telegraph;
 mod card_advantage;
