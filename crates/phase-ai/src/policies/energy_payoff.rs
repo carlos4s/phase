@@ -25,8 +25,9 @@ use engine::types::player::PlayerId;
 
 use super::context::PolicyContext;
 use super::registry::{DecisionKind, PolicyId, PolicyReason, PolicyVerdict, TacticalPolicy};
-use crate::ability_chain::collect_chain_effects;
-use crate::features::energy::{ability_tree_pays_energy, effect_is_energy_gain, COMMITMENT_FLOOR};
+use crate::features::energy::{
+    ability_tree_pays_energy, chain_includes_energy_gain, COMMITMENT_FLOOR,
+};
 use crate::features::DeckFeatures;
 
 /// Energy reserve at or above which the momentum scale reaches ×3.0. Five
@@ -80,20 +81,20 @@ impl TacticalPolicy for EnergyPayoffPolicy {
         // ability tree pays energy (sink body like Bristling Hydra). Each chain
         // is checked in isolation so two unrelated abilities cannot combine into
         // a false positive.
-        let is_producer = object.abilities.iter().any(|ability| {
-            collect_chain_effects(ability)
-                .iter()
-                .copied()
-                .any(effect_is_energy_gain)
-        }) || object.trigger_definitions.iter_unchecked().any(|trigger| {
-            trigger.execute.as_deref().is_some_and(|execute| {
-                collect_chain_effects(execute)
-                    .iter()
-                    .copied()
-                    .any(effect_is_energy_gain)
-            })
-        });
-        let is_sink = object.abilities.iter().any(ability_tree_pays_energy);
+        let is_producer = object.abilities.iter().any(chain_includes_energy_gain)
+            || object.trigger_definitions.iter_unchecked().any(|trigger| {
+                trigger
+                    .execute
+                    .as_deref()
+                    .is_some_and(chain_includes_energy_gain)
+            });
+        let is_sink = object.abilities.iter().any(ability_tree_pays_energy)
+            || object.trigger_definitions.iter_unchecked().any(|trigger| {
+                trigger
+                    .execute
+                    .as_deref()
+                    .is_some_and(ability_tree_pays_energy)
+            });
 
         if !is_producer && !is_sink {
             return PolicyVerdict::neutral(PolicyReason::new("energy_payoff_inert"));

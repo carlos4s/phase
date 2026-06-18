@@ -38,7 +38,7 @@
 //! producer hit.
 
 use engine::game::DeckEntry;
-use engine::types::ability::{AbilityDefinition, CostCategory, Effect};
+use engine::types::ability::{AbilityCost, AbilityDefinition, CostCategory, Effect};
 use engine::types::card::CardFace;
 use engine::types::card_type::CoreType;
 
@@ -177,21 +177,27 @@ pub fn is_energy_producer(face: &CardFace) -> bool {
         })
 }
 
-/// True if this face contains at least one activated or spell ability whose
-/// cost pays energy, recursing through the ability tree (`sub_ability`,
-/// `else_ability`, `mode_abilities`) so energy payments nested in modal or
-/// chained abilities are caught.
+/// True if this face contains at least one activated, spell, or trigger-executed
+/// ability whose cost pays energy, recursing through the ability tree
+/// (`sub_ability`, `else_ability`, `mode_abilities`) so energy payments nested
+/// in modal or chained abilities are caught.
 ///
 /// CR 107.14: paying {E} removes one energy counter from the player. The single
 /// authority for cost classification is `AbilityDefinition::cost_categories()`
 /// (never destructure `AbilityCost`).
 pub fn is_energy_sink(face: &CardFace) -> bool {
     face.abilities.iter().any(ability_tree_pays_energy)
+        || face.triggers.iter().any(|trigger| {
+            trigger
+                .execute
+                .as_deref()
+                .is_some_and(ability_tree_pays_energy)
+        })
 }
 
 /// True if a single ability chain (flattened by `collect_chain_effects`) grants
 /// energy.
-fn chain_includes_energy_gain(ability: &AbilityDefinition) -> bool {
+pub(crate) fn chain_includes_energy_gain(ability: &AbilityDefinition) -> bool {
     collect_chain_effects(ability)
         .iter()
         .copied()
@@ -207,6 +213,10 @@ pub(crate) fn ability_tree_pays_energy(ability: &AbilityDefinition) -> bool {
     ability
         .cost_categories()
         .contains(&CostCategory::PaysEnergy)
+        || collect_chain_effects(ability)
+            .iter()
+            .copied()
+            .any(effect_pays_energy)
         || ability
             .sub_ability
             .as_deref()
@@ -226,4 +236,14 @@ pub(crate) fn ability_tree_pays_energy(ability: &AbilityDefinition) -> bool {
 /// never drift.
 pub(crate) fn effect_is_energy_gain(effect: &Effect) -> bool {
     matches!(effect, Effect::GainEnergy { .. })
+}
+
+fn effect_pays_energy(effect: &Effect) -> bool {
+    matches!(
+        effect,
+        Effect::PayCost {
+            cost: AbilityCost::PayEnergy { .. },
+            ..
+        }
+    )
 }

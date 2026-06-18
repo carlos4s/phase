@@ -114,6 +114,45 @@ fn triggered_sub_chain_producer_face() -> CardFace {
     f
 }
 
+/// An Aether Chaser shape: the attack trigger's execute chain pays energy.
+fn triggered_energy_sink_face() -> CardFace {
+    let mut f = face(vec![CoreType::Creature]);
+    let execute = AbilityDefinition::new(
+        AbilityKind::Spell,
+        Effect::PayCost {
+            cost: AbilityCost::PayEnergy {
+                amount: QuantityExpr::Fixed { value: 2 },
+            },
+            scale: None,
+            payer: TargetFilter::Controller,
+        },
+    );
+    f.triggers
+        .push(TriggerDefinition::new(TriggerMode::Attacks).execute(execute));
+    f
+}
+
+/// A Harnessed Lightning shape: the spell grants energy, then pays any amount
+/// of energy during resolution.
+fn spell_resolution_energy_sink_face() -> CardFace {
+    let mut f = producer_spell_face();
+    f.abilities[0].sub_ability = Some(Box::new(AbilityDefinition::new(
+        AbilityKind::Spell,
+        Effect::PayCost {
+            cost: AbilityCost::PayEnergy {
+                amount: QuantityExpr::Ref {
+                    qty: engine::types::ability::QuantityRef::Variable {
+                        name: "X".to_string(),
+                    },
+                },
+            },
+            scale: None,
+            payer: TargetFilter::Controller,
+        },
+    )));
+    f
+}
+
 fn entry(card: CardFace, count: u32) -> DeckEntry {
     DeckEntry { card, count }
 }
@@ -179,6 +218,18 @@ fn payoff_creature_is_both() {
 #[test]
 fn triggered_sub_chain_grants_energy_is_producer() {
     assert!(is_energy_producer(&triggered_sub_chain_producer_face()));
+}
+
+#[test]
+fn triggered_pay_energy_execute_is_sink() {
+    assert!(is_energy_sink(&triggered_energy_sink_face()));
+}
+
+#[test]
+fn spell_resolution_pay_energy_effect_is_sink() {
+    let f = spell_resolution_energy_sink_face();
+    assert!(is_energy_producer(&f));
+    assert!(is_energy_sink(&f));
 }
 
 #[test]

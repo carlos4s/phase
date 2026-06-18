@@ -12,12 +12,14 @@ use engine::ai_support::{ActionMetadata, AiDecisionContext, CandidateAction, Tac
 use engine::game::zones::create_object;
 use engine::types::ability::{
     AbilityCost, AbilityDefinition, AbilityKind, Effect, QuantityExpr, TargetFilter,
+    TriggerDefinition,
 };
 use engine::types::actions::GameAction;
 use engine::types::card_type::{CardType, CoreType};
 use engine::types::game_state::{CastPaymentMode, GameState, WaitingFor};
 use engine::types::identifiers::{CardId, ObjectId};
 use engine::types::player::PlayerId;
+use engine::types::triggers::TriggerMode;
 use engine::types::zones::Zone;
 
 use crate::config::AiConfig;
@@ -112,6 +114,15 @@ fn push_ability(state: &mut GameState, oid: ObjectId, ability: AbilityDefinition
     Arc::make_mut(&mut state.objects.get_mut(&oid).unwrap().abilities).push(ability);
 }
 
+fn push_trigger(state: &mut GameState, oid: ObjectId, trigger: TriggerDefinition) {
+    state
+        .objects
+        .get_mut(&oid)
+        .unwrap()
+        .trigger_definitions
+        .push(trigger);
+}
+
 /// An Attune with Aether shape producer — grants energy. `is_producer = true`.
 fn producer_ability() -> AbilityDefinition {
     AbilityDefinition::new(
@@ -136,6 +147,19 @@ fn sink_ability() -> AbilityDefinition {
         amount: QuantityExpr::Fixed { value: 1 },
     });
     ability
+}
+
+fn trigger_energy_sink() -> TriggerDefinition {
+    TriggerDefinition::new(TriggerMode::Attacks).execute(AbilityDefinition::new(
+        AbilityKind::Spell,
+        Effect::PayCost {
+            cost: AbilityCost::PayEnergy {
+                amount: QuantityExpr::Fixed { value: 2 },
+            },
+            scale: None,
+            payer: TargetFilter::Controller,
+        },
+    ))
 }
 
 /// A Divination shape draw spell — no energy interaction. Drives `energy_payoff_inert`.
@@ -366,6 +390,29 @@ fn verdict_sink_body_is_scored() {
     assert!(
         (delta - expected).abs() < 1e-9,
         "sink body at 4 reserve must scale ×2 (expected {expected}); got {delta}"
+    );
+    assert_eq!(reason.kind, "energy_cast");
+    assert_eq!(fact(&reason, "is_producer"), 0);
+    assert_eq!(fact(&reason, "is_sink"), 1);
+}
+
+#[test]
+fn verdict_trigger_energy_sink_body_is_scored() {
+    let mut state = GameState::new_two_player(7);
+    let oid = spell_object(&mut state, 5, vec![CoreType::Creature]);
+    push_trigger(&mut state, oid, trigger_energy_sink());
+    set_reserve(&mut state, 4);
+
+    let candidate = cast_candidate(oid);
+    let decision = decision();
+    let (context, config) = ai_context(1.0);
+    let ctx = ctx(&state, &candidate, &decision, &context, &config);
+
+    let (delta, reason) = score_of(policy().verdict(&ctx));
+    let expected = AiConfig::default().policy_penalties.energy_cast_bonus * 2.0;
+    assert!(
+        (delta - expected).abs() < 1e-9,
+        "trigger energy sink at 4 reserve must scale ×2 (expected {expected}); got {delta}"
     );
     assert_eq!(reason.kind, "energy_cast");
     assert_eq!(fact(&reason, "is_producer"), 0);
