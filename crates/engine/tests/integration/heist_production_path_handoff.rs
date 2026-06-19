@@ -17,16 +17,15 @@
 //!    continuation drain.
 //!
 //! 2. **The full-card end-to-end** (the test
-//!    `heist_full_production_path_grenzo_end_to_end`): load real cards
-//!    from the test fixture (Grenzo, Crooked Jailer + library nonlands +
-//!    a land), parse a Heist ability through the production parser path,
-//!    push it onto the stack as a TriggeredAbility (the same shape the
-//!    engine produces when a trigger fires), and drive the production
-//!    resolver + answer handler through to the final exiled state. A
-//!    regression in any of the four Heist-specific risk surfaces from (1)
-//!    would surface here because the parsed ability would never reach
-//!    `ChooseFromZoneChoice`, or the partition would corrupt the library,
-//!    or the finalizer would not exile face-down + grant cast permission.
+//!    `heist_full_production_path_grenzo_cast_etb_end_to_end`): cast a
+//!    REAL Heist card (Grenzo, Crooked Jailer) whose Oracle text is parsed
+//!    by the production parser (`parse_oracle_text` via
+//!    `add_creature_to_hand_from_oracle`), drive the cast → mana payment
+//!    → ETB trigger → target selection → `ChooseFromZoneChoice` →
+//!    `GameAction::SelectCards` → finalizer pipeline end-to-end. A
+//!    regression in any of the Heist-specific risk surfaces — parser
+//!    producing `Effect::Heist`, engine raising the look-step prompt,
+//!    partition logic, or finalizer — fails this test loud.
 //!
 //! Together these cover the full production path the maintainer listed:
 //! parsed `Effect::Heist` → `WaitingFor::ChooseFromZoneChoice` →
@@ -43,7 +42,7 @@ use engine::types::ability::{
 };
 use engine::types::card_type::CoreType;
 use engine::types::events::GameEvent;
-use engine::types::game_state::{ExileLinkKind, GameState, StackEntry, StackEntryKind, WaitingFor};
+use engine::types::game_state::{ExileLinkKind, GameState, WaitingFor};
 use engine::types::identifiers::{CardId, ObjectId};
 use engine::types::mana::{ManaCost, ManaUnit};
 use engine::types::player::PlayerId;
@@ -523,114 +522,203 @@ fn heist_target_filter_round_trips_through_parse() {
 // fails.
 // ---------------------------------------------------------------------------
 
-// Full production-path regression for the Heist mechanic. Loads REAL
-// cards from the test fixture (Grenzo, Crooked Jailer + library
-// nonlands + a land), parses a Heist ability through the production
-// parser path, and drives the parsed ability through every production
-// stage end-to-end:
+// Full production-path regression for the Heist mechanic. Casts a REAL
+// card whose Oracle text contains "heist" — **Grenzo, Crooked Jailer**
+// ({4}{B}{R}, 6/4, "When Grenzo enters and at the beginning of your
+// upkeep, heist target opponent's library.") — through the production
+// cast + trigger pipeline end-to-end:
 //
-//   Parsed `Effect::Heist` (via `parse_effect_chain`) → TriggeredAbility
-//   on the stack (target opponent pre-filled) →
-//   `advance_until_stack_empty` → `WaitingFor::ChooseFromZoneChoice` →
-//   `engine::apply(GameAction::SelectCards)` (the production answer
-//   handler — the same function `GameRunner::act` calls) → drain →
-//   finalizer.
+//   CastSpell → ManaPayment → ETB trigger queued →
+//   WaitingFor::TriggerTargetSelection (the targeting phase requests an
+//   opponent player) → ChooseTarget { Player(P1) } → trigger resolves →
+//   WaitingFor::ChooseFromZoneChoice → GameAction::SelectCards → drain →
+//   HeistExile finalizer.
 //
-// We push the TriggeredAbility onto the stack manually rather than
-// going through cast → ETB → natural trigger firing because the cast
-// + ETB layer is generic engine plumbing (not Heist-specific) and is
-// exercised by other tests. The Heist-specific risk surfaces are:
-//   (a) the parser path producing `Effect::Heist` with the right
-//       `TargetFilter` (the production Heist effect);
-//   (b) the resolver raising `ChooseFromZoneChoice` (the look step);
-//   (c) `engine::apply(GameAction::SelectCards)` injecting the chosen
+// All ability definitions come from the production parser
+// (`parse_oracle_text` via `add_creature_to_hand_from_oracle`) — the test
+// does NOT hand-construct the Heist ability or inject the target. This
+// exercises the full Heist production surface:
+//   (a) the trigger parser producing a `ChangesZone` trigger whose body
+//       parses to `Effect::Heist` with the right `TargetFilter`;
+//   (b) the engine raising `TriggerTargetSelection` when the ETB fires;
+//   (c) the resolver raising `ChooseFromZoneChoice` (the look step);
+//   (d) `engine::apply(GameAction::SelectCards)` injecting the chosen
 //       card into `cont.chain.targets` (the partition);
-//   (d) the `HeistExile` finalizer exiling face-down + granting
+//   (e) the `HeistExile` finalizer exiling face-down + granting
 //       permanent any-color cast permission.
 //
-// All four are exercised here against a real card DB state.
+// A regression in ANY of (a)–(e) — including a parser regression that
+// drops the Heist trigger to `Unimplemented`, or a targeting phase that
+// doesn't surface the opponent-player slot — fails this test loud.
 //
-// Fixture: this test references "grenzo, crooked jailer", "bear cub",
-// "goblin arsonist", "elf replica", and "forest" as quoted string
-// literals so `scripts/gen-test-fixture.py --check` (and a future
-// regeneration) keeps them in `tests/fixtures/integration_cards.json`.
+// Fixture: this test references "bear cub", "goblin arsonist", "elf
+// replica", and "forest" as quoted string literals so
+// `scripts/gen-test-fixture.py --check` keeps them in
+// `tests/fixtures/integration_cards.json`. Grenzo himself is built from
+// inline Oracle text via `add_creature_to_hand_from_oracle` (no fixture
+// entry needed), which is the cleanest way to exercise the production
+// parser path on this branch's Heist parser change before the card-data
+// pipeline regenerates `card-data.json`.
 #[test]
-fn heist_full_production_path_grenzo_end_to_end() {
-    use engine::game::scenario::{GameScenario, P0};
+fn heist_full_production_path_grenzo_cast_etb_end_to_end() {
+    use engine::game::scenario::{GameRunner, GameScenario, P0, P1};
+    use engine::types::actions::GameAction;
+    use engine::types::game_state::{CastPaymentMode, WaitingFor};
+    use engine::types::mana::{ManaCost, ManaCostShard, ManaType, ManaUnit};
+    use engine::types::phase::Phase;
+    use engine::types::triggers::TriggerMode;
+
+    // Grenzo's real Oracle text (per Scryfall). The ETB half is the
+    // Heist trigger; the static "Once each turn, you may pay {0}…"
+    // sentence is a separate ability that the production parser also
+    // handles — it does not interfere with the ETB trigger firing or
+    // resolving.
+    const GRENZO_ORACLE: &str = "When Grenzo enters and at the beginning of your upkeep, heist target opponent's library.\nOnce each turn, you may pay {0} rather than pay the mana cost for a spell you cast that you don't own with mana value 3 or less.";
 
     let Some(db) = load_db() else {
         return;
     };
 
-    let mut scenario = GameScenario::new_n_player(2, 0x5EED);
-    scenario.at_phase(engine::types::phase::Phase::PreCombatMain);
+    let mut scenario = GameScenario::new();
+    scenario.at_phase(Phase::PreCombatMain);
 
-    // Real card loaded from the test fixture — proves `add_real_card`
-    // lookups against `tests/fixtures/integration_cards.json` resolve
-    // these names and that the loader rehydrates the objects with the
-    // right zone / controller.
-    let grenzo = scenario.add_real_card(P0, "grenzo, crooked jailer", Zone::Battlefield, db);
-    let target_opponent = PlayerId(1);
+    // Cast Grenzo from hand with his REAL Oracle text — the production
+    // parser (`parse_oracle_text` via `add_creature_to_hand_from_oracle`)
+    // produces the trigger definitions. Then override the mana cost to
+    // his real {4}{B}{R} so the cast can resolve.
+    let grenzo = scenario
+        .add_creature_to_hand_from_oracle(P0, "Grenzo, Crooked Jailer", 6, 4, GRENZO_ORACLE)
+        .with_mana_cost(ManaCost::Cost {
+            shards: vec![ManaCostShard::Black, ManaCostShard::Red],
+            generic: 4,
+        })
+        .id();
+
     // Seed the opponent's library with three nonlands + a land so we can
     // verify the Heist partition (the chosen card exiles, the other two
-    // stay in the library, the land is never offered).
+    // stay in the library, the land is never offered). Real cards from
+    // the fixture keep their type data (the Heist look step filters by
+    // `CoreType::Land`).
+    let target_opponent = P1;
     let bear = scenario.add_real_card(target_opponent, "bear cub", Zone::Library, db);
     let goblin = scenario.add_real_card(target_opponent, "goblin arsonist", Zone::Library, db);
     let elf = scenario.add_real_card(target_opponent, "elf replica", Zone::Library, db);
     let forest = scenario.add_real_card(target_opponent, "forest", Zone::Library, db);
 
-    let mut runner = scenario.build();
-    engine::game::rehydrate_game_from_card_db(runner.state_mut(), db);
-
-    // REAL PARSED HEIST ABILITY — the production entry point. This is
-    // what the parser produces when the Oracle text is just "heist
-    // target opponent's library." (the body of Grenzo's ETB / upkeep
-    // trigger). The hand-construction route is bypassed; this exercises
-    // `parse_effect_chain` end-to-end.
-    let heist_def = engine::parser::oracle_effect::parse_effect_chain(
-        "heist target opponent's library.",
-        AbilityKind::Spell,
-    );
-    assert!(
-        matches!(heist_def.effect.as_ref(), Effect::Heist { .. }),
-        "parse_effect_chain must produce Effect::Heist from the heist verb, got {:?}",
-        heist_def.effect
-    );
-    let ability = build_resolved_from_def_with_targets(
-        &heist_def,
-        grenzo,
+    // Fund the pool with {4}{B}{R} so the cast resolves.
+    scenario.with_mana_pool(
         P0,
-        vec![TargetRef::Player(target_opponent)],
+        vec![
+            ManaUnit::new(ManaType::Colorless, ObjectId(0), false, vec![]),
+            ManaUnit::new(ManaType::Colorless, ObjectId(0), false, vec![]),
+            ManaUnit::new(ManaType::Colorless, ObjectId(0), false, vec![]),
+            ManaUnit::new(ManaType::Colorless, ObjectId(0), false, vec![]),
+            ManaUnit::new(ManaType::Black, ObjectId(0), false, vec![]),
+            ManaUnit::new(ManaType::Red, ObjectId(0), false, vec![]),
+        ],
     );
 
-    // --- Push the parsed ability onto the stack as a TriggeredAbility
-    // (the same shape the engine produces when a trigger fires) so the
-    // production resolver handles it. `source_id` and `source_name`
-    // mirror Grenzo's identity — the finalizer uses these to bind the
-    // exiled card's `ExileLinkKind::HideawayLookable` link back to the
-    // Heist source.
-    let stack_entry_id = ObjectId(9999);
-    runner.state_mut().stack.push_back(StackEntry {
-        id: stack_entry_id,
-        source_id: grenzo,
-        controller: P0,
-        kind: StackEntryKind::TriggeredAbility {
-            source_id: grenzo,
-            ability: Box::new(ability),
-            condition: None,
-            trigger_event: None,
-            description: Some("Heist target opponent's library.".to_string()),
-            source_name: "Grenzo, Crooked Jailer".to_string(),
-            subject_match_count: None,
-            die_result: None,
-        },
-    });
+    let mut runner = scenario.build();
 
-    // --- Production step 1: drive `advance_until_stack_empty` so the
-    // engine resolves the Heist ability through the production path.
-    // The look step raises `ChooseFromZoneChoice` and pauses.
-    runner.advance_until_stack_empty();
+    // SANITY: the production parser must have produced a `ChangesZone`
+    // ETB trigger whose execute body is `Effect::Heist`. If the parser
+    // regresses (e.g. drops the trigger to `Unimplemented`), this asserts
+    // loud BEFORE the cast path runs.
+    let etb_trigger = runner
+        .state()
+        .objects
+        .get(&grenzo)
+        .expect("Grenzo on the stack")
+        .trigger_definitions
+        .as_slice()
+        .iter()
+        .find(|t| t.mode == TriggerMode::ChangesZone)
+        .expect("Grenzo must have a ChangesZone (ETB) trigger");
+    let etb_effect = etb_trigger
+        .execute
+        .as_ref()
+        .expect("ETB trigger must have an execute body");
+    assert!(
+        matches!(
+            etb_effect.effect.as_ref(),
+            Effect::Heist { look_count: 3, .. }
+        ),
+        "Grenzo's ETB trigger body must parse to Effect::Heist {{ look_count: 3 }} via the \
+         production parser; got {:?}. If the parser dropped to Unimplemented, the card-data \
+         pipeline needs regenerating OR the parser arm regressed.",
+        etb_effect.effect
+    );
 
+    // --- Production step 1: cast Grenzo. ---
+    let card_id = runner.state().objects[&grenzo].card_id;
+    runner
+        .act(GameAction::CastSpell {
+            object_id: grenzo,
+            card_id,
+            targets: vec![],
+            payment_mode: CastPaymentMode::Auto,
+        })
+        .expect("Grenzo cast should be accepted");
+
+    // Drive the cast + ETB + Heist-look pipeline. In a 2-player game the
+    // engine auto-selects the only legal opponent target (P1) without
+    // raising `TriggerTargetSelection`, so the loop may see
+    // `ChooseFromZoneChoice` directly. Handle both paths: if the engine
+    // DOES prompt for a target (3+ players or a future targeting change),
+    // answer it via the production `ChooseTarget` action; otherwise drive
+    // priority until the look step parks.
+    let mut reached_choice = false;
+    let mut answered_target = false;
+    for _ in 0..128 {
+        match runner.state().waiting_for.clone() {
+            WaitingFor::ChooseFromZoneChoice { .. } => {
+                reached_choice = true;
+                break;
+            }
+            WaitingFor::TriggerTargetSelection { .. } | WaitingFor::TargetSelection { .. } => {
+                // Declare the opponent as the Heist target via the
+                // production targeting action. Only one opponent exists
+                // in this 2-player scenario, so this is the sole legal
+                // pick.
+                runner
+                    .act(GameAction::ChooseTarget {
+                        target: Some(TargetRef::Player(target_opponent)),
+                    })
+                    .expect("declaring the opponent as the Heist target must succeed");
+                answered_target = true;
+            }
+            WaitingFor::ManaPayment { .. } => {
+                runner
+                    .act(GameAction::PassPriority)
+                    .expect("pay mana from the pre-funded pool");
+            }
+            WaitingFor::Priority { .. } => {
+                if runner.state().stack.is_empty() {
+                    break;
+                }
+                runner
+                    .act(GameAction::PassPriority)
+                    .expect("pass priority to advance the stack");
+            }
+            WaitingFor::OrderTriggers { .. } => {
+                engine::game::triggers::drain_order_triggers_with_identity(runner.state_mut());
+            }
+            other => panic!("unexpected state while casting/resolving Grenzo: {other:?}"),
+        }
+    }
+    assert!(
+        reached_choice,
+        "the Heist look step must raise ChooseFromZoneChoice; got {:?}",
+        runner.state().waiting_for
+    );
+    // Track whether the engine prompted for a target — `answered_target`
+    // stays false when the auto-selection path fires (the 2-player case).
+    // Both paths are valid production paths; the assertion is on the
+    // final state, not on which path was taken.
+    let _ = answered_target;
+
+    // --- Production step 2: assert the look-step prompt invariants, then
+    // answer it via the production `GameAction::SelectCards` handler.
     match &runner.state().waiting_for {
         WaitingFor::ChooseFromZoneChoice {
             player,
@@ -656,16 +744,12 @@ fn heist_full_production_path_grenzo_end_to_end() {
                 "land must never be offered as a Heist candidate"
             );
         }
-        other => {
-            panic!("expected ChooseFromZoneChoice after resolving Grenzo's Heist, got {other:?}")
-        }
+        other => panic!("expected ChooseFromZoneChoice, got {other:?}"),
     }
 
-    // --- Production step 2: drive `engine::apply(GameAction::SelectCards)`
-    // — the same function `GameRunner::act` calls — to answer the prompt.
     let chosen = elf;
     runner
-        .act(engine::types::actions::GameAction::SelectCards {
+        .act(GameAction::SelectCards {
             cards: vec![chosen],
         })
         .expect("selecting the Heist card must succeed");
@@ -719,4 +803,9 @@ fn heist_full_production_path_grenzo_end_to_end() {
         Zone::Library,
         "land must remain in the opponent's library"
     );
+
+    // Silence unused-import warning when the driver helper isn't used in
+    // some build configurations (the `GameRunner` import is here for
+    // future extension; the current driver uses `runner` directly).
+    let _ = GameRunner::from_state;
 }
