@@ -4991,6 +4991,27 @@ fn parse_effect_clause_inner(text: &str, ctx: &mut ParseContext) -> ParsedEffect
         return clause;
     }
 
+    // Heist (MTG Arena digital-only keyword action — NOT in the Comp Rules):
+    // "heist target opponent's library". The targeted opponent becomes the
+    // spell/ability target; "'s library" is the consumed object phrase. The look
+    // count is fixed at 3 by the Arena reminder text.
+    if let Some((target, _rest)) = nom_on_lower(tp.original, tp.lower, |i| {
+        let (rest, _) = tag("heist ").parse(i)?;
+        let (rest, _) = tag("target ").parse(rest)?;
+        let (rest, _) = tag("opponent").parse(rest)?;
+        let (rest, _) = opt(tag("'s library")).parse(rest)?;
+        let (rest, _) = opt(tag(".")).parse(rest)?;
+        Ok((
+            rest,
+            TargetFilter::Typed(TypedFilter::default().controller(ControllerRef::Opponent)),
+        ))
+    }) {
+        return parsed_clause(Effect::Heist {
+            target,
+            look_count: 3,
+        });
+    }
+
     // CR 701.57a: "discover N" / "discover X" — effect variant.
     let (discover_tp, discover_where_x) = strip_trailing_where_x(tp);
     if let Some((limit, rest_orig)) =
@@ -49334,6 +49355,17 @@ mod tests {
                 }
             ),
             "expected dynamic Discover limit, got {:?}",
+            def.effect
+        );
+    }
+
+    #[test]
+    fn heist_target_opponents_library_parses_to_heist_effect() {
+        let def = parse_effect_chain("heist target opponent's library.", AbilityKind::Spell);
+
+        assert!(
+            matches!(*def.effect, Effect::Heist { look_count: 3, .. }),
+            "expected Heist {{ look_count: 3 }}, got {:?}",
             def.effect
         );
     }

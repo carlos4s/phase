@@ -8812,6 +8812,37 @@ pub enum Effect {
     Discover {
         mana_value_limit: QuantityExpr,
     },
+    /// Heist — designed-for-digital (MTG Arena) keyword action. NOT in the
+    /// Comprehensive Rules; operates per the Arena programmed rules (see
+    /// `docs/MagicCompRules.txt` — absent). Reminder text:
+    /// "Look at three random nonland cards from target opponent's library. Exile
+    /// one of them face down. You may cast that card for as long as it remains
+    /// exiled, and you may spend mana as though it were mana of any type to cast
+    /// that spell."
+    ///
+    /// This is the selection/look step: the resolver surfaces
+    /// `WaitingFor::ChooseFromZoneChoice` over `look_count` random nonland cards
+    /// from the targeted opponent's library and stashes an `Effect::HeistExile`
+    /// continuation. The chosen card is finalized by `HeistExile`; the unchosen
+    /// cards never leave the library. `target` is the targeted opponent player
+    /// (resolved from `ability.targets`).
+    Heist {
+        target: TargetFilter,
+        /// Number of random nonland cards to look at. Defaults to 3 per the
+        /// Arena reminder text; `serde(default)` keeps existing data loadable.
+        #[serde(default = "default_heist_look_count")]
+        look_count: u8,
+    },
+    /// Heist finalizer — continuation stashed by `Effect::Heist`. The chosen card
+    /// (carried on `ability.targets` by the `ChooseFromZoneChoice` answer handler)
+    /// is exiled from its owner's library, turned face down (CR 406.3), linked to
+    /// the source so the controller may look at it (mirrors Hideaway's
+    /// `ExileLinkKind::HideawayLookable`), and granted a permanent
+    /// `PlayFromExile` permission with any-type-or-color mana so it can be cast
+    /// for as long as it remains exiled.
+    HeistExile {
+        target: TargetFilter,
+    },
     /// CR 702.85a: Cascade — when you cast a spell with cascade, exile cards from
     /// the top of your library until you exile a nonland card whose mana value is
     /// less than the cascade spell's mana value. You may cast that card without
@@ -9422,6 +9453,11 @@ pub(crate) fn default_target_filter_any() -> TargetFilter {
     TargetFilter::Any
 }
 
+/// Default number of random nonland cards a Heist looks at (Arena reminder: 3).
+fn default_heist_look_count() -> u8 {
+    3
+}
+
 pub(crate) fn default_target_filter_permanent() -> TargetFilter {
     TargetFilter::Typed(TypedFilter::permanent())
 }
@@ -9993,6 +10029,9 @@ impl Effect {
             // resolution consistent.
             Effect::HideawayConceal { target } => Some(target),
 
+            // Heist targets the opponent whose library is heisted.
+            Effect::Heist { target, .. } => Some(target),
+
             // CR 109.4 + CR 115.1 + CR 707.2: `CopyTokenOf` has two
             // potentially-targetable axes — the copy *source* (`target`) and
             // the token *creator/owner* (`owner`). `target_filter()` surfaces
@@ -10157,6 +10196,7 @@ impl Effect {
             | Effect::GainEnergy { .. }
             | Effect::RevealUntil { .. }
             | Effect::Discover { .. }
+            | Effect::HeistExile { .. }
             | Effect::Cascade
             | Effect::Ripple { .. }
             | Effect::MiracleCast { .. }
@@ -10406,6 +10446,8 @@ impl Effect {
             | Effect::CreateDelayedTrigger { .. }
             | Effect::CreateEmblem { .. }
             | Effect::Discover { .. }
+            | Effect::Heist { .. }
+            | Effect::HeistExile { .. }
             | Effect::DraftFromSpellbook { .. }
             | Effect::Endure { .. }
             | Effect::ExchangeControl { .. }
@@ -10608,6 +10650,8 @@ impl Effect {
             | Effect::CreateDelayedTrigger { .. }
             | Effect::CreateEmblem { .. }
             | Effect::Discover { .. }
+            | Effect::Heist { .. }
+            | Effect::HeistExile { .. }
             | Effect::DraftFromSpellbook { .. }
             | Effect::Endure { .. }
             | Effect::ExchangeControl { .. }
@@ -10801,6 +10845,8 @@ pub fn effect_variant_name(effect: &Effect) -> &str {
         Effect::ExileFromTopUntil { .. } => "ExileFromTopUntil",
         Effect::RevealUntil { .. } => "RevealUntil",
         Effect::Discover { .. } => "Discover",
+        Effect::Heist { .. } => "Heist",
+        Effect::HeistExile { .. } => "HeistExile",
         Effect::Cascade => "Cascade",
         Effect::Ripple { .. } => "Ripple",
         Effect::MiracleCast { .. } => "MiracleCast",
@@ -11003,6 +11049,8 @@ pub enum EffectKind {
     ExileFromTopUntil,
     RevealUntil,
     Discover,
+    Heist,
+    HeistExile,
     Cascade,
     Ripple,
     MiracleCast,
@@ -11216,6 +11264,8 @@ impl From<&Effect> for EffectKind {
             Effect::ExileFromTopUntil { .. } => EffectKind::ExileFromTopUntil,
             Effect::RevealUntil { .. } => EffectKind::RevealUntil,
             Effect::Discover { .. } => EffectKind::Discover,
+            Effect::Heist { .. } => EffectKind::Heist,
+            Effect::HeistExile { .. } => EffectKind::HeistExile,
             Effect::Cascade => EffectKind::Cascade,
             Effect::Ripple { .. } => EffectKind::Ripple,
             Effect::MiracleCast { .. } => EffectKind::MiracleCast,
