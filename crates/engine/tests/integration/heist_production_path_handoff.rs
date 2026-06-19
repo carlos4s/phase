@@ -35,9 +35,9 @@
 
 use engine::game::ability_utils::build_resolved_from_def_with_targets;
 use engine::game::effects::resolve_ability_chain;
+use engine::game::scenario_db::GameScenarioDbExt;
 use engine::game::zones::create_object;
 use engine::game::EngineError;
-use engine::game::scenario_db::GameScenarioDbExt;
 use engine::types::ability::{
     AbilityKind, CastingPermission, Effect, ManaSpendPermission, TargetRef,
 };
