@@ -111,7 +111,7 @@ fn heist_offers_random_nonland_candidates_from_opponent_library() {
     );
     assert!(matches!(
         &state.pending_continuation.as_ref().unwrap().chain.effect,
-        Effect::HeistExile { .. }
+        Effect::HeistExile
     ));
     assert!(events.iter().any(|e| matches!(
         e,
@@ -196,9 +196,7 @@ fn heist_exile_finalizer_exiles_chosen_face_down_links_and_grants() {
 
     // The answer handler injects the chosen card onto the continuation's targets.
     let finalize = ResolvedAbility::new(
-        Effect::HeistExile {
-            target: TargetFilter::ParentTarget,
-        },
+        Effect::HeistExile,
         vec![TargetRef::Object(chosen)],
         source,
         controller,
@@ -245,9 +243,7 @@ fn heist_exile_finalizer_skips_a_card_that_left_the_library() {
     state.objects.get_mut(&gone).unwrap().zone = Zone::Hand;
 
     let finalize = ResolvedAbility::new(
-        Effect::HeistExile {
-            target: TargetFilter::ParentTarget,
-        },
+        Effect::HeistExile,
         vec![TargetRef::Object(gone)],
         ObjectId(100),
         controller,

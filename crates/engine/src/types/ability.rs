@@ -8833,16 +8833,15 @@ pub enum Effect {
         #[serde(default = "default_heist_look_count")]
         look_count: u8,
     },
-    /// Heist finalizer — continuation stashed by `Effect::Heist`. The chosen card
-    /// (carried on `ability.targets` by the `ChooseFromZoneChoice` answer handler)
-    /// is exiled from its owner's library, turned face down (CR 406.3), linked to
-    /// the source so the controller may look at it (mirrors Hideaway's
+    /// Heist finalizer — continuation stashed by `Effect::Heist`. The chosen
+    /// card (carried on `ability.targets` by the `ChooseFromZoneChoice` answer
+    /// handler) is exiled from its owner's library, turned face down (CR 406.3),
+    /// linked to the source so the controller may look at it (mirrors Hideaway's
     /// `ExileLinkKind::HideawayLookable`), and granted a permanent
     /// `PlayFromExile` permission with any-type-or-color mana so it can be cast
-    /// for as long as it remains exiled.
-    HeistExile {
-        target: TargetFilter,
-    },
+    /// for as long as it remains exiled. Unit variant — no fields; the target is
+    /// implicit in `ability.targets`.
+    HeistExile,
     /// CR 702.85a: Cascade — when you cast a spell with cascade, exile cards from
     /// the top of your library until you exile a nonland card whose mana value is
     /// less than the cascade spell's mana value. You may cast that card without
@@ -10196,7 +10195,7 @@ impl Effect {
             | Effect::GainEnergy { .. }
             | Effect::RevealUntil { .. }
             | Effect::Discover { .. }
-            | Effect::HeistExile { .. }
+            | Effect::HeistExile
             | Effect::Cascade
             | Effect::Ripple { .. }
             | Effect::MiracleCast { .. }
@@ -10447,7 +10446,7 @@ impl Effect {
             | Effect::CreateEmblem { .. }
             | Effect::Discover { .. }
             | Effect::Heist { .. }
-            | Effect::HeistExile { .. }
+            | Effect::HeistExile
             | Effect::DraftFromSpellbook { .. }
             | Effect::Endure { .. }
             | Effect::ExchangeControl { .. }
@@ -10651,7 +10650,7 @@ impl Effect {
             | Effect::CreateEmblem { .. }
             | Effect::Discover { .. }
             | Effect::Heist { .. }
-            | Effect::HeistExile { .. }
+            | Effect::HeistExile
             | Effect::DraftFromSpellbook { .. }
             | Effect::Endure { .. }
             | Effect::ExchangeControl { .. }
@@ -10846,7 +10845,7 @@ pub fn effect_variant_name(effect: &Effect) -> &str {
         Effect::RevealUntil { .. } => "RevealUntil",
         Effect::Discover { .. } => "Discover",
         Effect::Heist { .. } => "Heist",
-        Effect::HeistExile { .. } => "HeistExile",
+        Effect::HeistExile => "HeistExile",
         Effect::Cascade => "Cascade",
         Effect::Ripple { .. } => "Ripple",
         Effect::MiracleCast { .. } => "MiracleCast",
@@ -11265,7 +11264,7 @@ impl From<&Effect> for EffectKind {
             Effect::RevealUntil { .. } => EffectKind::RevealUntil,
             Effect::Discover { .. } => EffectKind::Discover,
             Effect::Heist { .. } => EffectKind::Heist,
-            Effect::HeistExile { .. } => EffectKind::HeistExile,
+            Effect::HeistExile => EffectKind::HeistExile,
             Effect::Cascade => EffectKind::Cascade,
             Effect::Ripple { .. } => EffectKind::Ripple,
             Effect::MiracleCast { .. } => EffectKind::MiracleCast,

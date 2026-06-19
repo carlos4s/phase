@@ -90,11 +90,10 @@ pub fn resolve(
         .iter()
         .copied()
         .filter(|id| {
-            state.objects.get(id).is_some_and(|obj| {
-                !obj.card_types
-                    .core_types
-                    .contains(&CoreType::Land)
-            })
+            state
+                .objects
+                .get(id)
+                .is_some_and(|obj| !obj.card_types.core_types.contains(&CoreType::Land))
         })
         .collect();
 
@@ -118,14 +117,7 @@ pub fn resolve(
     // injects the single chosen card onto `cont.chain.targets`, and because
     // `HeistExile` carries no `sub_ability`, the unchosen candidates are never
     // forwarded anywhere — they simply stay in the library.
-    let finalize = ResolvedAbility::new(
-        Effect::HeistExile {
-            target: TargetFilter::ParentTarget,
-        },
-        vec![],
-        source_id,
-        controller,
-    );
+    let finalize = ResolvedAbility::new(Effect::HeistExile, vec![], source_id, controller);
     state.pending_continuation = Some(PendingContinuation::new(Box::new(finalize)));
 
     state.waiting_for = WaitingFor::ChooseFromZoneChoice {
@@ -151,7 +143,7 @@ pub fn resolve_exile(
     ability: &ResolvedAbility,
     events: &mut Vec<GameEvent>,
 ) -> Result<(), EffectError> {
-    let Effect::HeistExile { .. } = &ability.effect else {
+    let Effect::HeistExile = &ability.effect else {
         return Err(EffectError::InvalidParam("Expected HeistExile".to_string()));
     };
 

@@ -4092,7 +4092,7 @@ pub(super) fn clause_is_dig_lookback_transparent(effect: &Effect) -> bool {
         | Effect::RevealUntil { .. }
         | Effect::Discover { .. }
         | Effect::Heist { .. }
-        | Effect::HeistExile { .. }
+        | Effect::HeistExile
         | Effect::Cascade
         | Effect::Ripple { .. }
         | Effect::MiracleCast { .. }

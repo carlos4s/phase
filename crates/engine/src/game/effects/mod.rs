@@ -2639,7 +2639,7 @@ pub fn resolve_effect(
         Effect::Heist { .. } => heist::resolve(state, ability, events),
         // Heist finalizer continuation: exile the chosen card face down, link
         // it, and grant a permanent any-color cast-from-exile permission.
-        Effect::HeistExile { .. } => heist::resolve_exile(state, ability, events),
+        Effect::HeistExile => heist::resolve_exile(state, ability, events),
         // CR 702.85a: Cascade — synthesized from the keyword at trigger time;
         // resolver performs the exile-until loop and sets CascadeChoice.
         Effect::Cascade => cascade::resolve(state, ability, events),
