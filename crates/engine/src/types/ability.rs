@@ -1834,6 +1834,15 @@ pub enum CastingPermission {
         /// within-window impulse-draw behavior.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         single_use: bool,
+        /// CR 601.2f: Optional mana-cost raise for spells cast via this permission
+        /// ("Each spell cast this way costs {1} more to cast." — Lightstall Inquisitor).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cast_cost_raise: Option<ManaCost>,
+        /// CR 614.1c: Lands played via this permission enter with this tap state
+        /// ("Each land played this way enters tapped." — Lightstall Inquisitor).
+        /// "enters tapped" is a CR 614.1c "[permanent] enters ..." replacement.
+        #[serde(default, skip_serializing_if = "EtbTapState::is_unspecified")]
+        land_enter_tapped: EtbTapState,
     },
     /// CR 122.3: Cast from exile by paying {E} equal to the card's mana value.
     /// Building block for Amped Raptor and similar energy-based casting mechanics.
@@ -5730,6 +5739,10 @@ pub enum CastVariantPaid {
     /// the "if its spectacle cost was paid" intervening-if (Rafter Demon) and the
     /// "...if its spectacle cost was paid, instead" clause (Rix Maadi Reveler).
     Spectacle,
+    /// CR 702.76a: Prowl alternative cast cost was paid from hand. Read by the
+    /// "if its prowl cost was paid" intervening-if (Latchkey Faerie, Oona's
+    /// Blackguard-style prowl payoffs).
+    Prowl,
 }
 
 /// CR 601.3b + CR 702.8a: A timing permission actually used to cast a spell.

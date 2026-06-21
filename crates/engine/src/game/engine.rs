@@ -1949,6 +1949,17 @@ fn apply_action(
                         &mut events,
                     )?
                 }
+                AlternativeCastKeyword::Prowl => {
+                    casting::handle_prowl_cost_choice_with_payment_mode(
+                        state,
+                        *player,
+                        *object_id,
+                        *card_id,
+                        choice,
+                        *payment_mode,
+                        &mut events,
+                    )?
+                }
                 AlternativeCastKeyword::Overload => {
                     casting::handle_overload_cost_choice_with_payment_mode(
                         state,
@@ -5582,6 +5593,23 @@ fn handle_play_land(
             } = &mut proposed
             {
                 enter_with_counters.extend(intrinsic);
+            }
+        }
+    }
+
+    // CR 614.1c: A land played via a `PlayFromExile` grant that carries
+    // `land_enter_tapped` enters the battlefield tapped (Lightstall Inquisitor:
+    // "Each land played this way enters tapped."). Seed the tap state on the
+    // proposed event so the replacement pipeline applies it like any other
+    // ETB-tapped land. Only the exile-play path can carry this grant field.
+    if in_exile_with_permission {
+        let enters_tapped = state
+            .objects
+            .get(&object_id)
+            .is_some_and(|obj| super::casting::exile_play_land_enters_tapped(obj, player));
+        if enters_tapped {
+            if let Some(slot) = proposed.battlefield_entry_tap_state_mut() {
+                *slot = crate::types::zones::EtbTapState::Tapped;
             }
         }
     }

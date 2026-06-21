@@ -83,7 +83,8 @@ use super::oracle_static::{
     parse_cast_spells_alternative_cost_multi, parse_chosen_creature_type_static_prefix,
     parse_collect_evidence_alt_cost, parse_every_creature_type_static_prefix,
     parse_spells_alternative_cost, parse_static_line, parse_static_line_multi,
-    try_parse_graveyard_keyword_grant_clause, GraveyardGrantedKeywordKind,
+    try_parse_graveyard_keyword_grant_clause, try_parse_graveyard_keyword_grant_static,
+    GraveyardGrantedKeywordKind,
 };
 use super::oracle_trigger::{lower_trigger_ir, parse_trigger_lines_at_index};
 use super::oracle_util::{
@@ -765,7 +766,7 @@ fn try_parse_graveyard_keyword_static_with_continuation(line: &str) -> Option<St
         value(StaticCondition::DuringYourTurn, tag("during your turn, ")).parse(input)
     })
     .map_or((None, prefix), |(condition, rest)| (Some(condition), rest));
-    let (affected, kind) = try_parse_graveyard_keyword_grant_clause(grant_prefix)?;
+    let (affected, kind, _) = try_parse_graveyard_keyword_grant_clause(grant_prefix)?;
     let keyword = parse_graveyard_keyword_continuation(continuation, kind)?;
     if !kind.matches_keyword(&keyword) {
         return None;
@@ -787,6 +788,9 @@ fn try_parse_graveyard_keyword_static_with_continuation(line: &str) -> Option<St
 /// rather than silently dropping the extras.
 fn parse_static_line_with_graveyard_keyword_continuation(line: &str) -> Vec<StaticDefinition> {
     if let Some(def) = try_parse_graveyard_keyword_static_with_continuation(line) {
+        return vec![def];
+    }
+    if let Some(def) = try_parse_graveyard_keyword_grant_static(line) {
         return vec![def];
     }
     parse_static_line_multi(line)
@@ -4476,9 +4480,32 @@ pub(super) fn find_activated_colon(line: &str) -> Option<usize> {
     let colon_pos = find_top_level_colon(line)?;
     let prefix = &line[..colon_pos];
 
+    if cost_prefix_is_activated(prefix) {
+        return Some(colon_pos);
+    }
+
+    // CR 207.2c + CR 602.1: an ability-word label may precede the activation
+    // cost ("Mental Organism — Pay 3 life: ~ connives" — M.O.D.O.K.). Ability
+    // words have no rules meaning, so strip the italic 1–4 word label and re-test
+    // the remaining cost prefix. `split_short_label_prefix` already guards against
+    // matching real cost text (it rejects prefixes containing `{` or `:`), so this
+    // never misclassifies an em-dash that lives inside the cost itself.
+    if let Some(after_word) = strip_ability_word(prefix) {
+        if cost_prefix_is_activated(&after_word) {
+            return Some(colon_pos);
+        }
+    }
+
+    None
+}
+
+/// Whether the text preceding a top-level colon reads as an activation cost
+/// (mana symbols or a cost-starter verb). Shared by `find_activated_colon` so
+/// the bare and ability-word-prefixed paths apply identical cost recognition.
+fn cost_prefix_is_activated(prefix: &str) -> bool {
     // Contains mana symbols
     if prefix.contains('{') {
-        return Some(colon_pos);
+        return true;
     }
 
     // Starts with cost-like words (all ASCII — case-insensitive prefix check)
@@ -4496,11 +4523,7 @@ pub(super) fn find_activated_colon(line: &str) -> Option<usize> {
     ];
     // Only lowercase when needed (skipped entirely if '{' was found above)
     let lower_prefix = trimmed.to_lowercase();
-    if cost_starters.iter().any(|s| lower_prefix.starts_with(s)) {
-        return Some(colon_pos);
-    }
-
-    None
+    cost_starters.iter().any(|s| lower_prefix.starts_with(s))
 }
 
 fn find_top_level_colon(line: &str) -> Option<usize> {
@@ -5260,6 +5283,96 @@ mod tests {
     use super::*;
     use crate::parser::oracle_effect::parse_effect_chain;
     use crate::types::ability::{CountScope, DoorLockOp};
+
+    /// CR 207.2c + CR 602.1: an activated ability may carry an italic ability-word
+    /// label before its cost ("Mental Organism — Pay 3 life: ~ connives" —
+    /// M.O.D.O.K.). The ability word has no rules meaning, so `find_activated_colon`
+    /// must look past it and still classify the line as `[Cost]: [Effect]`.
+    ///
+    /// This is the building-block test for the whole class
+    /// `[ability-word] — [cost]: [effect] [restriction]` — it asserts the cost,
+    /// effect, and restriction all survive the label. The card-specific runtime
+    /// discrimination lives in `tests/connive_trigger_msh_wave1.rs`.
+    ///
+    /// Revert-discriminating: with the ability-word strip removed from
+    /// `find_activated_colon`, this line falls through to `Effect::Unimplemented`
+    /// and `abilities` is empty — every assertion below fails.
+    #[test]
+    fn ability_word_labeled_activated_ability_parses_cost_effect_restriction() {
+        use crate::types::ability::QuantityExpr;
+        let r = parse(
+            "Mental Organism — Pay 3 life: M.O.D.O.K. connives. Activate only during your turn.",
+            "M.O.D.O.K.",
+            &[],
+            &["Creature"],
+            &[],
+        );
+        assert_eq!(
+            r.abilities.len(),
+            1,
+            "ability-word-labeled line must parse to one activated ability, got {:#?}",
+            r.abilities
+        );
+        let def = &r.abilities[0];
+        assert_eq!(def.kind, AbilityKind::Activated);
+        assert!(
+            !has_unimplemented(def),
+            "no residual Unimplemented node, got {:#?}",
+            def.effect
+        );
+        assert_eq!(
+            def.cost,
+            Some(AbilityCost::PayLife {
+                amount: QuantityExpr::Fixed { value: 3 },
+            }),
+            "ability word must be stripped from the cost, leaving Pay 3 life"
+        );
+        assert!(
+            matches!(
+                def.effect.as_ref(),
+                Effect::Connive {
+                    target: TargetFilter::SelfRef,
+                    ..
+                }
+            ),
+            "'~ connives' must lower to a self-targeted Connive, got {:?}",
+            def.effect
+        );
+        assert!(
+            def.activation_restrictions
+                .contains(&ActivationRestriction::DuringYourTurn),
+            "'Activate only during your turn' must yield DuringYourTurn, got {:?}",
+            def.activation_restrictions
+        );
+    }
+
+    /// The static half of M.O.D.O.K. ("Designed Only for Killing — Creatures your
+    /// opponents control get -1/-1") already parses on its own ability-word label;
+    /// this guards that the activated-ability fix above doesn't regress it.
+    #[test]
+    fn modok_static_minus_one_to_opponents_creatures() {
+        use crate::types::statics::StaticMode;
+        let r = parse(
+            "Designed Only for Killing — Creatures your opponents control get -1/-1.",
+            "M.O.D.O.K.",
+            &[],
+            &["Creature"],
+            &[],
+        );
+        assert_eq!(r.statics.len(), 1, "got {:#?}", r.statics);
+        let st = &r.statics[0];
+        assert_eq!(st.mode, StaticMode::Continuous);
+        let Some(TargetFilter::Typed(tf)) = &st.affected else {
+            panic!("expected typed affected filter, got {:?}", st.affected);
+        };
+        assert_eq!(tf.controller, Some(ControllerRef::Opponent));
+        assert!(st
+            .modifications
+            .contains(&ContinuousModification::AddPower { value: -1 }));
+        assert!(st
+            .modifications
+            .contains(&ContinuousModification::AddToughness { value: -1 }));
+    }
 
     /// Issue #69 (Banewhip Punisher): "Destroy target creature that has a -1/-1
     /// counter on it" — the relative-clause counter restriction was dropped, so
@@ -12206,6 +12319,75 @@ mod tests {
         assert!(r.parse_warnings.is_empty());
     }
 
+    /// CR 700.2 + CR 601.2c + CR 404.1: Call Damage Control (MSH) — a modal
+    /// spell whose shared return-to-hand effect is phrased once in the header
+    /// ("Return those cards from your graveyard to your hand.") and whose four
+    /// bullets are bare targets distinguished only by card-type. The shared
+    /// effect must be distributed across every mode so each lowers to an
+    /// `Effect::Bounce` (return to hand) of a card of its type in the
+    /// controller's graveyard — never an unimplemented target marker.
+    /// Revert-probe: if `distribute_shared_mode_effect` is removed, each mode is
+    /// an unimplemented "target" marker and the Bounce match below fails.
+    #[test]
+    fn call_damage_control_distributes_shared_return_effect_across_modes() {
+        use crate::types::ability::{FilterProp, TypeFilter, TypedFilter};
+        let r = parse(
+            "Choose up to two. Return those cards from your graveyard to your hand.\n• Target artifact card.\n• Target creature card.\n• Target enchantment card.\n• Target land card.",
+            "Call Damage Control",
+            &[],
+            &["Sorcery"],
+            &[],
+        );
+        let modal = r.modal.expect("should have modal metadata");
+        assert_eq!(modal.min_choices, 0, "\"up to two\" => min 0");
+        assert_eq!(modal.max_choices, 2);
+        assert_eq!(modal.mode_count, 4);
+
+        let expected_types = [
+            TypeFilter::Artifact,
+            TypeFilter::Creature,
+            TypeFilter::Enchantment,
+            TypeFilter::Land,
+        ];
+        assert_eq!(r.abilities.len(), 4);
+        for (ability, expected) in r.abilities.iter().zip(expected_types) {
+            match ability.effect.as_ref() {
+                Effect::Bounce {
+                    target,
+                    destination,
+                    ..
+                } => {
+                    assert_eq!(
+                        *destination, None,
+                        "no explicit destination => return to hand"
+                    );
+                    match target {
+                        TargetFilter::Typed(TypedFilter {
+                            type_filters,
+                            controller,
+                            properties,
+                        }) => {
+                            assert_eq!(type_filters.as_slice(), &[expected]);
+                            assert_eq!(*controller, Some(ControllerRef::You));
+                            assert!(
+                                properties.iter().any(|p| matches!(
+                                    p,
+                                    FilterProp::InZone {
+                                        zone: Zone::Graveyard
+                                    }
+                                )),
+                                "target must be scoped to your graveyard (CR 404.1), got {properties:?}"
+                            );
+                        }
+                        other => panic!("expected Typed graveyard target, got {other:?}"),
+                    }
+                }
+                other => panic!("each mode must lower to Bounce, got {other:?}"),
+            }
+        }
+        assert!(r.parse_warnings.is_empty());
+    }
+
     #[test]
     fn conditional_modal_max_supports_kicker_condition() {
         let r = parse(
@@ -16707,6 +16889,12 @@ Artifacts you control have \"{T}: Add {U}. Spend this mana only to cast a spell 
                 &["Phyrexian", "Artificer"][..],
                 Keyword::Encore(ManaCost::SelfManaCost),
             ),
+            (
+                "Each Sliver creature card in your graveyard has encore {X}, where X is its mana value.",
+                "Sliver Gravemother",
+                &["Sliver"][..],
+                Keyword::Encore(ManaCost::SelfManaValue),
+            ),
         ] {
             let result = parse(text, name, &[], &["Creature"], subtypes);
             assert_eq!(result.statics.len(), 1, "{name}: {:?}", result.statics);
@@ -20969,6 +21157,8 @@ mod pipeline_snapshot_tests {
                             },
                         card_filter: Some(TargetFilter::Typed(TypedFilter { type_filters, .. })),
                         single_use: true,
+                        cast_cost_raise: None,
+                        land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                         ..
                     },
                 ..
@@ -21009,6 +21199,8 @@ mod pipeline_snapshot_tests {
                     permission: CastingPermission::PlayFromExile {
                         card_filter: None,
                         single_use: false,
+                        cast_cost_raise: None,
+                        land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                         ..
                     },
                     ..

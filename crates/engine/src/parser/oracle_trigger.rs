@@ -2855,11 +2855,20 @@ fn static_condition_to_trigger_condition(sc: &StaticCondition) -> Option<Trigger
             })
         }
 
+        // CR 400.7 + CR 603.4: "if ~ entered this turn" intervening-if bridges to the
+        // trigger-side source-entered check (e.g. Hixus, Prison Warden — "Whenever a
+        // creature deals combat damage to you, if Hixus entered this turn, ..."). Both
+        // sides read GameObject.entered_battlefield_turn (game/conditions.rs
+        // eval_source_entered_this_turn) at trigger fire-time and at the resolution-time
+        // recheck, so the intervening-if is honored rather than silently dropped.
+        StaticCondition::SourceEnteredThisTurn => {
+            Some(TriggerCondition::SourceEnteredThisTurn)
+        }
+
         // Variants with no TriggerCondition equivalent (combat-only / source-state / cost).
-        StaticCondition::SourceEnteredThisTurn
         // CR 702.11b + CR 120.3: "has dealt damage since entering" is a static-only
         // Layer-6 gate with no intervening-if (`TriggerCondition`) equivalent.
-        | StaticCondition::SourceHasDealtDamage
+        StaticCondition::SourceHasDealtDamage
         | StaticCondition::IsRingBearer
         | StaticCondition::RingLevelAtLeast { .. }
         | StaticCondition::DevotionGE { .. }
@@ -4368,6 +4377,7 @@ fn try_extract_cast_variant_paid_condition(
         ("ninjutsu cost was paid", CastVariantPaid::Ninjutsu),
         ("surge cost was paid", CastVariantPaid::Surge), // CR 702.117a
         ("spectacle cost was paid", CastVariantPaid::Spectacle), // CR 702.137a
+        ("prowl cost was paid", CastVariantPaid::Prowl), // CR 702.76a
     ] {
         if scan_contains(lower, keyword) && !scan_contains(lower, "instead") {
             let pos = tp.find("if ").unwrap_or(0);
@@ -5498,8 +5508,42 @@ fn is_new_sentence_not_type_continuation(text: &str) -> bool {
     // Skip the first word (the type word itself) and check remaining words.
     lower.split_whitespace().skip(1).any(|w| {
         let normalized = normalize_verb_token(w);
-        PREDICATE_VERBS.contains(&normalized.as_str())
+        if PREDICATE_VERBS.contains(&normalized.as_str()) {
+            return true;
+        }
+        // CR 608.2c: Negated modal verbs ("can't", "don't", "doesn't", "won't")
+        // indicate a restriction predicate — recognize the base verb before the
+        // negation contraction so "creatures you control can't be the targets ..."
+        // is correctly classified as a new subject-predicate sentence rather than
+        // a type-list continuation.
+        if is_negated_auxiliary_predicate_token(w) {
+            return true;
+        }
+        false
     })
+}
+
+fn is_negated_auxiliary_predicate_token(token: &str) -> bool {
+    let token = token.trim_matches(|c: char| !c.is_alphabetic() && c != '\'');
+    // allow-noncombinator: verb-morphology suffix check on pre-tokenized word
+    let Some(base) = token.strip_suffix("n't") else {
+        return false;
+    };
+    matches!(
+        base,
+        "ca" | "do"
+            | "does"
+            | "did"
+            | "is"
+            | "are"
+            | "was"
+            | "were"
+            | "wo"
+            | "sha"
+            | "have"
+            | "has"
+            | "had"
+    )
 }
 
 fn make_base() -> TriggerDefinition {
@@ -26865,6 +26909,22 @@ mod tests {
         assert!(!continues_player_action_list("you gain 1 life"));
     }
 
+    #[test]
+    fn continues_player_action_list_rejects_negated_auxiliary_effect_sentences() {
+        assert!(!continues_player_action_list(
+            "creatures you control can't be the targets of spells or abilities"
+        ));
+        assert!(!continues_player_action_list(
+            "creatures you control don't untap during their controllers' untap steps"
+        ));
+        assert!(!continues_player_action_list(
+            "creature doesn't untap during its controller's next untap step"
+        ));
+        assert!(!continues_player_action_list("creatures won't untap"));
+        assert!(!continues_player_action_list("creature isn't tapped"));
+        assert!(!continues_player_action_list("creatures aren't attacking"));
+    }
+
     // --- Fix 2: missing event verbs ---
 
     #[test]
@@ -27217,11 +27277,51 @@ mod tests {
 
     #[test]
     fn bridge_unmappable_variants_return_none() {
-        assert!(
-            static_condition_to_trigger_condition(&StaticCondition::SourceEnteredThisTurn)
-                .is_none()
-        );
         assert!(static_condition_to_trigger_condition(&StaticCondition::IsRingBearer).is_none());
+        assert!(
+            static_condition_to_trigger_condition(&StaticCondition::SourceHasDealtDamage).is_none()
+        );
+    }
+
+    #[test]
+    fn bridge_source_entered_this_turn() {
+        // CR 400.7 + CR 603.4: "if ~ entered this turn" intervening-if (Hixus, Prison
+        // Warden) bridges to the trigger-side source-entered check instead of being
+        // silently dropped.
+        assert_eq!(
+            static_condition_to_trigger_condition(&StaticCondition::SourceEnteredThisTurn),
+            Some(TriggerCondition::SourceEnteredThisTurn)
+        );
+    }
+
+    /// Hixus, Prison Warden: "Whenever a creature deals combat damage to you, if Hixus
+    /// entered this turn, exile that creature until Hixus leaves the battlefield." The
+    /// intervening-if "if Hixus entered this turn" must be retained as the trigger
+    /// condition. It was previously dropped to `None` (the static→trigger bridge had no
+    /// arm for `SourceEnteredThisTurn`), so the exile fired on every later turn rather
+    /// than only the turn Hixus flashed in (CR 400.7). The condition is evaluated at
+    /// trigger fire-time and rechecked at resolution (CR 603.4) against
+    /// `GameObject.entered_battlefield_turn`.
+    #[test]
+    fn parse_hixus_keeps_entered_this_turn_intervening_if() {
+        let defs = parse_trigger_lines(
+            "Whenever a creature deals combat damage to you, if Hixus entered this turn, \
+             exile that creature until Hixus leaves the battlefield.",
+            "Hixus, Prison Warden",
+        );
+        let def = defs
+            .iter()
+            .find(|d| d.condition == Some(TriggerCondition::SourceEnteredThisTurn))
+            .unwrap_or_else(|| {
+                panic!(
+                    "expected a trigger with SourceEnteredThisTurn condition, got {:?}",
+                    defs.iter()
+                        .map(|d| (&d.mode, &d.condition))
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(def.mode, TriggerMode::DamageDone);
+        assert_eq!(def.condition, Some(TriggerCondition::SourceEnteredThisTurn));
     }
 
     #[test]
@@ -31424,6 +31524,30 @@ mod tests {
             matches!(exec.effect.as_ref(), Effect::Draw { .. }),
             "end-step trigger draws cards, got {:?}",
             exec.effect
+        );
+    }
+
+    /// CR 702.11a + CR 603.1: "creatures you control can't be the targets of
+    /// spells or abilities your opponents control this turn" — the effect body
+    /// starts with a type word ("creatures") but the negated modal "can't"
+    /// indicates a new subject-predicate sentence, not a type-list continuation.
+    /// Verify the trigger boundary splits correctly and the Hexproof grant parses.
+    #[test]
+    fn trigger_veilstone_amulet_cant_be_targets() {
+        let def = parse_trigger_line(
+            "Whenever you cast a spell, creatures you control can't be the targets of spells or abilities your opponents control this turn.",
+            "Veilstone Amulet",
+        );
+        assert_eq!(def.mode, TriggerMode::SpellCast);
+        let execute = def.execute.as_deref().expect(
+            "Veilstone Amulet trigger execute must not be None — \
+             the boundary splitter should classify 'creatures you control can't ...' \
+             as a new sentence (negated modal 'can't' is a predicate verb)",
+        );
+        assert!(
+            matches!(execute.effect.as_ref(), Effect::GenericEffect { .. }),
+            "expected GenericEffect (hexproof grant), got {:?}",
+            execute.effect
         );
     }
 }
