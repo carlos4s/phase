@@ -22,6 +22,7 @@ use super::mana::{
 use super::phase::Phase;
 use super::player::{PlayerCounterKind, PlayerId};
 use super::replacements::ReplacementEvent;
+use super::stickers::{AppliedSticker, StickerKind};
 use super::statics::{ActivationExemption, CastFrequency, StaticMode};
 use super::triggers::TriggerMode;
 use super::zones::{EtbTapState, Zone};
@@ -9151,6 +9152,29 @@ pub enum Effect {
     },
     /// CR 701.52: Roll to visit your Attractions.
     RollToVisitAttractions,
+    /// CR 123.3: Put one or more stickers you have access to on a target object.
+    PutSticker {
+        #[serde(default = "default_target_filter_any")]
+        target: TargetFilter,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<StickerKind>,
+        #[serde(default = "default_one")]
+        count: u32,
+        #[serde(default)]
+        up_to: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_ticket_cost: Option<QuantityExpr>,
+        #[serde(default)]
+        without_paying: bool,
+    },
+    /// Runtime-selected sticker application branch used by `PutSticker`.
+    ApplySticker {
+        #[serde(default = "default_target_filter_any")]
+        target: TargetFilter,
+        sticker: AppliedSticker,
+        #[serde(default)]
+        pay_ticket: bool,
+    },
     /// CR 728.1: Process rad counters — mill cards equal to rad counter count,
     /// lose 1 life and remove one rad counter per nonland card milled.
     ProcessRadCounters,
@@ -10666,6 +10690,8 @@ impl Effect {
             | Effect::SetLifeTotal { target, .. }
             | Effect::GiveControl { target, .. }
             | Effect::RemoveFromCombat { target, .. }
+            | Effect::PutSticker { target, .. }
+            | Effect::ApplySticker { target, .. }
             | Effect::ProliferateTarget { target, .. }
             // CR 115.7 + CR 115.1: "Change the target of target spell or ability"
             // (Bolt Bend, Redirect, Misdirection) targets the stack spell/ability
@@ -11183,6 +11209,8 @@ impl Effect {
             | Effect::MiracleCast { .. }
             | Effect::OpenAttractions { .. }
             | Effect::PayCost { .. }
+            | Effect::PutSticker { .. }
+            | Effect::ApplySticker { .. }
             | Effect::ProcessRadCounters
             | Effect::ReduceNextSpellCost { .. }
             | Effect::RevealFromHand { .. }
@@ -11396,6 +11424,8 @@ impl Effect {
             | Effect::MiracleCast { .. }
             | Effect::OpenAttractions { .. }
             | Effect::PayCost { .. }
+            | Effect::PutSticker { .. }
+            | Effect::ApplySticker { .. }
             | Effect::ProcessRadCounters
             | Effect::ReduceNextSpellCost { .. }
             | Effect::RevealFromHand { .. }
@@ -11559,6 +11589,8 @@ pub fn effect_variant_name(effect: &Effect) -> &str {
         Effect::Planeswalk => "Planeswalk",
         Effect::OpenAttractions { .. } => "OpenAttractions",
         Effect::RollToVisitAttractions => "RollToVisitAttractions",
+        Effect::PutSticker { .. } => "PutSticker",
+        Effect::ApplySticker { .. } => "ApplySticker",
         Effect::ProcessRadCounters => "ProcessRadCounters",
         Effect::GrantCastingPermission { .. } => "GrantCastingPermission",
         Effect::ChooseFromZone { .. } => "ChooseFromZone",
@@ -11771,6 +11803,8 @@ pub enum EffectKind {
     Planeswalk,
     OpenAttractions,
     RollToVisitAttractions,
+    PutSticker,
+    ApplySticker,
     ProcessRadCounters,
     GrantCastingPermission,
     ChooseFromZone,
@@ -11993,6 +12027,8 @@ impl From<&Effect> for EffectKind {
             Effect::Planeswalk => EffectKind::Planeswalk,
             Effect::OpenAttractions { .. } => EffectKind::OpenAttractions,
             Effect::RollToVisitAttractions => EffectKind::RollToVisitAttractions,
+            Effect::PutSticker { .. } => EffectKind::PutSticker,
+            Effect::ApplySticker { .. } => EffectKind::ApplySticker,
             Effect::ProcessRadCounters => EffectKind::ProcessRadCounters,
             Effect::GrantCastingPermission { .. } => EffectKind::GrantCastingPermission,
             Effect::ChooseFromZone { .. } => EffectKind::ChooseFromZone,

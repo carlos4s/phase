@@ -1442,9 +1442,11 @@ pub fn evaluate_layers(state: &mut GameState) {
     for effect in &ordered_copy {
         apply_continuous_effect(state, effect, &mut abilities_suppressed);
     }
+    crate::game::stickers::apply_battlefield_name_and_ability_stickers(state, &bf_ids);
 
     // Step 3: Gather active continuous effects after layer 1 is applied.
-    let effects_by_layer = gather_active_continuous_effects(state);
+    let mut effects_by_layer = gather_active_continuous_effects(state);
+    crate::game::stickers::append_battlefield_pt_sticker_effects(state, &mut effects_by_layer);
 
     // Step 4: Process each remaining layer in order
     for (layer, layer_bucket) in &effects_by_layer {

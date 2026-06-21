@@ -1010,6 +1010,8 @@ fn walk_effect(effect: &Effect, out: &mut Vec<String>) {
         | Effect::Planeswalk
         | Effect::OpenAttractions { .. }
         | Effect::RollToVisitAttractions
+        | Effect::PutSticker { .. }
+        | Effect::ApplySticker { .. }
         | Effect::ProcessRadCounters
         | Effect::GrantCastingPermission { .. }
         | Effect::ChooseFromZone { .. }

@@ -127,6 +127,75 @@ fn parse_dig_library_owner(rest_lower: &str) -> TargetFilter {
     TargetFilter::Controller
 }
 
+fn try_parse_put_sticker_effect(
+    lower: &str,
+    ctx: &mut ParseContext,
+) -> Option<crate::types::ability::Effect> {
+    let text = lower.trim().trim_end_matches('.');
+
+    if let Some(target_text) = text.strip_prefix("put up to two name stickers on ") {
+        let (target, _) = parse_target_with_ctx(target_text.trim(), ctx);
+        return Some(Effect::PutSticker {
+            target,
+            kind: Some(crate::types::stickers::StickerKind::Name),
+            count: 2,
+            up_to: true,
+            max_ticket_cost: None,
+            without_paying: false,
+        });
+    }
+
+    if let Some(rest) = text.strip_prefix("put an ability sticker with ticket cost ") {
+        let (cost_text, remainder) = split_once_on_lower(rest, rest, " or less on ")?;
+        let target_text = remainder
+            .strip_suffix(" without paying that sticker's ticket cost")
+            .unwrap_or(remainder)
+            .trim();
+        let (target, _) = parse_target_with_ctx(target_text, ctx);
+        return Some(Effect::PutSticker {
+            target,
+            kind: Some(crate::types::stickers::StickerKind::Ability),
+            count: 1,
+            up_to: false,
+            max_ticket_cost: parse_count_expr(cost_text.trim()).map(|(expr, _)| expr),
+            without_paying: text.contains("without paying that sticker's ticket cost"),
+        });
+    }
+
+    for (prefix, kind) in [
+        ("put a power and toughness sticker on ", crate::types::stickers::StickerKind::PowerToughness),
+        ("put a name sticker on ", crate::types::stickers::StickerKind::Name),
+        ("put an art sticker on ", crate::types::stickers::StickerKind::Art),
+        ("put an ability sticker on ", crate::types::stickers::StickerKind::Ability),
+    ] {
+        if let Some(target_text) = text.strip_prefix(prefix) {
+            let (target, _) = parse_target_with_ctx(target_text.trim(), ctx);
+            return Some(Effect::PutSticker {
+                target,
+                kind: Some(kind),
+                count: 1,
+                up_to: false,
+                max_ticket_cost: None,
+                without_paying: false,
+            });
+        }
+    }
+
+    if let Some(target_text) = text.strip_prefix("put a sticker on ") {
+        let (target, _) = parse_target_with_ctx(target_text.trim(), ctx);
+        return Some(Effect::PutSticker {
+            target,
+            kind: None,
+            count: 1,
+            up_to: false,
+            max_ticket_cost: None,
+            without_paying: false,
+        });
+    }
+
+    None
+}
+
 /// Shared ControlNextTurn suffix parser (CR 722.1). Called after a prefix
 /// combinator ("you control " or "gain control of ") has matched; parses the
 /// target, then " during that player's next turn", then the optional extra-turn
@@ -7570,6 +7639,7 @@ pub(super) fn parse_imperative_family_ast(
         {
             try_parse_that_many_counters(lower, ctx)
                 .map(ImperativeFamilyAst::GainKeyword)
+                .or_else(|| try_parse_put_sticker_effect(lower, ctx).map(ImperativeFamilyAst::GainKeyword))
                 .or_else(|| {
                     parse_zone_counter_ast(text, lower, ctx)
                         .map(ImperativeFamilyAst::ZoneCounter)
@@ -7577,9 +7647,13 @@ pub(super) fn parse_imperative_family_ast(
                 })
         }
         // "put" → counter (step 2) first, then zone-change (step 12)
-        "put" => parse_zone_counter_ast(text, lower, ctx)
-            .map(ImperativeFamilyAst::ZoneCounter)
-            .or_else(|| parse_put_ast(text, lower, ctx).map(ImperativeFamilyAst::Put)),
+        "put" => try_parse_put_sticker_effect(lower, ctx)
+            .map(ImperativeFamilyAst::GainKeyword)
+            .or_else(|| {
+                parse_zone_counter_ast(text, lower, ctx)
+                    .map(ImperativeFamilyAst::ZoneCounter)
+                    .or_else(|| parse_put_ast(text, lower, ctx).map(ImperativeFamilyAst::Put))
+            }),
 
         // "remove" → "remove from combat" (CR 506.4) → counter removal (step 2)
         "remove" => parse_remove_from_combat_ast(lower, ctx) // allow-noncombinator: pre-existing match dispatch, only threading ctx through
