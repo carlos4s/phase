@@ -1082,7 +1082,9 @@ fn format_segments(event: &GameEvent, state: &GameState) -> Vec<LogSegment> {
         GameEvent::AttractionOpened { object_id, .. } => {
             vec![text("Opened Attraction "), card_seg(state, *object_id)]
         }
-        GameEvent::StickerPlaced { object_id, kind, .. } => vec![
+        GameEvent::StickerPlaced {
+            object_id, kind, ..
+        } => vec![
             text("Placed "),
             text(&format!("{kind:?}").to_lowercase()),
             text(" sticker on "),

@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -29,46 +30,74 @@ static STACK_BATCHED_ENTRIES: AtomicU64 = AtomicU64::new(0);
 static STACK_INERT_NOOP_BATCHES: AtomicU64 = AtomicU64::new(0);
 static STACK_INERT_NOOP_ENTRIES: AtomicU64 = AtomicU64::new(0);
 
+thread_local! {
+    static THREAD_COUNTERS: Cell<PerfCounterSnapshot> = Cell::new(PerfCounterSnapshot::default());
+}
+
+fn update_thread_counters(f: impl FnOnce(&mut PerfCounterSnapshot)) {
+    THREAD_COUNTERS.with(|counters| {
+        let mut snapshot = counters.get();
+        f(&mut snapshot);
+        counters.set(snapshot);
+    });
+}
+
 pub fn record_state_clone_for_legality() {
     STATE_CLONE_FOR_LEGALITY.fetch_add(1, Ordering::Relaxed);
+    update_thread_counters(|snapshot| snapshot.state_clone_for_legality += 1);
 }
 
 pub fn record_layers_full_eval() {
     LAYERS_FULL_EVAL.fetch_add(1, Ordering::Relaxed);
+    update_thread_counters(|snapshot| snapshot.layers_full_eval += 1);
 }
 
 pub fn record_layers_incremental() {
     LAYERS_INCREMENTAL.fetch_add(1, Ordering::Relaxed);
+    update_thread_counters(|snapshot| snapshot.layers_incremental += 1);
 }
 
 pub fn record_layers_escalated() {
     LAYERS_ESCALATED.fetch_add(1, Ordering::Relaxed);
+    update_thread_counters(|snapshot| snapshot.layers_escalated += 1);
 }
 
 pub fn record_mana_display_sweep(swept_objects: usize) {
     MANA_DISPLAY_SWEEPS.fetch_add(1, Ordering::Relaxed);
     MANA_DISPLAY_SWEPT_OBJECTS.fetch_add(swept_objects as u64, Ordering::Relaxed);
+    update_thread_counters(|snapshot| {
+        snapshot.mana_display_sweeps += 1;
+        snapshot.mana_display_swept_objects += swept_objects as u64;
+    });
 }
 
 pub fn record_stack_batch_candidate() {
     STACK_BATCH_CANDIDATES.fetch_add(1, Ordering::Relaxed);
+    update_thread_counters(|snapshot| snapshot.stack_batch_candidates += 1);
 }
 
 pub fn record_stack_batch_plan() {
     STACK_BATCH_PLANS.fetch_add(1, Ordering::Relaxed);
+    update_thread_counters(|snapshot| snapshot.stack_batch_plans += 1);
 }
 
 pub fn record_stack_batch_observer_refusal() {
     STACK_BATCH_OBSERVER_REFUSALS.fetch_add(1, Ordering::Relaxed);
+    update_thread_counters(|snapshot| snapshot.stack_batch_observer_refusals += 1);
 }
 
 pub fn record_stack_batched_entries(entries: u32) {
     STACK_BATCHED_ENTRIES.fetch_add(u64::from(entries), Ordering::Relaxed);
+    update_thread_counters(|snapshot| snapshot.stack_batched_entries += u64::from(entries));
 }
 
 pub fn record_stack_inert_noop_batch(entries: u32) {
     STACK_INERT_NOOP_BATCHES.fetch_add(1, Ordering::Relaxed);
     STACK_INERT_NOOP_ENTRIES.fetch_add(u64::from(entries), Ordering::Relaxed);
+    update_thread_counters(|snapshot| {
+        snapshot.stack_inert_noop_batches += 1;
+        snapshot.stack_inert_noop_entries += u64::from(entries);
+    });
 }
 
 pub fn snapshot() -> PerfCounterSnapshot {
@@ -88,6 +117,10 @@ pub fn snapshot() -> PerfCounterSnapshot {
     }
 }
 
+pub fn snapshot_current_thread() -> PerfCounterSnapshot {
+    THREAD_COUNTERS.with(|counters| counters.get())
+}
+
 pub fn reset() {
     STATE_CLONE_FOR_LEGALITY.store(0, Ordering::Relaxed);
     LAYERS_FULL_EVAL.store(0, Ordering::Relaxed);
@@ -101,4 +134,8 @@ pub fn reset() {
     STACK_BATCHED_ENTRIES.store(0, Ordering::Relaxed);
     STACK_INERT_NOOP_BATCHES.store(0, Ordering::Relaxed);
     STACK_INERT_NOOP_ENTRIES.store(0, Ordering::Relaxed);
+}
+
+pub fn reset_current_thread() {
+    THREAD_COUNTERS.with(|counters| counters.set(PerfCounterSnapshot::default()));
 }

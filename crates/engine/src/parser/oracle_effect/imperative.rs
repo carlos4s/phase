@@ -163,10 +163,22 @@ fn try_parse_put_sticker_effect(
     }
 
     for (prefix, kind) in [
-        ("put a power and toughness sticker on ", crate::types::stickers::StickerKind::PowerToughness),
-        ("put a name sticker on ", crate::types::stickers::StickerKind::Name),
-        ("put an art sticker on ", crate::types::stickers::StickerKind::Art),
-        ("put an ability sticker on ", crate::types::stickers::StickerKind::Ability),
+        (
+            "put a power and toughness sticker on ",
+            crate::types::stickers::StickerKind::PowerToughness,
+        ),
+        (
+            "put a name sticker on ",
+            crate::types::stickers::StickerKind::Name,
+        ),
+        (
+            "put an art sticker on ",
+            crate::types::stickers::StickerKind::Art,
+        ),
+        (
+            "put an ability sticker on ",
+            crate::types::stickers::StickerKind::Ability,
+        ),
     ] {
         if let Some(target_text) = text.strip_prefix(prefix) {
             let (target, _) = parse_target_with_ctx(target_text.trim(), ctx);

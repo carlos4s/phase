@@ -521,7 +521,11 @@ pub fn load_deck_into_state(state: &mut GameState, payload: &DeckPayload) {
     for (i, ai_deck) in payload.ai_decks.iter().enumerate() {
         load_player_attraction_deck(state, &ai_deck.attraction_deck, PlayerId((2 + i) as u8));
     }
-    crate::game::stickers::set_player_sticker_sheets(state, PlayerId(0), &payload.player.sticker_sheets);
+    crate::game::stickers::set_player_sticker_sheets(
+        state,
+        PlayerId(0),
+        &payload.player.sticker_sheets,
+    );
     crate::game::stickers::set_player_sticker_sheets(
         state,
         PlayerId(1),

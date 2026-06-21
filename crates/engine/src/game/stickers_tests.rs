@@ -1,7 +1,9 @@
 use crate::game::effects;
 use crate::game::layers::evaluate_layers;
 use crate::game::scenario::{GameScenario, P0};
-use crate::game::stickers::{apply_selected_sticker, available_sticker_candidates, set_player_sticker_sheets};
+use crate::game::stickers::{
+    apply_selected_sticker, available_sticker_candidates, set_player_sticker_sheets,
+};
 use crate::game::zones::move_to_zone;
 use crate::types::ability::{Effect, QuantityExpr, ResolvedAbility, TargetFilter};
 use crate::types::events::GameEvent;
@@ -50,30 +52,46 @@ fn stickers_modify_battlefield_object_and_public_zone_retention() {
         })
         .expect("flying sticker available");
 
-    let pt = available_sticker_candidates(
-        state,
-        P0,
-        Some(StickerKind::PowerToughness),
-        Some(5),
-        false,
-    )
-    .into_iter()
-    .find(|candidate| {
-        matches!(
-            &candidate.sticker,
-            AppliedSticker::PowerToughness {
-                power: 8,
-                toughness: 6,
-                ..
-            }
-        )
-    })
-    .expect("8/6 sticker available");
+    let pt =
+        available_sticker_candidates(state, P0, Some(StickerKind::PowerToughness), Some(5), false)
+            .into_iter()
+            .find(|candidate| {
+                matches!(
+                    &candidate.sticker,
+                    AppliedSticker::PowerToughness {
+                        power: 8,
+                        toughness: 6,
+                        ..
+                    }
+                )
+            })
+            .expect("8/6 sticker available");
 
     let mut events = Vec::new();
-    apply_selected_sticker(state, creature_id, name.sticker, name.pay_ticket, &mut events);
-    apply_selected_sticker(state, creature_id, flying.sticker, flying.pay_ticket, &mut events);
-    apply_selected_sticker(state, creature_id, pt.sticker, pt.pay_ticket, &mut events);
+    apply_selected_sticker(
+        state,
+        P0,
+        creature_id,
+        name.sticker,
+        name.pay_ticket,
+        &mut events,
+    );
+    apply_selected_sticker(
+        state,
+        P0,
+        creature_id,
+        flying.sticker,
+        flying.pay_ticket,
+        &mut events,
+    );
+    apply_selected_sticker(
+        state,
+        P0,
+        creature_id,
+        pt.sticker,
+        pt.pay_ticket,
+        &mut events,
+    );
     evaluate_layers(state);
 
     let creature = state.objects.get(&creature_id).unwrap();

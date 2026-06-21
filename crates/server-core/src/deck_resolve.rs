@@ -77,6 +77,7 @@ pub fn resolve_deck(db: &CardDatabase, deck: &DeckData) -> Result<PlayerDeckPayl
         commander,
         attraction_deck,
         signature_spell,
+        sticker_sheets: Vec::new(),
         bracket_tier: deck.bracket_tier,
     })
 }

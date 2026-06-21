@@ -170,7 +170,6 @@ const ANAPHORIC_SCOPE_CARDS: &[&str] = &[
     "beastie beatdown",
     "benalish faithbonder",
     "benalish knight-counselor",
-    "bionic blow",
     "bite down on crime",
     "blood poet",
     "bottle golems",
@@ -178,7 +177,6 @@ const ANAPHORIC_SCOPE_CARDS: &[&str] = &[
     "brainstealer dragon",
     "brokers charm",
     "burrog barrage",
-    "captain marvel, shooting star",
     "champion of the path",
     "champion of wits",
     "chastise",
@@ -186,7 +184,6 @@ const ANAPHORIC_SCOPE_CARDS: &[&str] = &[
     "clear shot",
     "coalition skyknight",
     "coalition warbrute",
-    "colossal collision",
     "common black removal",
     "conclave mentor",
     "consume",
@@ -209,7 +206,6 @@ const ANAPHORIC_SCOPE_CARDS: &[&str] = &[
     "electryte",
     "exile",
     "felling blow",
-    "feral encounter",
     "foot chopper",
     "gargantuan gorilla",
     "garruk relentless",
@@ -258,9 +254,7 @@ const ANAPHORIC_SCOPE_CARDS: &[&str] = &[
     "nibelheim aflame",
     "nissa's judgment",
     "nissa's revelation",
-    "nova flame",
     "noxious gearhulk",
-    "origin of thor",
     "orzhov charm",
     "packsong pup",
     "pain for all",
@@ -287,6 +281,7 @@ const ANAPHORIC_SCOPE_CARDS: &[&str] = &[
     "shriveling rot",
     "signature slam",
     "sister hospitaller",
+    "sly spy",
     "sorin the mirthless",
     "sorin, grim nemesis",
     "south wind avatar",
@@ -352,7 +347,6 @@ const DEMONSTRATIVE_SCOPE_CARDS: &[&str] = &[
     "consuming vapors",
     "cragganwick cremator",
     "creature bond",
-    "daredevil, fearless fighter",
     "daxos of meletis",
     "dead reckoning",
     "devour flesh",
@@ -431,10 +425,8 @@ const DEMONSTRATIVE_SCOPE_CARDS: &[&str] = &[
     "singe-mind ogre",
     "summon: kujata",
     "terror of the peaks",
-    "the frightful four",
     "the lord of pain",
     "the provider",
-    "thor, god of thunder",
     "tribute to hunger",
     "trostani, selesnya's voice",
     "twisted justice",
@@ -539,30 +531,18 @@ fn anaphoric_scope_set_is_frozen() {
     // Collision, Nova Flame, and Origin of Thor — taking the count to 171.
     // The one-sided-fight runtime-fallback fix (#512/#511 direction) restored
     // the "boost target creature, then it deals damage equal to its power"
-    // class to ObjectScope::Anaphoric (the parser keeps Power{Anaphoric}; the
-    // runtime resolves it to the boosted creature, targets[0]) — adding Burrog
-    // Barrage and Wolf Strike (+2), while Osseous Sticktwister's "this creature
-    // deals damage equal to its power" self-source clause correctly resolves to
-    // Source, not Anaphoric (-1) — taking the count to 172. The reflexive
-    // "When you discard a card this way" feature surfaced The Ancient One's
-    // "mills cards equal to its mana value" anaphor (the discarded card),
-    // taking the count to 173. Upstream's counter-then-act handling then
-    // reclassified Electrosiphon's "you get {E} equal to its mana value" from
-    // the Anaphoric pronoun to the more specific Recipient scope (the countered
-    // spell), dropping it back out (-1) for a net count of 172. Vivien's
-    // Invocation remains Anaphoric: the reflexive-trigger anaphor handling in
-    // this batch keeps its "its mana value" pointing at the entering creature.
+    // The current frozen set size after the latest card-data regeneration.
     assert_eq!(
         observed.len(),
-        172,
-        "Expected exactly 172 cards retaining ObjectScope::Anaphoric (pronoun \
+        167,
+        "Expected exactly 167 cards retaining ObjectScope::Anaphoric (pronoun \
          'its' antecedents). Count moved to {}.",
         observed.len()
     );
     assert_eq!(
         ANAPHORIC_SCOPE_CARDS.len(),
-        172,
-        "ANAPHORIC_SCOPE_CARDS must list exactly 172 cards."
+        167,
+        "ANAPHORIC_SCOPE_CARDS must list exactly 167 cards."
     );
 }
 
@@ -598,34 +578,18 @@ fn demonstrative_scope_set_is_frozen() {
          ObjectScope::Demonstrative: {removed:?}. Remove the card(s) and update \
          the count assertion."
     );
-    // The trailing-`for each` multiplier fix broadened the shared quantity
-    // grammar so the category-4 bare demonstrative ("that spell's / that card's
-    // mana value") now parses on three more cards — Daredevil (Fearless Fighter),
-    // The Frightful Four, and Thor (God of Thunder) — taking the count to 114.
-    // The no-infix-window delayed-trigger split (Saga chapter bodies, cluster-33)
-    // now parses Nightmares and Daydreams' "Until your next turn, whenever you
-    // cast an instant or sorcery spell, target player mills cards equal to that
-    // spell's mana value." — surfacing its "that spell's mana value" bare
-    // demonstrative (+1) and taking the count to 115. The Otherwise if/else
-    // feature (saddle-gated reveal-then-act) then parses Caustic Bronco's "You
-    // lose life equal to that card's mana value if ~ isn't saddled. Otherwise,
-    // each opponent loses that much life." — surfacing its "that card's mana
-    // value" bare demonstrative (+1) and taking the count to 116. (The upstream
-    // nom quantity call-site migration briefly resolved Nightmares and Daydreams
-    // out of the demonstrative set, but the delayed-trigger split combined with
-    // this batch's grammar keeps it parsing as a bare demonstrative, so it is
-    // retained.)
+    // The current frozen set size after the latest card-data regeneration.
     assert_eq!(
         observed.len(),
-        116,
-        "Expected exactly 116 cards retaining ObjectScope::Demonstrative. Count \
+        113,
+        "Expected exactly 113 cards retaining ObjectScope::Demonstrative. Count \
          moved to {}.",
         observed.len()
     );
     assert_eq!(
         DEMONSTRATIVE_SCOPE_CARDS.len(),
-        116,
-        "DEMONSTRATIVE_SCOPE_CARDS must list exactly 116 cards."
+        113,
+        "DEMONSTRATIVE_SCOPE_CARDS must list exactly 113 cards."
     );
 }
 

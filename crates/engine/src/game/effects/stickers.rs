@@ -4,8 +4,8 @@ use crate::game::stickers::{
     StickerCandidate,
 };
 use crate::types::ability::{
-    AbilityDefinition, AbilityKind, Effect, EffectError, EffectKind, QuantityExpr,
-    ResolvedAbility, TargetFilter,
+    AbilityDefinition, AbilityKind, Effect, EffectError, EffectKind, QuantityExpr, ResolvedAbility,
+    TargetFilter,
 };
 use crate::types::events::GameEvent;
 use crate::types::game_state::GameState;
@@ -27,12 +27,14 @@ pub fn resolve(
         } => resolve_put_sticker(
             state,
             ability,
-            target,
-            *kind,
-            *count,
-            *up_to,
-            max_ticket_cost.as_ref(),
-            *without_paying,
+            PutStickerRequest {
+                target,
+                kind: *kind,
+                count: *count,
+                up_to: *up_to,
+                max_ticket_cost: max_ticket_cost.as_ref(),
+                without_paying: *without_paying,
+            },
             events,
         ),
         Effect::ApplySticker {
@@ -48,7 +50,14 @@ pub fn resolve(
                 });
                 return Ok(());
             };
-            apply_selected_sticker(state, target_id, sticker.clone(), *pay_ticket, events);
+            apply_selected_sticker(
+                state,
+                ability.controller,
+                target_id,
+                sticker.clone(),
+                *pay_ticket,
+                events,
+            );
             events.push(GameEvent::EffectResolved {
                 kind: EffectKind::ApplySticker,
                 source_id: ability.source_id,
@@ -59,27 +68,31 @@ pub fn resolve(
     }
 }
 
-fn resolve_put_sticker(
-    state: &mut GameState,
-    ability: &ResolvedAbility,
-    target: &TargetFilter,
+struct PutStickerRequest<'a> {
+    target: &'a TargetFilter,
     kind: Option<StickerKind>,
     count: u32,
     up_to: bool,
-    max_ticket_cost: Option<&QuantityExpr>,
+    max_ticket_cost: Option<&'a QuantityExpr>,
     without_paying: bool,
+}
+
+fn resolve_put_sticker(
+    state: &mut GameState,
+    ability: &ResolvedAbility,
+    request: PutStickerRequest<'_>,
     events: &mut Vec<GameEvent>,
 ) -> Result<(), EffectError> {
-    if count > 1 {
-        if up_to {
+    if request.count > 1 {
+        if request.up_to {
             prompt_count_choice(
                 state,
                 ability,
-                target,
-                kind,
-                count,
-                max_ticket_cost,
-                without_paying,
+                request.target,
+                request.kind,
+                request.count,
+                request.max_ticket_cost,
+                request.without_paying,
             );
             events.push(GameEvent::EffectResolved {
                 kind: EffectKind::PutSticker,
@@ -89,11 +102,11 @@ fn resolve_put_sticker(
         }
 
         let chain = repeated_single_put_definition(
-            target.clone(),
-            kind,
-            count,
-            max_ticket_cost.cloned(),
-            without_paying,
+            request.target.clone(),
+            request.kind,
+            request.count,
+            request.max_ticket_cost.cloned(),
+            request.without_paying,
         );
         let mut resolved = crate::game::ability_utils::build_resolved_from_def(
             &chain,
@@ -107,7 +120,7 @@ fn resolve_put_sticker(
         return super::resolve_ability_chain(state, &resolved, events, 1);
     }
 
-    let targets = super::effect_object_targets(target, &ability.targets);
+    let targets = super::effect_object_targets(request.target, &ability.targets);
     let Some(target_id) = targets.first().copied() else {
         events.push(GameEvent::EffectResolved {
             kind: EffectKind::PutSticker,
@@ -119,14 +132,15 @@ fn resolve_put_sticker(
     let Some(target_obj) = state.objects.get(&target_id) else {
         return Ok(());
     };
-    let max_ticket_cost = max_ticket_cost
+    let max_ticket_cost = request
+        .max_ticket_cost
         .map(|expr| resolve_quantity_with_targets(state, expr, ability).max(0) as u32);
     let candidates = available_sticker_candidates(
         state,
-        target_obj.owner,
-        kind,
+        ability.controller,
+        request.kind,
         max_ticket_cost,
-        without_paying,
+        request.without_paying,
     );
 
     let expanded = expand_candidates_for_target(target_obj, candidates);
@@ -140,7 +154,14 @@ fn resolve_put_sticker(
 
     if expanded.len() == 1 {
         let chosen = expanded.into_iter().next().unwrap();
-        apply_selected_sticker(state, target_id, chosen.sticker, chosen.pay_ticket, events);
+        apply_selected_sticker(
+            state,
+            ability.controller,
+            target_id,
+            chosen.sticker,
+            chosen.pay_ticket,
+            events,
+        );
         events.push(GameEvent::EffectResolved {
             kind: EffectKind::PutSticker,
             source_id: ability.source_id,

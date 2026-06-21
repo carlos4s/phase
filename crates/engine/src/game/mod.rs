@@ -105,9 +105,6 @@ pub mod planechase;
 #[cfg(test)]
 #[path = "planechase_tests.rs"]
 mod planechase_tests;
-#[cfg(test)]
-#[path = "stickers_tests.rs"]
-mod stickers_tests;
 pub mod planeswalker;
 pub mod players;
 pub mod printed_cards;
@@ -130,6 +127,9 @@ pub mod stack;
 pub mod static_abilities;
 pub mod static_source_index;
 pub mod stickers;
+#[cfg(test)]
+#[path = "stickers_tests.rs"]
+mod stickers_tests;
 pub mod targeting;
 pub mod token_presets;
 pub mod transform;

@@ -22,8 +22,8 @@ use super::mana::{
 use super::phase::Phase;
 use super::player::{PlayerCounterKind, PlayerId};
 use super::replacements::ReplacementEvent;
-use super::stickers::{AppliedSticker, StickerKind};
 use super::statics::{ActivationExemption, CastFrequency, StaticMode};
+use super::stickers::{AppliedSticker, StickerKind};
 use super::triggers::TriggerMode;
 use super::zones::{EtbTapState, Zone};
 use crate::game::game_object::DisplaySource;

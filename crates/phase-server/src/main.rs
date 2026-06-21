@@ -2438,6 +2438,7 @@ impl DeckResolver for ServerDeckResolver<'_> {
             commander: deck.commander,
             attraction_deck: deck.attraction_deck,
             signature_spell: deck.signature_spell,
+            sticker_sheets: Vec::new(),
             bracket_tier: deck.bracket_tier,
         })
     }

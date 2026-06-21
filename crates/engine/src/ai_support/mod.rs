@@ -3000,9 +3000,9 @@ mod tests {
             },
         };
 
-        crate::game::perf_counters::reset();
+        crate::game::perf_counters::reset_current_thread();
         let (actions, spell_costs, grouped) = legal_actions_full(&state);
-        let clones = crate::game::perf_counters::snapshot().state_clone_for_legality;
+        let clones = crate::game::perf_counters::snapshot_current_thread().state_clone_for_legality;
 
         assert_eq!(clones, 0);
         assert_eq!(actions.len(), 26);
@@ -3041,11 +3041,11 @@ mod tests {
             },
         };
 
-        crate::game::perf_counters::reset();
+        crate::game::perf_counters::reset_current_thread();
         let (actions, _spell_costs, _grouped) = legal_actions_full(&state);
 
         assert_eq!(
-            crate::game::perf_counters::snapshot().state_clone_for_legality,
+            crate::game::perf_counters::snapshot_current_thread().state_clone_for_legality,
             0
         );
         assert_eq!(actions, vec![GameAction::ChooseTarget { target: None }]);
@@ -3123,7 +3123,7 @@ mod tests {
             convoke_mode: Some(ConvokeMode::Delve),
         };
 
-        crate::game::perf_counters::reset();
+        crate::game::perf_counters::reset_current_thread();
         let candidates = validated_candidate_actions(&state);
         let delve_taps = candidates
             .iter()
@@ -3133,7 +3133,7 @@ mod tests {
             delve_taps >= 25,
             "expected delve tap candidates for each graveyard card, got {delve_taps}"
         );
-        let clones = crate::game::perf_counters::snapshot().state_clone_for_legality;
+        let clones = crate::game::perf_counters::snapshot_current_thread().state_clone_for_legality;
         assert!(
             clones < 5,
             "delve validation should not clone state per graveyard card (got {clones} clones)"

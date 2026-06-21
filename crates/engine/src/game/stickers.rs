@@ -103,24 +103,27 @@ pub fn object_has_sticker_kind(obj: &GameObject, kind: StickerKind) -> bool {
 
 pub fn rebuild_public_zone_stickers(obj: &mut GameObject) {
     obj.revert_layered_characteristics_to_base();
-    apply_name_stickers(obj);
+    apply_name_stickers_from_base(obj);
     apply_ability_stickers(obj);
     apply_power_toughness_stickers(obj);
 }
 
-pub fn apply_battlefield_name_and_ability_stickers(state: &mut GameState, battlefield: &[ObjectId]) {
+pub fn apply_battlefield_name_and_ability_stickers(
+    state: &mut GameState,
+    battlefield: &[ObjectId],
+) {
     for &id in battlefield {
         let Some(obj) = state.objects.get_mut(&id) else {
             continue;
         };
-        apply_name_stickers(obj);
+        apply_name_stickers_from_current(obj);
         apply_ability_stickers(obj);
     }
 }
 
 pub fn append_battlefield_pt_sticker_effects(
     state: &GameState,
-    effects: &mut Vec<(Layer, Vec<ActiveContinuousEffect>)>,
+    effects: &mut [(Layer, Vec<ActiveContinuousEffect>)],
 ) {
     let Some((_, bucket)) = effects.iter_mut().find(|(layer, _)| *layer == Layer::SetPT) else {
         return;
@@ -266,7 +269,11 @@ pub fn available_sticker_candidates(
                     timestamp: 0,
                 },
                 pay_ticket: !without_paying && ability.cost > 0,
-                description: format!("Ability — {} ({})", ability.text, ticket_cost_label(ability.cost)),
+                description: format!(
+                    "Ability — {} ({})",
+                    ability.text,
+                    ticket_cost_label(ability.cost)
+                ),
             });
         }
 
@@ -339,12 +346,13 @@ pub fn name_sticker_position_choices(
 
 pub fn apply_selected_sticker(
     state: &mut GameState,
+    player: PlayerId,
     target_id: ObjectId,
     mut sticker: AppliedSticker,
     pay_ticket: bool,
     events: &mut Vec<GameEvent>,
 ) {
-    let Some(owner) = state.objects.get(&target_id).map(|obj| obj.owner) else {
+    let Some(_) = state.objects.get(&target_id) else {
         return;
     };
 
@@ -355,21 +363,29 @@ pub fn apply_selected_sticker(
     };
 
     if pay_ticket {
-        let Some(player) = state.players.iter_mut().find(|p| p.id == owner) else {
+        let Some(player_entry) = state.players.iter_mut().find(|p| p.id == player) else {
             return;
         };
-        if player.player_counter(&PlayerCounterKind::Ticket) < ticket_cost {
+        if player_entry.player_counter(&PlayerCounterKind::Ticket) < ticket_cost {
             return;
         }
-        player.remove_player_counters(&PlayerCounterKind::Ticket, ticket_cost);
+        player_entry.remove_player_counters(&PlayerCounterKind::Ticket, ticket_cost);
     }
 
     let timestamp = state.next_timestamp();
     match &mut sticker {
-        AppliedSticker::Name { timestamp: slot, .. }
-        | AppliedSticker::Ability { timestamp: slot, .. }
-        | AppliedSticker::PowerToughness { timestamp: slot, .. }
-        | AppliedSticker::Art { timestamp: slot, .. } => *slot = timestamp,
+        AppliedSticker::Name {
+            timestamp: slot, ..
+        }
+        | AppliedSticker::Ability {
+            timestamp: slot, ..
+        }
+        | AppliedSticker::PowerToughness {
+            timestamp: slot, ..
+        }
+        | AppliedSticker::Art {
+            timestamp: slot, ..
+        } => *slot = timestamp,
     }
 
     let Some(obj) = state.objects.get_mut(&target_id) else {
@@ -384,7 +400,7 @@ pub fn apply_selected_sticker(
     }
 
     events.push(GameEvent::StickerPlaced {
-        player_id: owner,
+        player_id: player,
         object_id: target_id,
         kind: sticker.kind(),
     });
@@ -406,11 +422,21 @@ fn current_name_words(obj: &GameObject) -> Vec<String> {
     obj.name.split_whitespace().map(str::to_string).collect()
 }
 
-fn apply_name_stickers(obj: &mut GameObject) {
-    let mut words: Vec<String> = if obj.base_name.trim().is_empty() {
+fn apply_name_stickers_from_current(obj: &mut GameObject) {
+    let source_name = obj.name.clone();
+    apply_name_stickers(obj, &source_name);
+}
+
+fn apply_name_stickers_from_base(obj: &mut GameObject) {
+    let source_name = obj.base_name.clone();
+    apply_name_stickers(obj, &source_name);
+}
+
+fn apply_name_stickers(obj: &mut GameObject, source_name: &str) {
+    let mut words: Vec<String> = if source_name.trim().is_empty() {
         Vec::new()
     } else {
-        obj.base_name.split_whitespace().map(str::to_string).collect()
+        source_name.split_whitespace().map(str::to_string).collect()
     };
 
     for sticker in &obj.stickers {
@@ -426,7 +452,7 @@ fn apply_name_stickers(obj: &mut GameObject) {
 
     obj.name = words.join(" ");
     if obj.name.is_empty() {
-        obj.name = obj.base_name.clone();
+        obj.name = source_name.to_string();
     }
 }
 
