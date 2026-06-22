@@ -892,7 +892,9 @@ fn keys_from_effect_kind(kind: EffectKind, push: &mut impl FnMut(TriggerEventKey
         | EffectKind::ExchangeLifeTotals
         // Heist/HeistExile have no production EffectResolved-dispatching matcher.
         | EffectKind::Heist
-        | EffectKind::HeistExile => {}
+        | EffectKind::HeistExile
+        | EffectKind::CombineHost
+        | EffectKind::ChooseAugmentAndCombineWithHost => {}
     }
 }
 

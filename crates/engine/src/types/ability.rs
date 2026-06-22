@@ -5979,6 +5979,17 @@ pub enum RuntimeHandler {
     NinjutsuFamily,
 }
 
+/// Which object a Host/Augment combine effect should merge onto a Host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CombineSource {
+    /// The resolving ability's source object.
+    Source,
+    /// The first inherited object target in the current resolution chain.
+    ParentTarget,
+    /// Runtime continuation payload: a previously chosen specific object.
+    SpecificObject { id: ObjectId },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BeholdCostAction {
     ChooseOrReveal,
@@ -8399,6 +8410,19 @@ pub enum Effect {
     /// target (opponents and per-opponent attack binding are chosen by the
     /// effect, like `Myriad`).
     Encore,
+    /// Unstable Augment / Host combine primitive: merge a known card with
+    /// augment onto a Host creature.
+    CombineHost {
+        source: CombineSource,
+        host: Box<TargetFilter>,
+    },
+    /// Unstable Host-support helper: choose a card with augment from the listed
+    /// zones, then combine it with a Host creature.
+    ChooseAugmentAndCombineWithHost {
+        zones: Vec<Zone>,
+        filter: Box<TargetFilter>,
+        host: Box<TargetFilter>,
+    },
     /// CR 701.42a / CR 712.4a: Meld — exile both the real meld instigator
     /// (`source`) and a battlefield object named `partner` that the controller
     /// both owns and controls, then put a single melded permanent onto the
@@ -11032,6 +11056,9 @@ impl Effect {
             // on the stack, so it must be surfaced for the target-slot path.
             | Effect::ExileHaunting { target } => Some(target),
 
+            Effect::CombineHost { host, .. }
+            | Effect::ChooseAugmentAndCombineWithHost { host, .. } => Some(host.as_ref()),
+
             // CR 702.75a: Hideaway conceal acts on the just-exiled card inherited
             // from the parent `Dig` continuation (`ParentTarget`); it is never
             // announced as a target, but surfacing the filter keeps chain-time
@@ -11560,6 +11587,8 @@ impl Effect {
             | Effect::Unimplemented { .. }
             | Effect::VentureInto { .. }
             | Effect::VentureIntoDungeon
+            | Effect::CombineHost { .. }
+            | Effect::ChooseAugmentAndCombineWithHost { .. }
             | Effect::WinTheGame { .. } => None,
         }
     }
@@ -11778,6 +11807,8 @@ impl Effect {
             | Effect::Unimplemented { .. }
             | Effect::VentureInto { .. }
             | Effect::VentureIntoDungeon
+            | Effect::CombineHost { .. }
+            | Effect::ChooseAugmentAndCombineWithHost { .. }
             | Effect::WinTheGame { .. } => None,
         }
     }
@@ -11855,6 +11886,8 @@ pub fn effect_variant_name(effect: &Effect) -> &str {
         Effect::CreateTokenCopyFromPool { .. } => "CreateTokenCopyFromPool",
         Effect::Myriad => "Myriad",
         Effect::Encore => "Encore",
+        Effect::CombineHost { .. } => "CombineHost",
+        Effect::ChooseAugmentAndCombineWithHost { .. } => "ChooseAugmentAndCombineWithHost",
         Effect::Meld { .. } => "Meld",
         Effect::ExileHaunting { .. } => "ExileHaunting",
         Effect::HideawayConceal { .. } => "HideawayConceal",
@@ -12073,6 +12106,8 @@ pub enum EffectKind {
     CreateTokenCopyFromPool,
     Myriad,
     Encore,
+    CombineHost,
+    ChooseAugmentAndCombineWithHost,
     Meld,
     ExileHaunting,
     HideawayConceal,
@@ -12294,6 +12329,10 @@ impl From<&Effect> for EffectKind {
             Effect::CreateTokenCopyFromPool { .. } => EffectKind::CreateTokenCopyFromPool,
             Effect::Myriad => EffectKind::Myriad,
             Effect::Encore => EffectKind::Encore,
+            Effect::CombineHost { .. } => EffectKind::CombineHost,
+            Effect::ChooseAugmentAndCombineWithHost { .. } => {
+                EffectKind::ChooseAugmentAndCombineWithHost
+            }
             Effect::Meld { .. } => EffectKind::Meld,
             Effect::ExileHaunting { .. } => EffectKind::ExileHaunting,
             Effect::HideawayConceal { .. } => EffectKind::HideawayConceal,
@@ -12646,6 +12685,8 @@ pub enum AbilityTag {
     PowerUp,
     /// CR 702.6a: This ability originated from an Equip keyword definition.
     Equip,
+    /// Unstable Augment hand-activated combine ability.
+    Augment,
 }
 
 impl AbilityTag {
@@ -12663,6 +12704,7 @@ impl AbilityTag {
             AbilityTag::Backup => "backup",
             AbilityTag::PowerUp => "power-up",
             AbilityTag::Equip => "equip",
+            AbilityTag::Augment => "augment",
         }
     }
 }
@@ -13529,6 +13571,11 @@ impl AbilityDefinition {
 
     pub fn optional_targeting(mut self) -> Self {
         self.optional_targeting = true;
+        self
+    }
+
+    pub fn with_else_ability(mut self, ability: AbilityDefinition) -> Self {
+        self.else_ability = Some(Box::new(ability));
         self
     }
 
