@@ -241,6 +241,7 @@ function normalizeParsedDeck(
   const normalized: ParsedDeck = {
     main: deduplicateEntries(normalizeEntries(deck.main)),
     sideboard: deduplicateEntries(normalizeEntries(deck.sideboard)),
+    sticker_sheets: deck.sticker_sheets ? [...deck.sticker_sheets] : undefined,
   };
 
   if (deck.commander?.length) {
