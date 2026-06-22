@@ -110,6 +110,15 @@ fn stickers_modify_battlefield_object_and_public_zone_retention() {
     assert!(graveyard_creature.has_keyword(&Keyword::Flying));
     assert_eq!(graveyard_creature.stickers.len(), 3);
 
+    move_to_zone(state, creature_id, Zone::Battlefield, &mut events);
+    let returned_creature = state.objects.get(&creature_id).unwrap();
+    assert_eq!(returned_creature.zone, Zone::Battlefield);
+    assert_eq!(returned_creature.name, "Bear Hot Dog");
+    assert_eq!(returned_creature.power, Some(8));
+    assert_eq!(returned_creature.toughness, Some(6));
+    assert!(returned_creature.has_keyword(&Keyword::Flying));
+    assert_eq!(returned_creature.stickers.len(), 3);
+
     move_to_zone(state, creature_id, Zone::Hand, &mut events);
     let hand_creature = state.objects.get(&creature_id).unwrap();
     assert_eq!(hand_creature.zone, Zone::Hand);

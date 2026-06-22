@@ -111,14 +111,20 @@ pub fn rebuild_public_zone_stickers(obj: &mut GameObject) {
 pub fn apply_battlefield_name_and_ability_stickers(
     state: &mut GameState,
     battlefield: &[ObjectId],
-) {
+) -> bool {
+    let mut has_ability_sticker = false;
     for &id in battlefield {
         let Some(obj) = state.objects.get_mut(&id) else {
             continue;
         };
+        has_ability_sticker |= obj
+            .stickers
+            .iter()
+            .any(|sticker| matches!(sticker, AppliedSticker::Ability { .. }));
         apply_name_stickers_from_current(obj);
         apply_ability_stickers(obj);
     }
+    has_ability_sticker
 }
 
 pub fn append_battlefield_pt_sticker_effects(
