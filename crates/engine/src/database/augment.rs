@@ -10,8 +10,8 @@ use crate::types::card_type::Supertype;
 use crate::types::keywords::{Keyword, KeywordKind};
 use crate::types::mana::ManaCost;
 use crate::types::triggers::TriggerMode;
-use crate::types::zones::Zone;
 use crate::types::zones::EtbTapState;
+use crate::types::zones::Zone;
 
 pub fn synthesize_augment(face: &mut CardFace) {
     let oracle = face.oracle_text.clone().unwrap_or_default();
@@ -72,7 +72,7 @@ fn synthesize_augment_half(face: &mut CardFace, oracle: &str) {
                 .as_deref()
                 .is_some_and(|description| description.trim_end().ends_with(':'));
         if is_prefix_placeholder {
-            ability.effect = Box::new(Effect::NoOp);
+            *ability.effect = Effect::NoOp;
         }
     }
 
@@ -105,10 +105,10 @@ fn synthesize_augment_half(face: &mut CardFace, oracle: &str) {
             if ability.description.as_deref()
                 == Some("{4}{B}: Combine this card from your graveyard with target host.")
             {
-                ability.effect = Box::new(Effect::CombineHost {
+                *ability.effect = Effect::CombineHost {
                     source: CombineSource::Source,
                     host: Box::new(host_filter()),
-                });
+                };
                 ability.activation_zone = Some(Zone::Graveyard);
             }
         }
@@ -116,7 +116,11 @@ fn synthesize_augment_half(face: &mut CardFace, oracle: &str) {
 }
 
 fn rewrite_teachers_pet(face: &mut CardFace) {
-    let Some(cost) = face.abilities.first().and_then(|ability| ability.cost.clone()) else {
+    let Some(cost) = face
+        .abilities
+        .first()
+        .and_then(|ability| ability.cost.clone())
+    else {
         return;
     };
     face.abilities.clear();

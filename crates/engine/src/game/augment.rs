@@ -6,8 +6,8 @@ use crate::game::merge::{install_merge_layer_effect, remove_merge_layer_effect};
 use crate::game::printed_cards::intrinsic_copiable_values;
 use crate::game::targeting::resolved_object_ids_for_filter;
 use crate::types::ability::{
-    AbilityDefinition, AbilityKind, CombineSource, CopiableValues, Effect, EffectError,
-    EffectKind, ResolvedAbility, TargetFilter, TargetRef, TriggerDefinition,
+    AbilityDefinition, AbilityKind, CombineSource, CopiableValues, Effect, EffectError, EffectKind,
+    ResolvedAbility, TargetFilter, TargetRef, TriggerDefinition,
 };
 use crate::types::card::{PrintedCardRef, TokenImageRef};
 use crate::types::card_type::{CardType, Supertype};
@@ -101,9 +101,11 @@ pub fn resolve_choose_augment_and_combine(
     events: &mut Vec<GameEvent>,
 ) -> Result<(), EffectError> {
     let (zones_to_search, filter, host_filter) = match &ability.effect {
-        Effect::ChooseAugmentAndCombineWithHost { zones, filter, host } => {
-            (zones.clone(), filter.as_ref(), host.as_ref())
-        }
+        Effect::ChooseAugmentAndCombineWithHost {
+            zones,
+            filter,
+            host,
+        } => (zones.clone(), filter.as_ref(), host.as_ref()),
         _ => {
             return Err(EffectError::MissingParam(
                 "ChooseAugmentAndCombineWithHost".to_string(),
@@ -167,7 +169,9 @@ pub(crate) fn check_standalone_augment_permanents(
         .copied()
         .filter(|id| {
             state.objects.get(id).is_some_and(|obj| {
-                obj.keywords.iter().any(|keyword| matches!(keyword, Keyword::Augment))
+                obj.keywords
+                    .iter()
+                    .any(|keyword| matches!(keyword, Keyword::Augment))
                     && obj.merged_components.is_empty()
             })
         })
@@ -200,7 +204,12 @@ fn freeze_unique_host_filter(
     host_filter: &TargetFilter,
 ) -> Option<TargetFilter> {
     let mut hosts = resolved_object_ids_for_filter(state, ability, host_filter);
-    hosts.retain(|id| state.objects.get(id).is_some_and(|obj| obj.zone == Zone::Battlefield));
+    hosts.retain(|id| {
+        state
+            .objects
+            .get(id)
+            .is_some_and(|obj| obj.zone == Zone::Battlefield)
+    });
     hosts.sort_by_key(|id| id.0);
     hosts.dedup();
     match hosts.as_slice() {
@@ -228,14 +237,20 @@ fn resolve_candidates(
                 .iter()
                 .copied()
                 .collect(),
-            Zone::Hand => state.players[player.0 as usize].hand.iter().copied().collect(),
+            Zone::Hand => state.players[player.0 as usize]
+                .hand
+                .iter()
+                .copied()
+                .collect(),
             Zone::Battlefield => state.battlefield.iter().copied().collect(),
             Zone::Exile => state.exile.iter().copied().collect(),
             _ => Vec::new(),
         };
         for id in ids {
-            let ctx =
-                crate::game::filter::FilterContext::from_source_with_controller(ObjectId(0), player);
+            let ctx = crate::game::filter::FilterContext::from_source_with_controller(
+                ObjectId(0),
+                player,
+            );
             if crate::game::filter::matches_target_filter(state, id, filter, &ctx)
                 && !candidates.contains(&id)
             {
@@ -262,15 +277,24 @@ fn combine_card_with_host(
         augment.zone = Zone::Battlefield;
     }
 
-    remove_merge_layer_effect(state, host_id);
     let Some((values, display_source, printed_ref, token_image_ref)) =
         merged_copiable_values(state, augment_id, host_id)
     else {
         return;
     };
+    remove_merge_layer_effect(state, host_id);
 
     if let Some(host) = state.objects.get_mut(&host_id) {
-        host.merged_components = vec![augment_id, host_id];
+        let existing = std::mem::take(&mut host.merged_components);
+        let mut ordered = if existing.is_empty() {
+            vec![host_id]
+        } else {
+            existing
+        };
+        if !ordered.contains(&augment_id) {
+            ordered.push(augment_id);
+        }
+        host.merged_components = ordered;
         host.merge_kind = Some(MergeKind::Augment);
         if host.pre_merge_is_token.is_none() {
             host.pre_merge_is_token = Some(host.is_token);
@@ -286,9 +310,9 @@ fn combine_card_with_host(
         printed_ref,
         token_image_ref,
     );
-    events.push(GameEvent::Mutated {
+    events.push(GameEvent::Augmented {
         merged_id: host_id,
-        merging_id: augment_id,
+        augmenting_id: augment_id,
         controller,
     });
 }
@@ -297,20 +321,27 @@ fn merged_copiable_values(
     state: &GameState,
     augment_id: ObjectId,
     host_id: ObjectId,
-) -> Option<(CopiableValues, DisplaySource, Option<PrintedCardRef>, Option<TokenImageRef>)> {
+) -> Option<(
+    CopiableValues,
+    DisplaySource,
+    Option<PrintedCardRef>,
+    Option<TokenImageRef>,
+)> {
     let augment = state.objects.get(&augment_id)?;
     let host = state.objects.get(&host_id)?;
     let host_values = crate::game::layers::compute_current_copiable_values(state, host_id)
         .unwrap_or_else(|| intrinsic_copiable_values(host));
 
-    let mut card_types = host.base_card_types.clone();
+    let mut card_types = host_values.card_types.clone();
     merge_card_types(&mut card_types, &augment.base_card_types);
-    card_types.supertypes.retain(|supertype| *supertype != Supertype::Host);
+    card_types
+        .supertypes
+        .retain(|supertype| *supertype != Supertype::Host);
 
-    let mut color = host.base_color.clone();
+    let mut color = host_values.color.clone();
     push_unique_colors(&mut color, &augment.base_color);
 
-    let mut keywords = host.base_keywords.clone();
+    let mut keywords = host_values.keywords.clone();
     for keyword in &augment.base_keywords {
         if matches!(keyword, Keyword::Augment) {
             continue;
@@ -320,15 +351,14 @@ fn merged_copiable_values(
         }
     }
 
-    let (abilities, triggers, statics, replacements) =
-        merged_ability_sets(augment, host);
+    let (abilities, triggers, statics, replacements) = merged_ability_sets(augment, &host_values);
     let values = CopiableValues {
-        name: combine_name(&augment.base_name, &host.base_name),
+        name: combine_name(&augment.base_name, &host_values.name),
         mana_cost: host_values.mana_cost,
         color,
         card_types,
-        power: Some(host.base_power.unwrap_or(0) + augment.base_power.unwrap_or(0)),
-        toughness: Some(host.base_toughness.unwrap_or(0) + augment.base_toughness.unwrap_or(0)),
+        power: Some(host_values.power.unwrap_or(0) + augment.base_power.unwrap_or(0)),
+        toughness: Some(host_values.toughness.unwrap_or(0) + augment.base_toughness.unwrap_or(0)),
         loyalty: host_values.loyalty,
         keywords,
         abilities: Arc::new(abilities),
@@ -340,26 +370,28 @@ fn merged_copiable_values(
     Some((
         values,
         host.display_source,
-        host.base_printed_ref.clone().or_else(|| host.printed_ref.clone()),
+        host.printed_ref.clone(),
         host.token_image_ref.clone(),
     ))
 }
 
 fn merged_ability_sets(
     augment: &crate::game::game_object::GameObject,
-    host: &crate::game::game_object::GameObject,
+    host_values: &CopiableValues,
 ) -> (
     Vec<AbilityDefinition>,
     Vec<TriggerDefinition>,
     Vec<crate::types::ability::StaticDefinition>,
     Vec<crate::types::ability::ReplacementDefinition>,
 ) {
-    let host_body = host
-        .base_trigger_definitions
+    let host_body = host_values
+        .trigger_definitions
         .iter()
         .find(|trigger| {
-            matches!(trigger.mode, crate::types::triggers::TriggerMode::ChangesZone)
-                && trigger.destination == Some(Zone::Battlefield)
+            matches!(
+                trigger.mode,
+                crate::types::triggers::TriggerMode::ChangesZone
+            ) && trigger.destination == Some(Zone::Battlefield)
                 && trigger.valid_card == Some(TargetFilter::SelfRef)
         })
         .and_then(|trigger| trigger.execute.as_deref().cloned());

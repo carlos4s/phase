@@ -172,6 +172,8 @@ fn categorize(event: &GameEvent) -> LogCategory {
         | GameEvent::Saddled { .. }
         // CR 702.140c + CR 730.2: a mutating creature spell merged with a permanent.
         | GameEvent::Mutated { .. }
+        // Unstable Host/Augment: a card with augment combined with a Host creature.
+        | GameEvent::Augmented { .. }
         | GameEvent::BecomesPlotted { .. } => LogCategory::State,
 
         GameEvent::SpeedChanged { .. } => LogCategory::Special,
@@ -702,6 +704,16 @@ fn format_segments(event: &GameEvent, state: &GameState) -> Vec<LogSegment> {
         } => vec![
             card_seg(state, *merging_id),
             text(" mutates onto "),
+            card_seg(state, *merged_id),
+        ],
+
+        GameEvent::Augmented {
+            merged_id,
+            augmenting_id,
+            ..
+        } => vec![
+            card_seg(state, *augmenting_id),
+            text(" augments "),
             card_seg(state, *merged_id),
         ],
 

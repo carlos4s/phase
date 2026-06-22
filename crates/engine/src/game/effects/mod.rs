@@ -2676,7 +2676,9 @@ pub fn resolve_effect(
         Effect::Myriad => myriad::resolve(state, ability, events),
         Effect::ExileHaunting { .. } => crate::game::haunt::resolve(state, ability, events),
         Effect::Encore => encore::resolve(state, ability, events),
-        Effect::CombineHost { .. } => crate::game::augment::resolve_combine_host(state, ability, events),
+        Effect::CombineHost { .. } => {
+            crate::game::augment::resolve_combine_host(state, ability, events)
+        }
         Effect::ChooseAugmentAndCombineWithHost { .. } => {
             crate::game::augment::resolve_choose_augment_and_combine(state, ability, events)
         }

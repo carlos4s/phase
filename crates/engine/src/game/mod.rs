@@ -1,7 +1,7 @@
 pub mod ability_utils;
-pub mod augment;
 pub mod arithmetic;
 pub mod attractions;
+pub mod augment;
 pub mod bending;
 pub mod blitz;
 // Tests for `blitz` live in a sibling file (declared here, not in `blitz.rs`,
