@@ -23,7 +23,8 @@ use crate::parser::oracle_nom::bridge::{nom_on_lower, nom_parse_lower, split_onc
 use crate::parser::oracle_nom::primitives as nom_primitives;
 use crate::parser::oracle_nom::quantity as nom_quantity;
 use crate::parser::oracle_static::{
-    parse_continuous_modifications, parse_quoted_ability_modifications,
+    parse_continuous_modifications, parse_may_look_at_face_down_filter,
+    parse_quoted_ability_modifications,
 };
 use crate::types::ability::{
     AbilityCost, AbilityDefinition, AbilityKind, BounceSelection, CardSelectionMode,
@@ -2046,6 +2047,7 @@ pub(super) fn lower_targeted_action_ast(ast: TargetedImperativeAst) -> Effect {
                 resolution_cleanup: None,
                 duration: None,
                 exile_instead_of_graveyard_on_resolve: false,
+                enters_with_counter: None,
             },
             target,
             grantee: crate::types::ability::PermissionGrantee::ObjectOwner,
@@ -2062,9 +2064,13 @@ pub(super) fn lower_targeted_action_ast(ast: TargetedImperativeAst) -> Effect {
 /// ```text
 /// "search " <possessive>
 ///     ("graveyard, hand, and library" | <permutation>)
-///     " for " ("any number of cards" | "all cards" | "a card")
+///     " for " "all cards"
 ///     " with that name and exile them"
 /// ```
+///
+/// Only the mandatory "all cards" quantifier is lowered here. "Any number of
+/// cards" / "a card" variants require an interactive search choice and must
+/// not auto-exile every match (Surgical Extraction, Crumble to Dust).
 ///
 /// Returns `Some(owner)` on match — the lowering step constructs the
 /// `Effect::ChangeZoneAll` directly (multi-zone origin + filter + destination
@@ -2099,14 +2105,9 @@ pub(super) fn try_parse_multi_zone_same_name_exile(lower: &str) -> Option<Contro
             tag("library, graveyard, and hand"),
         ))
         .parse(input)?;
-        // for [any number of] cards with that name and exile them
+        // for all cards with that name and exile them
         let (input, _) = tag::<_, _, OracleError<'_>>(" for ").parse(input)?;
-        let (input, _) = alt((
-            value((), tag::<_, _, OracleError<'_>>("any number of cards")),
-            value((), tag("all cards")),
-            value((), tag("a card")),
-        ))
-        .parse(input)?;
+        let (input, _) = tag::<_, _, OracleError<'_>>("all cards").parse(input)?;
         // Match the trailing same-name suffix. The name source is either a
         // previously-named card ("with that name", Lost Legacy / Deadly Cover-Up)
         // or the spell's exiled/countered target referenced by its card type
@@ -3857,18 +3858,34 @@ pub(super) fn parse_utility_imperative_ast(
                     let rem = &rest[rest.len() - rem_lower.len()..];
                     (target, rem)
                 } else {
-                    // CR 707.10 + CR 608.2k: thread ctx so "copy it" routes the
-                    // "it" pronoun through resolve_it_pronoun → TriggeringSource
-                    // (the triggering spell), matching "copy that spell".
-                    // Precondition (resolve_it_pronoun, oracle_effect/mod.rs:165):
-                    // this yields TriggeringSource ONLY for trigger subjects that
-                    // are non-SelfRef / non-Any (Taigam's subject is Controller —
-                    // the "you" arm — so it qualifies). For SelfRef/Any subjects
-                    // "it" stays SelfRef/ParentTarget and the CopySpell runtime
-                    // fallback (triggering_spell_stack_entry, copy_spell.rs)
-                    // keeps them working — behavior-neutral-or-better, never a
-                    // regression for non-Taigam "copy it" cards.
-                    parse_target_with_ctx(rest, ctx)
+                    // CR 707.10 + CR 701.6a: multi-way stack-object disjunctions
+                    // ("instant spell, sorcery spell, activated ability, or
+                    // triggered ability") must use `parse_stack_object_target`,
+                    // same as the Counter path — bare `parse_target` only keeps
+                    // the first spell type (Return the Favor, issue #3996).
+                    let stack_phrase = opt(tag::<_, _, OracleError<'_>>("target "))
+                        .parse(rest_lower)
+                        .map(|(after, _)| after)
+                        .unwrap_or(rest_lower);
+                    if let Ok((rem_lower, stack_target)) =
+                        crate::parser::oracle_nom::target::parse_stack_object_target(stack_phrase)
+                    {
+                        let rem = &rest[rest.len() - rem_lower.len()..];
+                        (stack_target, rem)
+                    } else {
+                        // CR 707.10 + CR 608.2k: thread ctx so "copy it" routes the
+                        // "it" pronoun through resolve_it_pronoun → TriggeringSource
+                        // (the triggering spell), matching "copy that spell".
+                        // Precondition (resolve_it_pronoun, oracle_effect/mod.rs:165):
+                        // this yields TriggeringSource ONLY for trigger subjects that
+                        // are non-SelfRef / non-Any (Taigam's subject is Controller —
+                        // the "you" arm — so it qualifies). For SelfRef/Any subjects
+                        // "it" stays SelfRef/ParentTarget and the CopySpell runtime
+                        // fallback (triggering_spell_stack_entry, copy_spell.rs)
+                        // keeps them working — behavior-neutral-or-better, never a
+                        // regression for non-Taigam "copy it" cards.
+                        parse_target_with_ctx(rest, ctx)
+                    }
                 };
                 let retarget = if super::sequence::recognize_copy_retarget_clause(_rem.trim()) {
                     // CR 707.10c: "copy that spell and may choose new targets for the
@@ -6907,10 +6924,19 @@ pub(super) fn parse_imperative_family_ast(
     if nom_primitives::scan_contains(lower, "additional combat phase") {
         let with_main =
             nom_primitives::scan_contains(lower, "followed by an additional main phase");
+        // CR 500.8 (Full Throttle): "After this main phase, there are N additional
+        // combat phases" anchors to whichever main phase the spell resolves in.
+        // `PreCombatMain` is a resolution-time sentinel remapped in
+        // `effects/additional_phase.rs` when the active phase is a main phase.
+        let after = if nom_primitives::scan_contains(lower, "after this main phase") {
+            Phase::PreCombatMain
+        } else {
+            Phase::EndCombat
+        };
         return Some(ImperativeFamilyAst::GainKeyword(Effect::AdditionalPhase {
             target: TargetFilter::Controller,
             phase: Phase::BeginCombat,
-            after: Phase::EndCombat,
+            after,
             followed_by: if with_main {
                 vec![Phase::PostCombatMain]
             } else {
@@ -6988,6 +7014,32 @@ pub(super) fn parse_imperative_family_ast(
     if let Some(effect) = crate::parser::oracle_replacement::parse_oneshot_damage_replacement(lower)
     {
         return Some(ImperativeFamilyAst::GainKeyword(effect));
+    }
+
+    // CR 708.5: "[Until end of turn,] you may look at face-down [permanents] you
+    // don't control any time" (Lumbering Laundry's `{2}:` activated ability).
+    // This is the duration-bound form of Found Footage's continuous look
+    // permission: the same `StaticMode::MayLookAtFaceDown` carried by a resolving
+    // ability as a transient continuous effect. The "you may" here is part of the
+    // permission grammar ("you ARE allowed to look"), not an optional one-shot, so
+    // intercept the whole phrase BEFORE the `you`/`may` first-word arms strip
+    // "you may " and re-dispatch it as a generic optional clause (which would
+    // otherwise fail to a `look` Unimplemented). The face-down filter is parsed by
+    // the shared `parse_may_look_at_face_down_filter` (the single authority for
+    // the phrase grammar, also used by the static-line builder), and the duration
+    // rides on the resolving ability via the stripped "Until end of turn," prefix;
+    // the `GenericEffect` resolution path defaults to `UntilEndOfTurn` when no
+    // duration is supplied.
+    if let Some(filter) = parse_may_look_at_face_down_filter(text, lower) {
+        return Some(ImperativeFamilyAst::GainKeyword(Effect::GenericEffect {
+            static_abilities: vec![StaticDefinition::new(StaticMode::MayLookAtFaceDown)
+                .affected(filter)
+                .modifications(vec![ContinuousModification::AddStaticMode {
+                    mode: StaticMode::MayLookAtFaceDown,
+                }])],
+            duration: None,
+            target: None,
+        }));
     }
 
     if nom_on_lower(first_word, first_word, |i| value((), tag("put")).parse(i)).is_some() {
@@ -12475,6 +12527,31 @@ mod tests {
     }
 
     #[test]
+    fn parse_additional_phase_after_this_main_phase_anchors_to_main() {
+        let text = "After this main phase, there are two additional combat phases.";
+        let lower = text.to_lowercase();
+        let result = parse_imperative_family_ast(text, &lower, &mut ParseContext::default());
+        assert!(
+            result.is_some(),
+            "Should parse main-phase-anchored additional combats"
+        );
+        let effect = lower_imperative_family_effect(result.unwrap());
+        assert!(
+            matches!(
+                effect,
+                Effect::AdditionalPhase {
+                    phase: Phase::BeginCombat,
+                    after: Phase::PreCombatMain,
+                    ref followed_by,
+                    count: QuantityExpr::Fixed { value: 2 },
+                    ..
+                } if followed_by.is_empty()
+            ),
+            "Expected AdditionalPhase anchored to main phase with count 2, got {effect:?}"
+        );
+    }
+
+    #[test]
     fn parse_additional_phase_phase() {
         let text = "there is an additional combat phase after this phase";
         let lower = text.to_lowercase();
@@ -13998,41 +14075,18 @@ mod tests {
     }
 
     /// CR 400.7 + CR 701.23: Multi-zone same-name exile combinator covers
-    /// the whole sibling class (Deadly Cover-Up, Lost Legacy, Cranial
-    /// Extraction, Memoricide, Surgical Extraction). Both "with that name"
-    /// and "with the same name as that card" forms are accepted.
+    /// the mandatory "all cards" sibling class (Eradicate, Quash, Counterbore).
+    /// Both "with that name" and "with the same name as that card" forms are
+    /// accepted. "Any number of cards" / "a card" quantifiers are rejected here.
     #[test]
     fn parse_multi_zone_same_name_exile_pattern() {
         let positives = [
-            (
-                "search its owner's graveyard, hand, and library for any number of cards with that name and exile them",
-                ControllerRef::ParentTargetOwner,
-            ),
-            (
-                "search target player's graveyard, hand, and library for any number of cards with that name and exile them",
-                ControllerRef::TargetPlayer,
-            ),
             (
                 "search target player's graveyard, hand, and library for all cards with that name and exile them",
                 ControllerRef::TargetPlayer,
             ),
             (
-                "search its owner's graveyard, hand, and library for any number of cards with the same name as that card and exile them",
-                ControllerRef::ParentTargetOwner,
-            ),
-            (
-                "search their graveyard, hand, and library for a card with that name and exile them",
-                ControllerRef::TargetPlayer,
-            ),
-            // CR 201.2a: "its controller's" possessive + card-type name source —
-            // Eradicate ("that creature"), Crumble to Dust ("that land"),
-            // Counterbore ("that spell"), Deicide ("its controller's … that card").
-            (
                 "search its controller's graveyard, hand, and library for all cards with the same name as that creature and exile them",
-                ControllerRef::ParentTargetController,
-            ),
-            (
-                "search its controller's graveyard, hand, and library for any number of cards with the same name as that land and exile them",
                 ControllerRef::ParentTargetController,
             ),
             (
@@ -14040,8 +14094,8 @@ mod tests {
                 ControllerRef::ParentTargetController,
             ),
             (
-                "search its controller's graveyard, hand, and library for any number of cards with the same name as that card and exile them",
-                ControllerRef::ParentTargetController,
+                "search its owner's graveyard, hand, and library for all cards with the same name as that card and exile them",
+                ControllerRef::ParentTargetOwner,
             ),
         ];
         for (text, owner) in positives {
@@ -14053,6 +14107,12 @@ mod tests {
         }
 
         let negatives = [
+            // Interactive-quantity variants — not auto-exile.
+            "search its owner's graveyard, hand, and library for any number of cards with that name and exile them",
+            "search target player's graveyard, hand, and library for any number of cards with that name and exile them",
+            "search its owner's graveyard, hand, and library for any number of cards with the same name as that card and exile them",
+            "search their graveyard, hand, and library for a card with that name and exile them",
+            "search its controller's graveyard, hand, and library for any number of cards with the same name as that land and exile them",
             // Library-only — handled by the regular SearchLibrary branch.
             "search your library for a card",
             // Two-zone permutation we don't recognize (deliberate scope cut).
@@ -14104,10 +14164,64 @@ mod tests {
         );
     }
 
+    /// Issue #3996 — Return the Favor copy mode must accept instants, sorceries,
+    /// and stack abilities, not only the first spell type.
+    #[test]
+    fn copy_four_way_stack_object_disjunction_parses_or_filter() {
+        use crate::types::ability::TypeFilter;
+        use crate::types::ability::{CopyRetargetPermission, Effect, TargetFilter};
+
+        let def = super::super::parse_effect_chain(
+            "Copy target instant spell, sorcery spell, activated ability, or triggered ability. \
+             You may choose new targets for the copy.",
+            AbilityKind::Spell,
+        );
+        let Effect::CopySpell {
+            target, retarget, ..
+        } = &*def.effect
+        else {
+            panic!("expected CopySpell, got {:?}", def.effect);
+        };
+        let TargetFilter::Or { filters } = target else {
+            panic!("expected Or stack-object filter, got {target:?}");
+        };
+        assert!(
+            filters.iter().any(|f| {
+                matches!(
+                    f,
+                    TargetFilter::Typed(tf)
+                        if tf.type_filters == [TypeFilter::Instant]
+                )
+            }),
+            "missing instant spell leg: {filters:?}"
+        );
+        assert!(
+            filters.iter().any(|f| {
+                matches!(
+                    f,
+                    TargetFilter::Typed(tf)
+                        if tf.type_filters == [TypeFilter::Sorcery]
+                )
+            }),
+            "missing sorcery spell leg: {filters:?}"
+        );
+        assert!(
+            filters
+                .iter()
+                .any(|f| matches!(f, TargetFilter::StackAbility { .. })),
+            "missing stack ability leg: {filters:?}"
+        );
+        assert_eq!(
+            *retarget,
+            CopyRetargetPermission::MayChooseNewTargets,
+            "retarget clause must parse"
+        );
+    }
+
     #[test]
     fn parse_search_creation_lowering_emits_change_zone_all_with_same_name_as_parent_target() {
         use crate::types::ability::FilterProp;
-        let text = "search its owner's graveyard, hand, and library for any number of cards with that name and exile them";
+        let text = "search its owner's graveyard, hand, and library for all cards with that name and exile them";
         let ast = parse_search_and_creation_ast(text, text, &mut ParseContext::default())
             .expect("multi-zone same-name exile must parse");
         let effect = lower_search_and_creation_ast(ast);
@@ -14144,6 +14258,13 @@ mod tests {
             }
             other => panic!("Expected ChangeZoneAll, got {other:?}"),
         }
+
+        let any_number = "search its owner's graveyard, hand, and library for any number of cards with that name and exile them";
+        assert!(
+            parse_search_and_creation_ast(any_number, any_number, &mut ParseContext::default())
+                .is_none(),
+            "any-number multi-zone same-name exile must not auto-lower"
+        );
     }
 
     /// CR 113.3 + CR 604.1: `gain "<quoted ability>"` in a sub_ability context

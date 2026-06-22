@@ -1069,6 +1069,16 @@ fn has_later_sentence_if(lower: &str) -> bool {
     })
 }
 
+/// True when a resolution-time optional cast names a player-chosen target that
+/// must be announced when the triggered ability is put on the stack (CR 603.3d).
+fn trigger_effect_requires_stack_time_targets(ability: &AbilityDefinition) -> bool {
+    matches!(ability.effect.as_ref(), Effect::CastFromZone { .. })
+        && ability
+            .effect
+            .target_filter()
+            .is_some_and(|filter| !filter.is_context_ref())
+}
+
 /// Lowering: assemble a `TriggerDefinition` from a `TriggerIr`.
 ///
 /// Applies all post-extraction transforms: condition composition, target-player
@@ -1124,6 +1134,19 @@ pub(crate) fn lower_trigger_ir(ir: &TriggerIr) -> TriggerDefinition {
 
     def.execute = execute;
     def.optional = modifiers.optional;
+    // CR 603.3d + CR 608.2c: "you may cast target … from [public zone]"
+    // (Torrential Gearhulk / Toshiro / Emet-Selch class) — the leading "you
+    // may" is resolution-time optionality on the cast (`execute.optional`), not
+    // permission to skip putting the triggered ability on the stack. Target
+    // selection happens when the ability is put on the stack (CR 603.3d).
+    if def.optional
+        && def
+            .execute
+            .as_ref()
+            .is_some_and(|ability| trigger_effect_requires_stack_time_targets(ability))
+    {
+        def.optional = false;
+    }
     def.unless_pay = modifiers.unless_pay.clone();
 
     // CR 603.4: Compose intervening-if with existing condition via And.
@@ -1131,6 +1154,23 @@ pub(crate) fn lower_trigger_ir(ir: &TriggerIr) -> TriggerDefinition {
         Some(if_cond) => Some(and_trigger_conditions(def.condition.take(), if_cond)),
         None => def.condition.take(),
     };
+
+    // CR 601.2h + CR 400.7d: On a spell-cast-family trigger, an intervening-if
+    // anaphor "mana spent to cast it"/"...this spell" denotes the *triggering
+    // spell*, not the ability's source permanent. The bare anaphor parses to
+    // `CastManaObjectScope::SelfObject` (correct for ETB / resolving-spell
+    // contexts where the object the spell *is* equals the source), so when the
+    // hoisted condition lands on a spell-cast trigger the `SelfObject` snapshot
+    // would read the source's payment-time mana (normally 0) and wrongly block
+    // the trigger. Remap to `TriggeringSpell` so the threshold evaluates the
+    // cast spell that fired the trigger (The Emperor of Palamecia, #1490). The
+    // comparison-form `extract_if_condition` path already emits `TriggeringSpell`
+    // for "cast it"; this converges the threshold-form path with it.
+    if is_spell_cast_trigger_mode(&def.mode) {
+        if let Some(cond) = def.condition.as_mut() {
+            remap_self_cast_scope_to_triggering_spell(cond);
+        }
+    }
 
     // CR 121.1 + CR 603.4: "draw cards equal to the difference" inside a
     // trigger body (Kozilek the Great Distortion, Damia Sage of Stone, Krang
@@ -2651,6 +2691,76 @@ fn substitute_another_in_expr(expr: &QuantityExpr) -> QuantityExpr {
 ///
 /// Exhaustive on purpose — when you add a `StaticCondition` variant, decide
 /// here whether it bridges (CLAUDE.md: bridges must be kept exhaustive).
+/// CR 601.2i: Trigger modes whose triggering object is a *spell* (or a spell
+/// copy / spell-or-ability cast). For these, a "mana spent to cast it" anaphor
+/// in an intervening-if refers to that triggering spell rather than the ability
+/// source. See `remap_self_cast_scope_to_triggering_spell`.
+fn is_spell_cast_trigger_mode(mode: &TriggerMode) -> bool {
+    matches!(
+        mode,
+        TriggerMode::SpellCast
+            | TriggerMode::SpellCopy
+            | TriggerMode::SpellCastOrCopy
+            | TriggerMode::SpellAbilityCast
+            | TriggerMode::SpellAbilityCopy
+    )
+}
+
+/// CR 400.7d + CR 601.2h: Within a spell-cast trigger's intervening-if, remap
+/// every `QuantityRef::ManaSpentToCast { scope: SelfObject }` to
+/// `TriggeringSpell`. The condition parser cannot see the trigger mode, so the
+/// bare "it"/"this spell" anaphor lands as `SelfObject`; only here, where the
+/// owning trigger's mode is known, can it be resolved to the triggering spell.
+/// Recurses through the compound (`And`/`Or`/`Not`) and arithmetic wrappers so
+/// the remap reaches a `ManaSpentToCast` ref wherever it is nested.
+fn remap_self_cast_scope_to_triggering_spell(cond: &mut TriggerCondition) {
+    match cond {
+        TriggerCondition::QuantityComparison { lhs, rhs, .. } => {
+            remap_self_cast_scope_in_quantity(lhs);
+            remap_self_cast_scope_in_quantity(rhs);
+        }
+        TriggerCondition::And { conditions } | TriggerCondition::Or { conditions } => {
+            conditions
+                .iter_mut()
+                .for_each(remap_self_cast_scope_to_triggering_spell);
+        }
+        TriggerCondition::Not { condition } => remap_self_cast_scope_to_triggering_spell(condition),
+        // All other variants are leaves that cannot carry a `ManaSpentToCast`
+        // quantity ref — nothing to remap.
+        _ => {}
+    }
+}
+
+/// Recursive `QuantityExpr` companion of
+/// `remap_self_cast_scope_to_triggering_spell`. Exhaustive over `QuantityExpr`
+/// so a new arithmetic wrapper forces a compile error here rather than silently
+/// skipping a nested `ManaSpentToCast` ref.
+fn remap_self_cast_scope_in_quantity(expr: &mut QuantityExpr) {
+    match expr {
+        QuantityExpr::Ref {
+            qty:
+                QuantityRef::ManaSpentToCast {
+                    scope: scope @ CastManaObjectScope::SelfObject,
+                    ..
+                },
+        } => *scope = CastManaObjectScope::TriggeringSpell,
+        QuantityExpr::Ref { .. } | QuantityExpr::Fixed { .. } => {}
+        QuantityExpr::DivideRounded { inner, .. }
+        | QuantityExpr::Offset { inner, .. }
+        | QuantityExpr::ClampMin { inner, .. }
+        | QuantityExpr::Multiply { inner, .. } => remap_self_cast_scope_in_quantity(inner),
+        QuantityExpr::UpTo { max } => remap_self_cast_scope_in_quantity(max),
+        QuantityExpr::Power { exponent, .. } => remap_self_cast_scope_in_quantity(exponent),
+        QuantityExpr::Difference { left, right } => {
+            remap_self_cast_scope_in_quantity(left);
+            remap_self_cast_scope_in_quantity(right);
+        }
+        QuantityExpr::Sum { exprs } | QuantityExpr::Max { exprs } => {
+            exprs.iter_mut().for_each(remap_self_cast_scope_in_quantity);
+        }
+    }
+}
+
 fn static_condition_to_trigger_condition(sc: &StaticCondition) -> Option<TriggerCondition> {
     match sc {
         StaticCondition::DuringYourTurn => Some(TriggerCondition::DuringPlayersTurn {
@@ -18620,6 +18730,49 @@ mod tests {
         }
     }
 
+    /// CR 601.2h + CR 603.4: "at least N mana was spent to cast it" is an
+    /// intervening-if on a spell-cast trigger. Must hoist as a trigger-level
+    /// QuantityComparison so the trigger only fires when the threshold is met.
+    /// Regression: The Emperor of Palamecia (#1490).
+    #[test]
+    fn trigger_at_least_mana_spent_intervening_if() {
+        let def = parse_trigger_line(
+            "Whenever you cast a noncreature spell, if at least four mana was spent to cast it, put a +1/+1 counter on ~. Then if it has three or more +1/+1 counters on it, transform it.",
+            "The Emperor of Palamecia",
+        );
+        assert_eq!(def.mode, TriggerMode::SpellCast);
+        // The intervening-if must hoist to a trigger-level condition.
+        let cond = def
+            .condition
+            .as_ref()
+            .expect("at-least-four mana threshold must hoist as trigger condition");
+        match cond {
+            TriggerCondition::QuantityComparison {
+                lhs:
+                    QuantityExpr::Ref {
+                        qty:
+                            QuantityRef::ManaSpentToCast {
+                                // CR 400.7d: "it" on a spell-cast trigger denotes
+                                // the triggering spell, NOT the source permanent.
+                                scope: CastManaObjectScope::TriggeringSpell,
+                                metric: crate::types::ability::CastManaSpentMetric::Total,
+                            },
+                    },
+                comparator: Comparator::GE,
+                rhs: QuantityExpr::Fixed { value: 4 },
+            } => {}
+            other => panic!(
+                "expected ManaSpentToCast {{ TriggeringSpell, Total }} >= 4 trigger condition, got {other:?}"
+            ),
+        }
+        // The effect text should have the condition stripped.
+        let execute = def.execute.as_ref().unwrap();
+        match &*execute.effect {
+            Effect::PutCounter { .. } => {}
+            other => panic!("expected PutCounter effect, got {other:?}"),
+        }
+    }
+
     /// CR 601.2a + #538: Ghostly Pilferer. The cast-origin discriminator
     /// "from anywhere other than their hand" must survive parsing as
     /// `NotEquals(Hand)`; without it the trigger fires on every opponent
@@ -23868,6 +24021,44 @@ mod tests {
     }
 
     #[test]
+    fn phase_trigger_braids_sacrifices_artifact_creature_or_land() {
+        let def = parse_trigger_line(
+            "At the beginning of each player's upkeep, that player sacrifices an artifact, a creature, or a land.",
+            "Braids, Cabal Minion",
+        );
+
+        assert_eq!(def.mode, TriggerMode::Phase);
+        assert_eq!(def.phase, Some(Phase::Upkeep));
+        match def.execute.as_ref().map(|ability| ability.effect.as_ref()) {
+            Some(Effect::Sacrifice { target, .. }) => match target {
+                TargetFilter::Or { filters } => {
+                    assert_eq!(filters.len(), 3);
+                    assert!(filters.iter().any(|f| matches!(
+                        f,
+                        TargetFilter::Typed(tf)
+                            if tf.type_filters == [TypeFilter::Artifact]
+                    )));
+                    assert!(filters.iter().any(|f| matches!(
+                        f,
+                        TargetFilter::Typed(tf) if tf.type_filters == [TypeFilter::Creature]
+                    )));
+                    assert!(filters.iter().any(|f| matches!(
+                        f,
+                        TargetFilter::Typed(tf) if tf.type_filters == [TypeFilter::Land]
+                    )));
+                    assert!(filters.iter().all(|f| matches!(
+                        f,
+                        TargetFilter::Typed(tf)
+                            if tf.controller == Some(ControllerRef::ScopedPlayer)
+                    )));
+                }
+                other => panic!("expected Or sacrifice filter, got {other:?}"),
+            },
+            other => panic!("expected Sacrifice effect, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn phase_trigger_that_player_sacrifices_uses_scoped_player_not_target_player() {
         let def = parse_trigger_line(
             "At the beginning of each player's upkeep, that player sacrifices a non-Elf creature of their choice.",
@@ -24037,6 +24228,48 @@ mod tests {
             .as_ref()
             .expect("should have sub_ability");
         assert!(sub.optional, "second sentence ability should be optional");
+    }
+
+    #[test]
+    fn trigger_you_may_cast_target_instant_from_graveyard_is_not_trigger_optional() {
+        let def = parse_trigger_line(
+            "When this creature enters, you may cast target instant card from your graveyard without paying its mana cost. If that spell would be put into your graveyard, exile it instead.",
+            "Torrential Gearhulk",
+        );
+        assert!(
+            !def.optional,
+            "CR 603.3d: targeted cast triggers must go on the stack when legal targets exist"
+        );
+        let execute = def.execute.as_ref().expect("ETB execute body");
+        assert!(
+            execute.optional,
+            "CR 608.2c: the cast itself is optional at resolution"
+        );
+        assert_eq!(
+            execute.target_choice_timing,
+            crate::types::ability::TargetChoiceTiming::Stack,
+            "graveyard instant target must be chosen when the trigger goes on the stack"
+        );
+        assert!(
+            matches!(execute.effect.as_ref(), Effect::CastFromZone { .. }),
+            "expected CastFromZone root effect, got {:?}",
+            execute.effect
+        );
+        if let Effect::CastFromZone {
+            without_paying_mana_cost,
+            duration,
+            ..
+        } = execute.effect.as_ref()
+        {
+            assert!(
+                *without_paying_mana_cost,
+                "Gearhulk cast must be without paying mana cost"
+            );
+            assert!(
+                duration.is_none(),
+                "immediate graveyard cast must not carry a standing duration: {duration:?}"
+            );
+        }
     }
 
     // ── Work Item 1: Leaves-Graveyard Batch Triggers ──────────────
