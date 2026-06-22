@@ -241,3 +241,78 @@ fn cast_up_to_two_name_stickers_resolves_via_quantity_prompt() {
     assert_eq!(creature.zone, Zone::Battlefield);
     assert_eq!(creature.stickers.len(), 2);
 }
+
+#[test]
+fn cast_up_to_one_name_sticker_allows_choosing_zero() {
+    let mut scenario = GameScenario::new();
+    scenario.at_phase(Phase::PreCombatMain);
+    scenario.with_library_top(P0, &["P0 Draw A", "P0 Draw B"]);
+    scenario.with_library_top(P1, &["P1 Draw A", "P1 Draw B"]);
+    let creature_id = scenario.add_creature(P0, "Bear", 2, 2).id();
+    let spell_id = scenario
+        .add_spell_to_hand_from_oracle(
+            P0,
+            "One Sticker Maybe",
+            false,
+            "Put up to one name sticker on target creature you own.",
+        )
+        .with_mana_cost(ManaCost::generic(1))
+        .id();
+    scenario.with_mana_pool(
+        P0,
+        vec![ManaUnit::new(
+            ManaType::Colorless,
+            ObjectId(0),
+            false,
+            vec![],
+        )],
+    );
+
+    let mut runner = scenario.build();
+    set_player_sticker_sheets(
+        runner.state_mut(),
+        P0,
+        &["Ancestral Hot Dog Minotaur".to_string()],
+    );
+
+    let _commit = runner.cast(spell_id).target_object(creature_id).commit();
+    runner.pass_both_players();
+
+    match &runner.state().waiting_for {
+        WaitingFor::ChooseOneOfBranch {
+            branch_descriptions,
+            ..
+        } => {
+            assert!(
+                branch_descriptions
+                    .iter()
+                    .any(|description| description.contains("Do not put a sticker")),
+                "expected zero-choice branch, got {:?}",
+                branch_descriptions
+            );
+        }
+        other => panic!("expected count-choice prompt, got {other:?}"),
+    }
+
+    runner
+        .act(GameAction::ChooseBranch { index: 0 })
+        .expect("choose zero stickers");
+
+    for _ in 0..8 {
+        match &runner.state().waiting_for {
+            WaitingFor::Priority { .. } => {
+                if runner.state().stack.is_empty() && runner.state().deferred_triggers.is_empty() {
+                    break;
+                }
+                runner.pass_both_players();
+            }
+            other => panic!("unexpected waiting state after choosing zero: {other:?}"),
+        }
+    }
+
+    evaluate_layers(runner.state_mut());
+    let creature = runner.state().objects.get(&creature_id).unwrap();
+    assert_eq!(creature.zone, Zone::Battlefield);
+    assert!(creature.stickers.is_empty());
+    assert_eq!(creature.name, "Bear");
+}

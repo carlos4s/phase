@@ -91,24 +91,24 @@ fn resolve_put_sticker(
         return Ok(());
     }
 
-    if count > 1 {
-        if up_to {
-            prompt_count_choice(
-                state,
-                ability,
-                request.target,
-                request.kind,
-                count,
-                request.max_ticket_cost,
-                request.ticket_cost_payment,
-            );
-            events.push(GameEvent::EffectResolved {
-                kind: EffectKind::PutSticker,
-                source_id: ability.source_id,
-            });
-            return Ok(());
-        }
+    if up_to {
+        prompt_count_choice(
+            state,
+            ability,
+            request.target,
+            request.kind,
+            count,
+            request.max_ticket_cost,
+            request.ticket_cost_payment,
+        );
+        events.push(GameEvent::EffectResolved {
+            kind: EffectKind::PutSticker,
+            source_id: ability.source_id,
+        });
+        return Ok(());
+    }
 
+    if count > 1 {
         let chain = repeated_single_put_definition(
             request.target.clone(),
             request.kind,
