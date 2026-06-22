@@ -4107,6 +4107,30 @@ pub(crate) fn run_batch_completion(
                     crate::game::attractions::open_attractions(state, player, remaining, events);
             }
         }
+        BatchCompletion::ContraptionAssembleRemainder {
+            player,
+            source_id,
+            object_id,
+            sprocket,
+            remaining,
+        } => {
+            crate::game::contraptions::finish_contraption_assembly(
+                state, player, object_id, sprocket, events,
+            );
+            if remaining > 0 {
+                let synthetic = crate::types::ability::ResolvedAbility::new(
+                    crate::types::ability::Effect::AssembleContraptions {
+                        count: crate::types::ability::QuantityExpr::Fixed {
+                            value: remaining as i32,
+                        },
+                    },
+                    Vec::new(),
+                    source_id,
+                    player,
+                );
+                let _ = crate::game::contraptions::resolve(state, &synthetic, events);
+            }
+        }
     }
 }
 

@@ -176,7 +176,6 @@ pub fn trigger_matcher(mode: TriggerMode) -> Option<TriggerMatcher> {
         | TriggerMode::Copied
         | TriggerMode::ConjureAll
         | TriggerMode::ClaimPrize
-        | TriggerMode::CrankContraption
         | TriggerMode::Devoured
         | TriggerMode::Forage
         | TriggerMode::GiveGift
@@ -185,6 +184,7 @@ pub fn trigger_matcher(mode: TriggerMode) -> Option<TriggerMatcher> {
         | TriggerMode::SeekAll
         | TriggerMode::Trains
         | TriggerMode::VisitAttraction => match_visit_attraction,
+        TriggerMode::CrankContraption => match_crank_contraption,
         TriggerMode::Specializes => match_specializes,
         // CR 702.140c-d: "Whenever this creature mutates" fires on `Mutated`.
         TriggerMode::Mutates => match_mutates,
@@ -464,7 +464,6 @@ pub fn build_trigger_registry() -> HashMap<TriggerMode, TriggerMatcher> {
         TriggerMode::ConjureAll,
         // TriggerMode::Abandoned — moved to real matcher above
         TriggerMode::ClaimPrize,
-        TriggerMode::CrankContraption,
         TriggerMode::Devoured,
         TriggerMode::Forage,
         TriggerMode::GiveGift,
@@ -834,6 +833,8 @@ fn count_matching_trigger_event_subjects(
         // Unstable Host/Augment combine also makes the surviving Host permanent
         // the observable subject for generic object-scoped event helpers.
         GameEvent::Augmented { merged_id, .. } => count_one(*merged_id),
+        GameEvent::ContraptionAssembled { object_id, .. } => count_one(*object_id),
+        GameEvent::ContraptionCranked { contraption_id, .. } => count_one(*contraption_id),
         // Object target events yield the affected object as subject. Player
         // target events carry no object subject; player scoping lives on
         // `valid_target`.
@@ -3732,6 +3733,24 @@ pub(super) fn match_visit_attraction(
     } = event
     {
         *attraction_id == source_id && valid_player_matches(trigger, state, *player_id, source_id)
+    } else {
+        false
+    }
+}
+
+pub(super) fn match_crank_contraption(
+    event: &GameEvent,
+    trigger: &TriggerDefinition,
+    source_id: ObjectId,
+    state: &GameState,
+) -> bool {
+    if let GameEvent::ContraptionCranked {
+        player_id,
+        contraption_id,
+        ..
+    } = event
+    {
+        *contraption_id == source_id && valid_player_matches(trigger, state, *player_id, source_id)
     } else {
         false
     }
