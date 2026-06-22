@@ -1,16 +1,22 @@
 use crate::game::effects;
 use crate::game::layers::evaluate_layers;
-use crate::game::scenario::{GameScenario, P0};
+use crate::game::scenario::{GameScenario, P0, P1};
 use crate::game::stickers::{
     apply_selected_sticker, available_sticker_candidates, set_player_sticker_sheets,
 };
 use crate::game::zones::move_to_zone;
-use crate::types::ability::{Effect, QuantityExpr, ResolvedAbility, TargetFilter};
+use crate::types::ability::{
+    Effect, QuantityExpr, ResolvedAbility, StickerTicketCostPayment, TargetFilter,
+};
 use crate::types::events::GameEvent;
+use crate::types::game_state::WaitingFor;
 use crate::types::keywords::Keyword;
+use crate::types::mana::{ManaCost, ManaType, ManaUnit};
+use crate::types::phase::Phase;
 use crate::types::player::PlayerCounterKind;
 use crate::types::stickers::{AppliedSticker, StickerKind};
 use crate::types::zones::Zone;
+use crate::types::{GameAction, ObjectId};
 
 #[test]
 fn stickers_modify_battlefield_object_and_public_zone_retention() {
@@ -142,10 +148,9 @@ fn put_sticker_effect_auto_applies_single_eligible_choice() {
         Effect::PutSticker {
             target: TargetFilter::SpecificObject { id: creature_id },
             kind: Some(StickerKind::PowerToughness),
-            count: 1,
-            up_to: false,
+            count: QuantityExpr::Fixed { value: 1 },
             max_ticket_cost: Some(QuantityExpr::Fixed { value: 2 }),
-            without_paying: true,
+            ticket_cost_payment: StickerTicketCostPayment::WithoutPaying,
         },
         Vec::new(),
         creature_id,
@@ -159,4 +164,80 @@ fn put_sticker_effect_auto_applies_single_eligible_choice() {
     assert_eq!(creature.power, Some(1));
     assert_eq!(creature.toughness, Some(5));
     assert_eq!(creature.stickers.len(), 1);
+}
+
+#[test]
+fn cast_up_to_two_name_stickers_resolves_via_quantity_prompt() {
+    let mut scenario = GameScenario::new();
+    scenario.at_phase(Phase::PreCombatMain);
+    scenario.with_library_top(P0, &["P0 Draw A", "P0 Draw B"]);
+    scenario.with_library_top(P1, &["P1 Draw A", "P1 Draw B"]);
+    let creature_id = scenario.add_creature(P0, "Bear", 2, 2).id();
+    let spell_id = scenario
+        .add_spell_to_hand_from_oracle(
+            P0,
+            "Two Stickers",
+            false,
+            "Put up to two name stickers on target creature you own.",
+        )
+        .with_mana_cost(ManaCost::generic(1))
+        .id();
+    scenario.with_mana_pool(
+        P0,
+        vec![ManaUnit::new(
+            ManaType::Colorless,
+            ObjectId(0),
+            false,
+            vec![],
+        )],
+    );
+
+    let mut runner = scenario.build();
+    set_player_sticker_sheets(
+        runner.state_mut(),
+        P0,
+        &["Ancestral Hot Dog Minotaur".to_string()],
+    );
+
+    let _commit = runner.cast(spell_id).target_object(creature_id).commit();
+    runner.pass_both_players();
+
+    let mut chose_count_branch = false;
+    for _ in 0..16 {
+        match &runner.state().waiting_for {
+            WaitingFor::ChooseOneOfBranch {
+                branch_descriptions,
+                ..
+            } => {
+                if let Some(index) = branch_descriptions
+                    .iter()
+                    .position(|description| description.contains("Put 2 stickers"))
+                {
+                    runner
+                        .act(GameAction::ChooseBranch { index })
+                        .expect("choose the two-sticker branch");
+                    chose_count_branch = true;
+                } else {
+                    runner
+                        .act(GameAction::ChooseBranch { index: 0 })
+                        .expect("choose first sticker option");
+                }
+            }
+            WaitingFor::Priority { .. } => {
+                if chose_count_branch
+                    && runner.state().stack.is_empty()
+                    && runner.state().deferred_triggers.is_empty()
+                {
+                    break;
+                }
+                runner.pass_both_players();
+            }
+            other => panic!("unexpected waiting state while resolving stickers: {other:?}"),
+        }
+    }
+
+    evaluate_layers(runner.state_mut());
+    let creature = runner.state().objects.get(&creature_id).unwrap();
+    assert_eq!(creature.zone, Zone::Battlefield);
+    assert_eq!(creature.stickers.len(), 2);
 }

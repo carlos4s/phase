@@ -13696,10 +13696,10 @@ mod tests {
                 effect,
                 Effect::PutSticker {
                     kind: Some(crate::types::stickers::StickerKind::Name),
-                    count: 1,
-                    up_to: false,
+                    count: QuantityExpr::Fixed { value: 1 },
                     max_ticket_cost: None,
-                    without_paying: false,
+                    ticket_cost_payment:
+                        crate::types::ability::StickerTicketCostPayment::PayNormally,
                     ..
                 }
             ),
@@ -13719,14 +13719,35 @@ mod tests {
                 effect,
                 Effect::PutSticker {
                     kind: Some(crate::types::stickers::StickerKind::Ability),
-                    count: 1,
-                    up_to: false,
+                    count: QuantityExpr::Fixed { value: 1 },
                     max_ticket_cost: Some(QuantityExpr::Fixed { value: 2 }),
-                    without_paying: true,
+                    ticket_cost_payment:
+                        crate::types::ability::StickerTicketCostPayment::WithoutPaying,
                     ..
                 }
             ),
             "expected bounded ability-sticker effect, got {:?}",
+            effect,
+        );
+    }
+
+    #[test]
+    fn put_up_to_two_name_stickers_parses() {
+        use crate::parser::oracle_effect::parse_effect;
+        let effect = parse_effect("put up to two name stickers on target creature you own");
+        assert!(
+            matches!(
+                effect,
+                Effect::PutSticker {
+                    kind: Some(crate::types::stickers::StickerKind::Name),
+                    count: QuantityExpr::UpTo { .. },
+                    max_ticket_cost: None,
+                    ticket_cost_payment:
+                        crate::types::ability::StickerTicketCostPayment::PayNormally,
+                    ..
+                }
+            ),
+            "expected up-to-two name-sticker effect, got {:?}",
             effect,
         );
     }

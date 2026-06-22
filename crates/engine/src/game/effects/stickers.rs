@@ -5,7 +5,7 @@ use crate::game::stickers::{
 };
 use crate::types::ability::{
     AbilityDefinition, AbilityKind, Effect, EffectError, EffectKind, QuantityExpr, ResolvedAbility,
-    TargetFilter,
+    StickerTicketCostPayment, TargetFilter,
 };
 use crate::types::events::GameEvent;
 use crate::types::game_state::GameState;
@@ -21,19 +21,17 @@ pub fn resolve(
             target,
             kind,
             count,
-            up_to,
             max_ticket_cost,
-            without_paying,
+            ticket_cost_payment,
         } => resolve_put_sticker(
             state,
             ability,
             PutStickerRequest {
                 target,
                 kind: *kind,
-                count: *count,
-                up_to: *up_to,
+                count,
                 max_ticket_cost: max_ticket_cost.as_ref(),
-                without_paying: *without_paying,
+                ticket_cost_payment: *ticket_cost_payment,
             },
             events,
         ),
@@ -71,10 +69,9 @@ pub fn resolve(
 struct PutStickerRequest<'a> {
     target: &'a TargetFilter,
     kind: Option<StickerKind>,
-    count: u32,
-    up_to: bool,
+    count: &'a QuantityExpr,
     max_ticket_cost: Option<&'a QuantityExpr>,
-    without_paying: bool,
+    ticket_cost_payment: StickerTicketCostPayment,
 }
 
 fn resolve_put_sticker(
@@ -83,16 +80,27 @@ fn resolve_put_sticker(
     request: PutStickerRequest<'_>,
     events: &mut Vec<GameEvent>,
 ) -> Result<(), EffectError> {
-    if request.count > 1 {
-        if request.up_to {
+    let (count_expr, up_to) = request.count.peel_up_to();
+    let count = resolve_quantity_with_targets(state, count_expr, ability).max(0) as u32;
+
+    if count == 0 {
+        events.push(GameEvent::EffectResolved {
+            kind: EffectKind::PutSticker,
+            source_id: ability.source_id,
+        });
+        return Ok(());
+    }
+
+    if count > 1 {
+        if up_to {
             prompt_count_choice(
                 state,
                 ability,
                 request.target,
                 request.kind,
-                request.count,
+                count,
                 request.max_ticket_cost,
-                request.without_paying,
+                request.ticket_cost_payment,
             );
             events.push(GameEvent::EffectResolved {
                 kind: EffectKind::PutSticker,
@@ -104,9 +112,9 @@ fn resolve_put_sticker(
         let chain = repeated_single_put_definition(
             request.target.clone(),
             request.kind,
-            request.count,
+            count,
             request.max_ticket_cost.cloned(),
-            request.without_paying,
+            request.ticket_cost_payment,
         );
         let mut resolved = crate::game::ability_utils::build_resolved_from_def(
             &chain,
@@ -140,7 +148,10 @@ fn resolve_put_sticker(
         ability.controller,
         request.kind,
         max_ticket_cost,
-        request.without_paying,
+        matches!(
+            request.ticket_cost_payment,
+            StickerTicketCostPayment::WithoutPaying
+        ),
     );
 
     let expanded = expand_candidates_for_target(target_obj, candidates);
@@ -223,7 +234,7 @@ fn prompt_count_choice(
     kind: Option<StickerKind>,
     count: u32,
     max_ticket_cost: Option<&QuantityExpr>,
-    without_paying: bool,
+    ticket_cost_payment: StickerTicketCostPayment,
 ) {
     let mut branches = Vec::new();
 
@@ -237,7 +248,7 @@ fn prompt_count_choice(
             kind,
             amount,
             max_ticket_cost.cloned(),
-            without_paying,
+            ticket_cost_payment,
         );
         branch.description = Some(format!(
             "Put {amount} sticker{}",
@@ -262,17 +273,16 @@ fn repeated_single_put_definition(
     kind: Option<StickerKind>,
     count: u32,
     max_ticket_cost: Option<QuantityExpr>,
-    without_paying: bool,
+    ticket_cost_payment: StickerTicketCostPayment,
 ) -> AbilityDefinition {
     let mut root = AbilityDefinition::new(
         AbilityKind::Spell,
         Effect::PutSticker {
             target: target.clone(),
             kind,
-            count: 1,
-            up_to: false,
+            count: QuantityExpr::Fixed { value: 1 },
             max_ticket_cost: max_ticket_cost.clone(),
-            without_paying,
+            ticket_cost_payment,
         },
     );
     let mut cursor = &mut root;
@@ -282,10 +292,9 @@ fn repeated_single_put_definition(
             Effect::PutSticker {
                 target: target.clone(),
                 kind,
-                count: 1,
-                up_to: false,
+                count: QuantityExpr::Fixed { value: 1 },
                 max_ticket_cost: max_ticket_cost.clone(),
-                without_paying,
+                ticket_cost_payment,
             },
         )));
         cursor = cursor.sub_ability.as_mut().unwrap();

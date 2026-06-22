@@ -31,8 +31,8 @@ use crate::types::ability::{
     CopyRetargetPermission, DoorLockOp, Duration, Effect, EffectScope, FaceDownProfile, FilterProp,
     LibraryPosition, MultiTargetSpec, OutsideGameSourcePool, PlayerScope, PreventionAmount,
     PreventionScope, PtStat, PtValue, QuantityExpr, QuantityRef, SearchSelectionConstraint,
-    StaticDefinition, TapStateChange, TargetFilter, TargetSelectionMode, TypeFilter, TypedFilter,
-    ZoneOwner,
+    StaticDefinition, StickerTicketCostPayment, TapStateChange, TargetFilter, TargetSelectionMode,
+    TypeFilter, TypedFilter, ZoneOwner,
 };
 use crate::types::card_type::CoreType;
 use crate::types::phase::Phase;
@@ -132,85 +132,145 @@ fn try_parse_put_sticker_effect(
     ctx: &mut ParseContext,
 ) -> Option<crate::types::ability::Effect> {
     let text = lower.trim().trim_end_matches('.');
-
-    if let Ok((target_text, _)) = value(
-        (),
-        tag::<_, _, OracleError<'_>>("put up to two name stickers on "),
-    )
-    .parse(text)
-    {
-        let (target, _) = parse_target_with_ctx(target_text.trim(), ctx);
-        return Some(Effect::PutSticker {
-            target,
-            kind: Some(crate::types::stickers::StickerKind::Name),
-            count: 2,
-            up_to: true,
-            max_ticket_cost: None,
-            without_paying: false,
-        });
+    let (target_text, (count, kind, max_ticket_cost)) = parse_put_sticker_clause(text).ok()?;
+    if max_ticket_cost.is_some() && kind != Some(crate::types::stickers::StickerKind::Ability) {
+        return None;
     }
-
-    if let Ok((target_clause, (_, cost_text, _))) = (
-        tag::<_, _, OracleError<'_>>("put an ability sticker with ticket cost "),
-        take_until::<_, _, OracleError<'_>>(" or less on "),
-        tag::<_, _, OracleError<'_>>(" or less on "),
-    )
-        .parse(text)
-    {
-        let (target_text, without_paying) = if let Ok(("", target_text)) = terminated(
-            take_until::<_, _, OracleError<'_>>(" without paying that sticker's ticket cost"),
-            tag::<_, _, OracleError<'_>>(" without paying that sticker's ticket cost"),
-        )
-        .parse(target_clause)
-        {
-            (target_text.trim(), true)
-        } else {
-            (target_clause.trim(), false)
-        };
-        let (target, _) = parse_target_with_ctx(target_text.trim(), ctx);
-        return Some(Effect::PutSticker {
-            target,
-            kind: Some(crate::types::stickers::StickerKind::Ability),
-            count: 1,
-            up_to: false,
-            max_ticket_cost: parse_count_expr(cost_text.trim()).map(|(expr, _)| expr),
-            without_paying,
-        });
+    let (_, (target_text, ticket_cost_payment)) =
+        parse_put_sticker_target_tail(target_text).ok()?;
+    let (target, rem) = parse_target_with_ctx(target_text.trim(), ctx);
+    if !rem.trim().is_empty() {
+        return None;
     }
+    Some(Effect::PutSticker {
+        target,
+        kind,
+        count,
+        max_ticket_cost,
+        ticket_cost_payment,
+    })
+}
 
-    if let Ok((target_text, kind)) = alt((
+fn parse_put_sticker_clause(
+    input: &str,
+) -> OracleResult<
+    '_,
+    (
+        QuantityExpr,
+        Option<crate::types::stickers::StickerKind>,
+        Option<QuantityExpr>,
+    ),
+> {
+    let (input, _) = tag::<_, _, OracleError<'_>>("put ").parse(input)?;
+    let (input, count) = parse_sticker_count_expr(input)?;
+    let (input, kind) = parse_sticker_kind(input)?;
+    let (input, max_ticket_cost) = opt(preceded(
+        tag::<_, _, OracleError<'_>>(" with ticket cost "),
+        parse_sticker_max_ticket_cost,
+    ))
+    .parse(input)?;
+    let (input, _) = tag::<_, _, OracleError<'_>>(" on ").parse(input)?;
+    Ok((input, (count, kind, max_ticket_cost)))
+}
+
+fn parse_sticker_count_expr(input: &str) -> OracleResult<'_, QuantityExpr> {
+    alt((
+        map(
+            terminated(
+                preceded(
+                    tag::<_, _, OracleError<'_>>("up to "),
+                    parse_sticker_count_atom,
+                ),
+                tag(" "),
+            ),
+            QuantityExpr::up_to,
+        ),
+        terminated(parse_sticker_count_atom, tag(" ")),
+    ))
+    .parse(input)
+}
+
+fn parse_sticker_count_atom(input: &str) -> OracleResult<'_, QuantityExpr> {
+    alt((
+        value(
+            QuantityExpr::Ref {
+                qty: QuantityRef::Variable {
+                    name: "X".to_string(),
+                },
+            },
+            tag::<_, _, OracleError<'_>>("x"),
+        ),
+        map(nom_primitives::parse_number, |value| QuantityExpr::Fixed {
+            value: value as i32,
+        }),
+    ))
+    .parse(input)
+}
+
+fn parse_sticker_kind(
+    input: &str,
+) -> OracleResult<'_, Option<crate::types::stickers::StickerKind>> {
+    let (input, kind) = alt((
         value(
             Some(crate::types::stickers::StickerKind::PowerToughness),
-            tag::<_, _, OracleError<'_>>("put a power and toughness sticker on "),
+            tag::<_, _, OracleError<'_>>("power and toughness sticker"),
         ),
         value(
             Some(crate::types::stickers::StickerKind::Name),
-            tag::<_, _, OracleError<'_>>("put a name sticker on "),
+            tag::<_, _, OracleError<'_>>("name sticker"),
         ),
         value(
             Some(crate::types::stickers::StickerKind::Art),
-            tag::<_, _, OracleError<'_>>("put an art sticker on "),
+            tag::<_, _, OracleError<'_>>("art sticker"),
         ),
         value(
             Some(crate::types::stickers::StickerKind::Ability),
-            tag::<_, _, OracleError<'_>>("put an ability sticker on "),
+            tag::<_, _, OracleError<'_>>("ability sticker"),
         ),
-        value(None, tag::<_, _, OracleError<'_>>("put a sticker on ")),
+        value(None, tag::<_, _, OracleError<'_>>("sticker")),
     ))
-    .parse(text)
-    {
-        let (target, _) = parse_target_with_ctx(target_text.trim(), ctx);
-        return Some(Effect::PutSticker {
-            target,
-            kind,
-            count: 1,
-            up_to: false,
-            max_ticket_cost: None,
-            without_paying: false,
-        });
-    }
+    .parse(input)?;
+    let (input, _) = opt(tag::<_, _, OracleError<'_>>("s")).parse(input)?;
+    Ok((input, kind))
+}
 
-    None
+fn parse_sticker_max_ticket_cost(input: &str) -> OracleResult<'_, QuantityExpr> {
+    let (rest, cost_text) = terminated(
+        take_until::<_, _, OracleError<'_>>(" or less"),
+        tag::<_, _, OracleError<'_>>(" or less"),
+    )
+    .parse(input)?;
+    let Some((expr, trailing)) = parse_count_expr(cost_text.trim()) else {
+        return Err(nom::Err::Error(OracleError::from_error_kind(
+            input,
+            nom::error::ErrorKind::Verify,
+        )));
+    };
+    if !trailing.trim().is_empty() {
+        return Err(nom::Err::Error(OracleError::from_error_kind(
+            input,
+            nom::error::ErrorKind::Verify,
+        )));
+    }
+    Ok((rest, expr))
+}
+
+fn parse_put_sticker_target_tail(
+    input: &str,
+) -> OracleResult<'_, (&str, StickerTicketCostPayment)> {
+    all_consuming(alt((
+        map(
+            terminated(
+                take_until::<_, _, OracleError<'_>>(" without paying that sticker's ticket cost"),
+                tag::<_, _, OracleError<'_>>(" without paying that sticker's ticket cost"),
+            ),
+            |target_text| (target_text, StickerTicketCostPayment::WithoutPaying),
+        ),
+        map(rest, |target_text| {
+            (target_text, StickerTicketCostPayment::PayNormally)
+        }),
+    )))
+    .parse(input)
 }
 
 /// Shared ControlNextTurn suffix parser (CR 723.1). Called after a prefix

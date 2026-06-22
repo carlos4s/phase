@@ -9171,14 +9171,17 @@ pub enum Effect {
         target: TargetFilter,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         kind: Option<StickerKind>,
-        #[serde(default = "default_one")]
-        count: u32,
-        #[serde(default)]
-        up_to: bool,
+        #[serde(default = "default_quantity_one")]
+        count: QuantityExpr,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_ticket_cost: Option<QuantityExpr>,
-        #[serde(default)]
-        without_paying: bool,
+        #[serde(
+            default,
+            alias = "without_paying",
+            deserialize_with = "deserialize_sticker_ticket_cost_payment",
+            skip_serializing_if = "is_default_sticker_ticket_cost_payment"
+        )]
+        ticket_cost_payment: StickerTicketCostPayment,
     },
     /// Runtime-selected sticker application branch used by `PutSticker`.
     ApplySticker {
@@ -9899,6 +9902,39 @@ pub enum Effect {
         #[serde(default)]
         description: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StickerTicketCostPayment {
+    #[default]
+    PayNormally,
+    WithoutPaying,
+}
+
+fn is_default_sticker_ticket_cost_payment(mode: &StickerTicketCostPayment) -> bool {
+    *mode == StickerTicketCostPayment::PayNormally
+}
+
+fn deserialize_sticker_ticket_cost_payment<'de, D>(
+    deserializer: D,
+) -> Result<StickerTicketCostPayment, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Repr {
+        Legacy(bool),
+        Tagged(StickerTicketCostPayment),
+    }
+
+    Ok(match Option::<Repr>::deserialize(deserializer)? {
+        None => StickerTicketCostPayment::PayNormally,
+        Some(Repr::Legacy(true)) => StickerTicketCostPayment::WithoutPaying,
+        Some(Repr::Legacy(false)) => StickerTicketCostPayment::PayNormally,
+        Some(Repr::Tagged(mode)) => mode,
+    })
 }
 
 fn default_one() -> u32 {
