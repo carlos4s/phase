@@ -4112,23 +4112,19 @@ pub(crate) fn run_batch_completion(
             source_id,
             object_id,
             sprocket,
-            remaining,
+            remaining_after,
         } => {
             crate::game::contraptions::finish_contraption_assembly(
                 state, player, object_id, sprocket, events,
             );
-            if remaining > 0 {
-                let synthetic = crate::types::ability::ResolvedAbility::new(
-                    crate::types::ability::Effect::AssembleContraptions {
-                        count: crate::types::ability::QuantityExpr::Fixed {
-                            value: remaining as i32,
-                        },
-                    },
-                    Vec::new(),
-                    source_id,
+            if remaining_after > 0 {
+                crate::game::contraptions::continue_assemble_batch(
+                    state,
                     player,
+                    source_id,
+                    remaining_after,
+                    events,
                 );
-                let _ = crate::game::contraptions::resolve(state, &synthetic, events);
             }
         }
     }

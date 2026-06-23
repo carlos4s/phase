@@ -1,6 +1,7 @@
 //! Unstable Contraption deck, assemble, and crank runtime.
 
 use crate::game::effects::choose_one_of;
+use crate::game::effects::gain_control;
 use crate::game::filter::{matches_target_filter, FilterContext};
 use crate::game::game_object::GameObject;
 use crate::game::quantity::resolve_quantity_with_targets;
@@ -36,7 +37,14 @@ pub fn resolve(
     match &ability.effect {
         Effect::AssembleContraptions { count } => {
             let count = resolve_quantity_with_targets(state, count, ability).max(0) as u32;
-            prompt_assemble_sprocket_choice(state, ability, count);
+            start_assemble_batch(
+                state,
+                ability.controller,
+                ability.source_id,
+                count,
+                true,
+                events,
+            );
             events.push(GameEvent::EffectResolved {
                 kind: EffectKind::AssembleContraptions,
                 source_id: ability.source_id,
@@ -45,7 +53,14 @@ pub fn resolve(
         }
         Effect::AssembleContraptionsFromRollDifference => {
             let count = recent_roll_difference(events);
-            prompt_assemble_sprocket_choice(state, ability, count);
+            start_assemble_batch(
+                state,
+                ability.controller,
+                ability.source_id,
+                count,
+                true,
+                events,
+            );
             events.push(GameEvent::EffectResolved {
                 kind: EffectKind::AssembleContraptionsFromRollDifference,
                 source_id: ability.source_id,
@@ -53,12 +68,13 @@ pub fn resolve(
             Ok(())
         }
         Effect::AssembleContraptionOnSprocket {
+            target,
             sprocket,
             remaining,
         } => {
             assemble_one_onto_sprocket(
                 state,
-                ability.controller,
+                target,
                 ability.source_id,
                 *sprocket,
                 *remaining,
@@ -178,39 +194,63 @@ pub(crate) fn finish_contraption_assembly(
     }
 }
 
-fn prompt_assemble_sprocket_choice(state: &mut GameState, ability: &ResolvedAbility, count: u32) {
-    let count = apply_assemble_replacements(state, ability.source_id, count);
-    let available = state
-        .players
-        .iter()
-        .find(|player| player.id == ability.controller)
-        .map(|player| player.contraption_deck.len() as u32)
-        .unwrap_or(0);
+fn start_assemble_batch(
+    state: &mut GameState,
+    player: PlayerId,
+    source_id: ObjectId,
+    count: u32,
+    apply_replacements: bool,
+    events: &mut Vec<GameEvent>,
+) {
+    let count = if apply_replacements {
+        apply_assemble_replacements(state, source_id, count)
+    } else {
+        count
+    };
+    let available = available_contraptions(state, player);
     let count = count.min(available);
     if count == 0 {
         return;
     }
 
+    continue_assemble_batch(state, player, source_id, count, events);
+}
+
+pub(crate) fn continue_assemble_batch(
+    state: &mut GameState,
+    player: PlayerId,
+    source_id: ObjectId,
+    remaining: u32,
+    events: &mut Vec<GameEvent>,
+) {
+    if remaining == 0 {
+        return;
+    }
+    let Some(object_id) = top_contraption_id(state, player) else {
+        return;
+    };
+    reveal_contraption(state, player, object_id, events);
     choose_one_of::prompt_next(
         state,
-        ability.controller,
-        ability.source_id,
-        assemble_sprocket_branches(count),
-        ability.targets.clone(),
-        ability.context.clone(),
-        vec![ability.controller],
+        player,
+        source_id,
+        assemble_sprocket_branches(object_id, remaining),
+        Vec::new(),
+        crate::types::ability::SpellContext::default(),
+        vec![player],
     );
 }
 
-fn assemble_sprocket_branches(count: u32) -> Vec<AbilityDefinition> {
+fn assemble_sprocket_branches(object_id: ObjectId, remaining: u32) -> Vec<AbilityDefinition> {
     [1_u8, 2, 3]
         .into_iter()
         .map(|sprocket| {
             let mut branch = AbilityDefinition::new(
                 AbilityKind::Spell,
                 Effect::AssembleContraptionOnSprocket {
+                    target: TargetFilter::SpecificObject { id: object_id },
                     sprocket,
-                    remaining: count.saturating_sub(1),
+                    remaining: remaining.saturating_sub(1),
                 },
             )
             .description(format!("Put it onto sprocket {sprocket}."));
@@ -222,20 +262,42 @@ fn assemble_sprocket_branches(count: u32) -> Vec<AbilityDefinition> {
 
 fn assemble_one_onto_sprocket(
     state: &mut GameState,
-    player: PlayerId,
+    target: &TargetFilter,
     source_id: ObjectId,
     sprocket: u8,
     remaining: u32,
     events: &mut Vec<GameEvent>,
 ) -> Result<(), EffectError> {
-    let Some(object_id) = state
+    let object_id = match target {
+        TargetFilter::SpecificObject { id } => *id,
+        _ => {
+            return Err(EffectError::InvalidParam(
+                "assemble target must be a specific Contraption".to_string(),
+            ))
+        }
+    };
+    let Some(player) = state.objects.get(&object_id).map(|obj| obj.owner) else {
+        return Err(EffectError::ObjectNotFound(object_id));
+    };
+    let Some(front_id) = state
+        .players
+        .iter()
+        .find(|candidate| candidate.id == player)
+        .and_then(|candidate| candidate.contraption_deck.front().copied())
+    else {
+        return Ok(());
+    };
+    if front_id != object_id {
+        return Err(EffectError::InvalidParam(format!(
+            "assemble target {object_id:?} is not the top Contraption"
+        )));
+    }
+    state
         .players
         .iter_mut()
         .find(|candidate| candidate.id == player)
         .and_then(|candidate| candidate.contraption_deck.pop_front())
-    else {
-        return Ok(());
-    };
+        .expect("front Contraption was present");
 
     match super::zone_pipeline::move_object(
         state,
@@ -245,17 +307,7 @@ fn assemble_one_onto_sprocket(
         super::zone_pipeline::ZoneMoveResult::Done => {
             finish_contraption_assembly(state, player, object_id, sprocket, events);
             if remaining > 0 {
-                let synthetic = ResolvedAbility::new(
-                    Effect::AssembleContraptions {
-                        count: crate::types::ability::QuantityExpr::Fixed {
-                            value: remaining as i32,
-                        },
-                    },
-                    Vec::new(),
-                    source_id,
-                    player,
-                );
-                prompt_assemble_sprocket_choice(state, &synthetic, remaining);
+                continue_assemble_batch(state, player, source_id, remaining, events);
             }
         }
         super::zone_pipeline::ZoneMoveResult::NeedsChoice(_)
@@ -267,7 +319,7 @@ fn assemble_one_onto_sprocket(
                     source_id,
                     object_id,
                     sprocket,
-                    remaining,
+                    remaining_after: remaining,
                 },
             );
         }
@@ -321,9 +373,14 @@ fn prompt_reassemble_sprocket_choice(
         .objects
         .get(&target_id)
         .and_then(|obj| obj.contraption_sprocket);
+    let changing_controller = gain_control
+        && state
+            .objects
+            .get(&target_id)
+            .is_some_and(|obj| obj.controller != ability.controller);
     let branches: Vec<_> = [1_u8, 2, 3]
         .into_iter()
-        .filter(|sprocket| Some(*sprocket) != current_sprocket)
+        .filter(|sprocket| changing_controller || Some(*sprocket) != current_sprocket)
         .map(|sprocket| {
             AbilityDefinition::new(
                 AbilityKind::Spell,
@@ -364,7 +421,7 @@ fn apply_reassemble_to_sprocket(
     target: &TargetFilter,
     sprocket: u8,
     gain_control: bool,
-    _events: &mut Vec<GameEvent>,
+    events: &mut Vec<GameEvent>,
 ) -> Result<(), EffectError> {
     let mut targets = resolved_object_ids_for_filter(state, ability, target);
     targets.sort_by_key(|id| id.0);
@@ -372,17 +429,30 @@ fn apply_reassemble_to_sprocket(
     let Some(target_id) = targets.first().copied() else {
         return Ok(());
     };
-    let Some(obj) = state.objects.get_mut(&target_id) else {
-        return Ok(());
+    let controller_changed = {
+        let Some(obj) = state.objects.get_mut(&target_id) else {
+            return Ok(());
+        };
+        if obj.zone != Zone::Battlefield || !is_contraption_card(obj) {
+            return Ok(());
+        }
+        gain_control && obj.controller != ability.controller
     };
-    if obj.zone != Zone::Battlefield || !is_contraption_card(obj) {
-        return Ok(());
-    }
     if gain_control {
-        obj.controller = ability.controller;
-        obj.base_controller = Some(ability.controller);
+        gain_control::apply_permanent_control_change(
+            state,
+            ability.source_id,
+            target_id,
+            ability.controller,
+            events,
+        );
+        crate::game::layers::evaluate_layers(state);
     }
-    obj.contraption_sprocket = Some(sprocket);
+    if let Some(obj) = state.objects.get_mut(&target_id) {
+        if !controller_changed || obj.controller == ability.controller {
+            obj.contraption_sprocket = Some(sprocket);
+        }
+    }
     Ok(())
 }
 
@@ -428,6 +498,40 @@ fn recent_roll_difference(events: &[GameEvent]) -> u32 {
         return 0;
     };
     u8::abs_diff(first, second) as u32
+}
+
+fn available_contraptions(state: &GameState, player: PlayerId) -> u32 {
+    state
+        .players
+        .iter()
+        .find(|candidate| candidate.id == player)
+        .map(|candidate| candidate.contraption_deck.len() as u32)
+        .unwrap_or(0)
+}
+
+fn top_contraption_id(state: &GameState, player: PlayerId) -> Option<ObjectId> {
+    state
+        .players
+        .iter()
+        .find(|candidate| candidate.id == player)
+        .and_then(|candidate| candidate.contraption_deck.front().copied())
+}
+
+fn reveal_contraption(
+    state: &mut GameState,
+    player: PlayerId,
+    object_id: ObjectId,
+    events: &mut Vec<GameEvent>,
+) {
+    let Some(card_name) = state.objects.get(&object_id).map(|obj| obj.name.clone()) else {
+        return;
+    };
+    state.last_revealed_ids = vec![object_id];
+    events.push(GameEvent::CardsRevealed {
+        player,
+        card_ids: vec![object_id],
+        card_names: vec![card_name],
+    });
 }
 
 fn apply_assemble_replacements(state: &GameState, source_id: ObjectId, count: u32) -> u32 {

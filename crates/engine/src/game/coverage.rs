@@ -2440,6 +2440,7 @@ fn effect_details(effect: &Effect) -> Vec<(String, String)> {
         Effect::AssembleContraptionOnSprocket {
             sprocket,
             remaining,
+            ..
         } => {
             d.push(("sprocket".into(), sprocket.to_string()));
             if *remaining != 0 {

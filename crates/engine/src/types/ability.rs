@@ -9464,6 +9464,7 @@ pub enum Effect {
     /// Internal Contraption helper: resolve one assemble onto the chosen
     /// sprocket, then continue with any remaining assembles.
     AssembleContraptionOnSprocket {
+        target: TargetFilter,
         sprocket: u8,
         #[serde(default)]
         remaining: u32,

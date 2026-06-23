@@ -1330,7 +1330,7 @@ pub enum BatchCompletion {
         source_id: ObjectId,
         object_id: ObjectId,
         sprocket: u8,
-        remaining: u32,
+        remaining_after: u32,
     },
 }
 
