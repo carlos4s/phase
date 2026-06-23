@@ -7085,18 +7085,12 @@ pub(super) fn parse_imperative_family_ast(
         return Some(ImperativeFamilyAst::GainKeyword(effect));
     }
 
-    if let (Some(text), Some(lower)) = (text.strip_prefix("~ "), lower.strip_prefix("~ ")) {
-        return parse_imperative_family_ast(text, lower, ctx);
+    if let Some(ast) = parse_assemble_contraption_imperative(lower) {
+        return Some(ast);
     }
 
-    if let (Some(text), Some(lower)) = (text.strip_prefix("it "), lower.strip_prefix("it ")) {
-        if lower.starts_with("assemble ")
-            || lower.starts_with("assembles ")
-            || lower.starts_with("reassemble ")
-            || lower.starts_with("reassembles ")
-        {
-            return parse_imperative_family_ast(text, lower, ctx);
-        }
+    if let Some(ast) = parse_reassemble_contraption_imperative(text, lower, ctx) {
+        return Some(ast);
     }
 
     // CR 724.1: "end the turn" (Time Stop, Sundial of the Infinite, Obeka,
@@ -7880,10 +7874,6 @@ pub(super) fn parse_imperative_family_ast(
         }
         // CR 701.51b: "open an Attraction" / "open two Attractions"
         "open" | "opens" => parse_open_attraction_imperative(lower),
-        // Unstable Contraptions: "assemble a Contraption" / "assembles X plus
-        // one Contraptions" / "reassemble target Contraption you control".
-        "assemble" | "assembles" => parse_assemble_contraption_imperative(lower),
-        "reassemble" | "reassembles" => parse_reassemble_contraption_imperative(text, lower, ctx),
         // CR 725.1: "become the monarch"
         "become" | "becomes" => {
             if lower == "become the monarch" || lower == "becomes the monarch" {
@@ -8726,71 +8716,95 @@ fn parse_open_attraction_imperative(lower: &str) -> Option<ImperativeFamilyAst> 
 /// Unstable Contraptions: "assemble a Contraption" / "assembles two
 /// Contraptions" / "assemble X plus one Contraptions".
 fn parse_assemble_contraption_imperative(lower: &str) -> Option<ImperativeFamilyAst> {
-    let (rest, _) = alt((
-        tag::<_, _, OracleError<'_>>("~ assemble "),
-        tag("~ assembles "),
-        tag("assemble "),
-        tag("assembles "),
-    ))
-    .parse(lower)
-    .ok()?;
-    let body = rest.trim().trim_end_matches('.').trim();
-    if body.is_empty() {
-        return None;
-    }
-    if body == "a number of contraptions equal to the difference between those results" {
-        return Some(ImperativeFamilyAst::AssembleContraptionsFromRollDifference);
-    }
-    let count = parse_assemble_contraption_count(body)?;
-    Some(ImperativeFamilyAst::AssembleContraptions { count })
+    nom_parse_lower(lower, |input| {
+        map(
+            all_consuming(terminated(
+                preceded(
+                    opt(alt((tag::<_, _, OracleError<'_>>("~ "), tag("it ")))),
+                    preceded(
+                        alt((tag::<_, _, OracleError<'_>>("assemble "), tag("assembles "))),
+                        parse_assemble_contraption_count,
+                    ),
+                ),
+                opt(tag(".")),
+            )),
+            |count| match count {
+                ContraptionAssembleCount::Quantity(count) => {
+                    ImperativeFamilyAst::AssembleContraptions { count }
+                }
+                ContraptionAssembleCount::FromRollDifference => {
+                    ImperativeFamilyAst::AssembleContraptionsFromRollDifference
+                }
+            },
+        )
+        .parse(input)
+    })
 }
 
-fn parse_assemble_contraption_count(body: &str) -> Option<QuantityExpr> {
-    if let Some(qty_text) = body.strip_suffix(" contraptions") {
-        let qty_text = qty_text.trim();
-        if let Ok((_, n)) = nom_primitives::parse_number.parse(qty_text) {
-            return Some(QuantityExpr::Fixed { value: n as i32 });
-        }
-        if qty_text == "x" {
-            return Some(QuantityExpr::Ref {
+#[derive(Clone)]
+enum ContraptionAssembleCount {
+    Quantity(QuantityExpr),
+    FromRollDifference,
+}
+
+fn parse_assemble_contraption_count(input: &str) -> OracleResult<'_, ContraptionAssembleCount> {
+    alt((
+        value(
+            ContraptionAssembleCount::FromRollDifference,
+            (
+                tag::<_, _, OracleError<'_>>("a number of contraptions equal to the "),
+                tag("difference between those results"),
+            ),
+        ),
+        value(
+            ContraptionAssembleCount::Quantity(QuantityExpr::Ref {
+                qty: QuantityRef::EventContextAmount,
+            }),
+            (
+                tag::<_, _, OracleError<'_>>("a number of contraptions equal to the "),
+                tag("result"),
+            ),
+        ),
+        map(
+            preceded(
+                tag::<_, _, OracleError<'_>>("a contraption for each "),
+                nom_quantity::parse_for_each_clause_ref,
+            ),
+            |qty| ContraptionAssembleCount::Quantity(QuantityExpr::Ref { qty }),
+        ),
+        value(
+            ContraptionAssembleCount::Quantity(QuantityExpr::Fixed { value: 1 }),
+            tag::<_, _, OracleError<'_>>("a contraption"),
+        ),
+        value(
+            ContraptionAssembleCount::Quantity(QuantityExpr::Offset {
+                inner: Box::new(QuantityExpr::Ref {
+                    qty: QuantityRef::Variable {
+                        name: "X".to_string(),
+                    },
+                }),
+                offset: 1,
+            }),
+            tag::<_, _, OracleError<'_>>("x plus one contraptions"),
+        ),
+        value(
+            ContraptionAssembleCount::Quantity(QuantityExpr::Ref {
                 qty: QuantityRef::Variable {
                     name: "X".to_string(),
                 },
-            });
-        }
-        if let Some(inner) = qty_text.strip_suffix(" plus one") {
-            let inner = inner.trim();
-            if inner == "x" {
-                return Some(QuantityExpr::Offset {
-                    inner: Box::new(QuantityExpr::Ref {
-                        qty: QuantityRef::Variable {
-                            name: "X".to_string(),
-                        },
-                    }),
-                    offset: 1,
-                });
-            }
-        }
-    }
-    if body == "a contraption" {
-        return Some(QuantityExpr::Fixed { value: 1 });
-    }
-    if body == "a number of contraptions equal to the result" {
-        return Some(QuantityExpr::Ref {
-            qty: QuantityRef::EventContextAmount,
-        });
-    }
-    if let Some(for_each) = body.strip_prefix("a contraption for each ") {
-        if let Ok(("", qty)) = nom_quantity::parse_for_each_clause_ref_complete(for_each) {
-            return Some(QuantityExpr::Ref { qty });
-        }
-    }
-    if let Some(for_each) = body.strip_prefix("a contraption ") {
-        if let Ok(("", qty)) = nom_quantity::parse_for_each_clause_ref_complete(for_each) {
-            return Some(QuantityExpr::Ref { qty });
-        }
-    }
-    None
+            }),
+            tag::<_, _, OracleError<'_>>("x contraptions"),
+        ),
+        map(
+            terminated(nom_primitives::parse_number, tag(" contraptions")),
+            |count| {
+                ContraptionAssembleCount::Quantity(QuantityExpr::Fixed {
+                    value: count as i32,
+                })
+            },
+        ),
+    ))
+    .parse(input)
 }
 
 /// Unstable Contraptions: "reassemble target Contraption you control" / "it
@@ -8800,20 +8814,28 @@ fn parse_reassemble_contraption_imperative(
     lower: &str,
     ctx: &mut ParseContext,
 ) -> Option<ImperativeFamilyAst> {
-    let control_mode = if lower.starts_with("reassemble ") || lower.starts_with("~ reassemble ") {
-        ReassembleControlMode::KeepController
-    } else if lower.starts_with("reassembles ") || lower.starts_with("~ reassembles ") {
-        ReassembleControlMode::GainControl
-    } else {
-        return None;
-    };
-    let after_verb = if let Some(rest) = text.strip_prefix("~ ") {
-        rest.split_once(' ')?.1.trim()
-    } else {
-        text.split_once(' ')?.1.trim()
-    };
+    let text = text.trim_start();
+    let lower = lower.trim_start();
+    let (rest, control_mode) = preceded(
+        opt(alt((tag::<_, _, OracleError<'_>>("~ "), tag("it ")))),
+        alt((
+            value(
+                ReassembleControlMode::KeepController,
+                tag::<_, _, OracleError<'_>>("reassemble "),
+            ),
+            value(ReassembleControlMode::GainControl, tag("reassembles ")),
+        )),
+    )
+    .parse(lower)
+    .ok()?;
+    let consumed = lower.len() - rest.len();
+    let after_verb = text.get(consumed..)?;
     let (target, rest, _) = parse_target_with_syntax(after_verb, ctx);
-    if matches!(target, TargetFilter::Any) || !rest.trim().trim_end_matches('.').is_empty() {
+    if matches!(target, TargetFilter::Any)
+        || all_consuming(terminated(space0::<_, OracleError<'_>>, opt(tag("."))))
+            .parse(rest)
+            .is_err()
+    {
         return None;
     }
     Some(ImperativeFamilyAst::ReassembleContraption {

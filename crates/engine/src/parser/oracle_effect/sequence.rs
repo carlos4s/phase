@@ -1404,12 +1404,16 @@ fn starts_clause_text_lower(s: &str) -> bool {
         return true;
     }
 
-    if s.starts_with("assemble ")
-        || s.starts_with("reassemble ")
-        || s.starts_with("it assemble ")
-        || s.starts_with("it assembles ")
-        || s.starts_with("it reassemble ")
-        || s.starts_with("it reassembles ")
+    if alt((
+        value((), tag::<_, _, OracleError<'_>>("assemble ")),
+        value((), tag("reassemble ")),
+        value((), tag("it assemble ")),
+        value((), tag("it assembles ")),
+        value((), tag("it reassemble ")),
+        value((), tag("it reassembles ")),
+    ))
+    .parse(s)
+    .is_ok()
     {
         return true;
     }
