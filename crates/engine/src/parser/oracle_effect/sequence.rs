@@ -1404,6 +1404,16 @@ fn starts_clause_text_lower(s: &str) -> bool {
         return true;
     }
 
+    if s.starts_with("assemble ")
+        || s.starts_with("reassemble ")
+        || s.starts_with("it assemble ")
+        || s.starts_with("it assembles ")
+        || s.starts_with("it reassemble ")
+        || s.starts_with("it reassembles ")
+    {
+        return true;
+    }
+
     // Table-driven prefix check via nom tag() — try all imperative verbs and
     // pronoun/determiner clause starters.  Split into multiple alt() groups
     // chained with .or() to stay within nom's 21-tuple limit.

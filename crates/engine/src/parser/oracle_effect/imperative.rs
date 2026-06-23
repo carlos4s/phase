@@ -31,9 +31,9 @@ use crate::types::ability::{
     CategoryChooserScope, ChoiceType, Chooser, ContinuousModification, ControllerRef,
     CopyRetargetPermission, DoorLockOp, Duration, Effect, EffectScope, FaceDownProfile, FilterProp,
     LibraryPosition, MultiTargetSpec, OutsideGameSourcePool, PlayerScope, PreventionAmount,
-    PreventionScope, PtStat, PtValue, QuantityExpr, QuantityRef, SearchSelectionConstraint,
-    StaticDefinition, StickerTicketCostPayment, TapStateChange, TargetFilter, TargetSelectionMode,
-    TypeFilter, TypedFilter, ZoneOwner,
+    PreventionScope, PtStat, PtValue, QuantityExpr, QuantityRef, ReassembleControlMode,
+    SearchSelectionConstraint, StaticDefinition, StickerTicketCostPayment, TapStateChange,
+    TargetFilter, TargetSelectionMode, TypeFilter, TypedFilter, ZoneOwner,
 };
 use crate::types::card_type::CoreType;
 use crate::types::phase::Phase;
@@ -7072,6 +7072,8 @@ pub(super) fn parse_imperative_family_ast(
     lower: &str,
     ctx: &mut ParseContext,
 ) -> Option<ImperativeFamilyAst> {
+    let text = text.trim_start();
+    let lower = lower.trim_start();
     let first_word = lower.split_whitespace().next().unwrap_or("");
 
     // CR 701.60a: "[subject] no longer suspected" — the un-designation
@@ -7081,6 +7083,20 @@ pub(super) fn parse_imperative_family_ast(
     // first-word dispatch, alongside the other non-verb-led effects below.
     if let Some(effect) = parse_no_longer_suspected_ast(lower) {
         return Some(ImperativeFamilyAst::GainKeyword(effect));
+    }
+
+    if let (Some(text), Some(lower)) = (text.strip_prefix("~ "), lower.strip_prefix("~ ")) {
+        return parse_imperative_family_ast(text, lower, ctx);
+    }
+
+    if let (Some(text), Some(lower)) = (text.strip_prefix("it "), lower.strip_prefix("it ")) {
+        if lower.starts_with("assemble ")
+            || lower.starts_with("assembles ")
+            || lower.starts_with("reassemble ")
+            || lower.starts_with("reassembles ")
+        {
+            return parse_imperative_family_ast(text, lower, ctx);
+        }
     }
 
     // CR 724.1: "end the turn" (Time Stop, Sundial of the Infinite, Obeka,
@@ -7864,6 +7880,10 @@ pub(super) fn parse_imperative_family_ast(
         }
         // CR 701.51b: "open an Attraction" / "open two Attractions"
         "open" | "opens" => parse_open_attraction_imperative(lower),
+        // Unstable Contraptions: "assemble a Contraption" / "assembles X plus
+        // one Contraptions" / "reassemble target Contraption you control".
+        "assemble" | "assembles" => parse_assemble_contraption_imperative(lower),
+        "reassemble" | "reassembles" => parse_reassemble_contraption_imperative(text, lower, ctx),
         // CR 725.1: "become the monarch"
         "become" | "becomes" => {
             if lower == "become the monarch" || lower == "becomes the monarch" {
@@ -8703,6 +8723,105 @@ fn parse_open_attraction_imperative(lower: &str) -> Option<ImperativeFamilyAst> 
     })
 }
 
+/// Unstable Contraptions: "assemble a Contraption" / "assembles two
+/// Contraptions" / "assemble X plus one Contraptions".
+fn parse_assemble_contraption_imperative(lower: &str) -> Option<ImperativeFamilyAst> {
+    let (rest, _) = alt((
+        tag::<_, _, OracleError<'_>>("~ assemble "),
+        tag("~ assembles "),
+        tag("assemble "),
+        tag("assembles "),
+    ))
+    .parse(lower)
+    .ok()?;
+    let body = rest.trim().trim_end_matches('.').trim();
+    if body.is_empty() {
+        return None;
+    }
+    if body == "a number of contraptions equal to the difference between those results" {
+        return Some(ImperativeFamilyAst::AssembleContraptionsFromRollDifference);
+    }
+    let count = parse_assemble_contraption_count(body)?;
+    Some(ImperativeFamilyAst::AssembleContraptions { count })
+}
+
+fn parse_assemble_contraption_count(body: &str) -> Option<QuantityExpr> {
+    if let Some(qty_text) = body.strip_suffix(" contraptions") {
+        let qty_text = qty_text.trim();
+        if let Ok((_, n)) = nom_primitives::parse_number.parse(qty_text) {
+            return Some(QuantityExpr::Fixed { value: n as i32 });
+        }
+        if qty_text == "x" {
+            return Some(QuantityExpr::Ref {
+                qty: QuantityRef::Variable {
+                    name: "X".to_string(),
+                },
+            });
+        }
+        if let Some(inner) = qty_text.strip_suffix(" plus one") {
+            let inner = inner.trim();
+            if inner == "x" {
+                return Some(QuantityExpr::Offset {
+                    inner: Box::new(QuantityExpr::Ref {
+                        qty: QuantityRef::Variable {
+                            name: "X".to_string(),
+                        },
+                    }),
+                    offset: 1,
+                });
+            }
+        }
+    }
+    if body == "a contraption" {
+        return Some(QuantityExpr::Fixed { value: 1 });
+    }
+    if body == "a number of contraptions equal to the result" {
+        return Some(QuantityExpr::Ref {
+            qty: QuantityRef::EventContextAmount,
+        });
+    }
+    if let Some(for_each) = body.strip_prefix("a contraption for each ") {
+        if let Ok(("", qty)) = nom_quantity::parse_for_each_clause_ref_complete(for_each) {
+            return Some(QuantityExpr::Ref { qty });
+        }
+    }
+    if let Some(for_each) = body.strip_prefix("a contraption ") {
+        if let Ok(("", qty)) = nom_quantity::parse_for_each_clause_ref_complete(for_each) {
+            return Some(QuantityExpr::Ref { qty });
+        }
+    }
+    None
+}
+
+/// Unstable Contraptions: "reassemble target Contraption you control" / "it
+/// reassembles target Contraption that player controls".
+fn parse_reassemble_contraption_imperative(
+    text: &str,
+    lower: &str,
+    ctx: &mut ParseContext,
+) -> Option<ImperativeFamilyAst> {
+    let control_mode = if lower.starts_with("reassemble ") || lower.starts_with("~ reassemble ") {
+        ReassembleControlMode::KeepController
+    } else if lower.starts_with("reassembles ") || lower.starts_with("~ reassembles ") {
+        ReassembleControlMode::GainControl
+    } else {
+        return None;
+    };
+    let after_verb = if let Some(rest) = text.strip_prefix("~ ") {
+        rest.split_once(' ')?.1.trim()
+    } else {
+        text.split_once(' ')?.1.trim()
+    };
+    let (target, rest, _) = parse_target_with_syntax(after_verb, ctx);
+    if matches!(target, TargetFilter::Any) || !rest.trim().trim_end_matches('.').is_empty() {
+        return None;
+    }
+    Some(ImperativeFamilyAst::ReassembleContraption {
+        target,
+        control_mode,
+    })
+}
+
 /// CR 706 + CR 706.2: Try to parse a full `"roll a d{N}"` clause, including
 /// an optional trailing `" and (add|subtract) {quantity}"` modifier that the
 /// resolver applies to the natural roll before result-table lookup.
@@ -9254,6 +9373,19 @@ fn lower_imperative_family_effect(ast: ImperativeFamilyAst) -> Effect {
         ImperativeFamilyAst::Planeswalk => Effect::Planeswalk,
         ImperativeFamilyAst::OpenAttractions { count } => Effect::OpenAttractions { count },
         ImperativeFamilyAst::RollToVisitAttractions => Effect::RollToVisitAttractions,
+        ImperativeFamilyAst::AssembleContraptions { count } => {
+            Effect::AssembleContraptions { count }
+        }
+        ImperativeFamilyAst::AssembleContraptionsFromRollDifference => {
+            Effect::AssembleContraptionsFromRollDifference
+        }
+        ImperativeFamilyAst::ReassembleContraption {
+            target,
+            control_mode,
+        } => Effect::ReassembleContraption {
+            target,
+            control_mode,
+        },
         ImperativeFamilyAst::Proliferate => Effect::Proliferate,
         // CR 701.56a: Time travel.
         ImperativeFamilyAst::TimeTravel => Effect::TimeTravel,
@@ -16114,5 +16246,148 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn parse_oracle_text_aerial_toastmaster_activation_assembles_a_contraption() {
+        let parsed = crate::parser::oracle::parse_oracle_text(
+            "{3}{W}, Sacrifice another artifact: This creature assembles a Contraption.",
+            "Aerial Toastmaster",
+            &[],
+            &["Artifact".to_string(), "Creature".to_string()],
+            &["Cyborg".to_string(), "Rigger".to_string()],
+        );
+        assert!(
+            parsed.abilities.iter().any(|ability| matches!(
+                *ability.effect,
+                Effect::AssembleContraptions {
+                    count: QuantityExpr::Fixed { value: 1 }
+                }
+            )),
+            "abilities: {:?}",
+            parsed
+                .abilities
+                .iter()
+                .map(|ability| &ability.effect)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn parse_effect_chain_then_assemble_adds_follow_up_clause() {
+        let def = super::super::parse_effect_chain(
+            "Counter target spell, then assemble a Contraption.",
+            AbilityKind::Spell,
+        );
+        assert!(matches!(*def.effect, Effect::Counter { .. }));
+        let sub = def
+            .sub_ability
+            .as_deref()
+            .unwrap_or_else(|| panic!("expected assemble follow-up on {def:?}"));
+        assert!(matches!(
+            *sub.effect,
+            Effect::AssembleContraptions {
+                count: QuantityExpr::Fixed { value: 1 }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_effect_chain_assemble_x_plus_one_contraptions() {
+        let def = super::super::parse_effect_chain(
+            "Assemble X plus one Contraptions.",
+            AbilityKind::Spell,
+        );
+        assert!(matches!(
+            *def.effect,
+            Effect::AssembleContraptions {
+                count: QuantityExpr::Offset { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_effect_chain_reassemble_target_contraption_you_control() {
+        let def = super::super::parse_effect_chain(
+            "Reassemble target Contraption you control.",
+            AbilityKind::Activated,
+        );
+        match &*def.effect {
+            Effect::ReassembleContraption {
+                target,
+                control_mode,
+            } => {
+                assert_eq!(*control_mode, ReassembleControlMode::KeepController);
+                assert!(matches!(target, TargetFilter::Typed(_)));
+            }
+            other => panic!("expected ReassembleContraption, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_oracle_text_triggered_reassembles_that_player_controls() {
+        let parsed = crate::parser::oracle::parse_oracle_text(
+            "Whenever this creature deals combat damage to a player, it reassembles target Contraption that player controls.",
+            "Suspicious Nanny",
+            &[],
+            &["Creature".to_string()],
+            &["Human".to_string(), "Spy".to_string(), "Rigger".to_string()],
+        );
+        let trigger = parsed
+            .triggers
+            .iter()
+            .find(|trigger| trigger.execute.is_some())
+            .unwrap_or_else(|| panic!("expected triggered reassemble in {:?}", parsed.triggers));
+        let execute = trigger.execute.as_ref().expect("trigger execute");
+        match &*execute.effect {
+            Effect::ReassembleContraption {
+                target,
+                control_mode,
+            } => {
+                assert_eq!(*control_mode, ReassembleControlMode::GainControl);
+                match target {
+                    TargetFilter::Typed(filter) => {
+                        assert_eq!(filter.controller, Some(ControllerRef::TargetPlayer));
+                    }
+                    other => panic!("expected typed target, got {other:?}"),
+                }
+            }
+            other => panic!("expected ReassembleContraption, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_oracle_text_triggered_it_assembles_for_each_contraption() {
+        let parsed = crate::parser::oracle::parse_oracle_text(
+            "When this creature enters, it assembles a Contraption for each Contraption you control.",
+            "Steamflogger of the Month",
+            &[],
+            &["Creature".to_string()],
+            &["Goblin".to_string(), "Rigger".to_string()],
+        );
+        let trigger = parsed
+            .triggers
+            .iter()
+            .find(|trigger| trigger.execute.is_some())
+            .unwrap_or_else(|| panic!("expected triggered assemble in {:?}", parsed.triggers));
+        let execute = trigger.execute.as_ref().expect("trigger execute");
+        match &*execute.effect {
+            Effect::AssembleContraptions { count } => match count {
+                QuantityExpr::Ref { qty } => match qty {
+                    QuantityRef::ObjectCount { filter } => match filter {
+                        TargetFilter::Typed(filter) => {
+                            assert!(filter
+                                .type_filters
+                                .contains(&TypeFilter::Subtype("Contraption".to_string())));
+                            assert_eq!(filter.controller, Some(ControllerRef::You));
+                        }
+                        other => panic!("expected typed for-each filter, got {other:?}"),
+                    },
+                    other => panic!("expected object-count quantity, got {other:?}"),
+                },
+                other => panic!("expected for-each quantity ref, got {other:?}"),
+            },
+            other => panic!("expected AssembleContraptions, got {other:?}"),
+        }
     }
 }

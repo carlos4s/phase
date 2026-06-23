@@ -374,6 +374,9 @@ pub fn build_trigger_registry() -> HashMap<TriggerMode, TriggerMatcher> {
 
     // CR 701.52a + CR 702.159a: Attraction visit triggers
     r.insert(TriggerMode::VisitAttraction, match_visit_attraction);
+    // Unstable Contraptions: "Whenever you crank this Contraption" listens for
+    // `GameEvent::ContraptionCranked`.
+    r.insert(TriggerMode::CrankContraption, match_crank_contraption);
     r.insert(TriggerMode::Specializes, match_specializes);
 
     // CR 702.140c-d: "Whenever this creature mutates" fires on `Mutated`.
@@ -4426,6 +4429,12 @@ mod tests {
                 "missing direct matcher for {mode:?}"
             );
         }
+    }
+
+    #[test]
+    fn trigger_registry_includes_crank_contraption() {
+        let registry = build_trigger_registry();
+        assert!(registry.contains_key(&TriggerMode::CrankContraption));
     }
 
     /// Helper to create a minimal TriggerDefinition with typed fields.
