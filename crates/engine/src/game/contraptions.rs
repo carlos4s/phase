@@ -536,6 +536,8 @@ fn reveal_contraption(
 }
 
 fn apply_assemble_replacements(state: &GameState, source_id: ObjectId, count: u32) -> u32 {
+    use crate::types::ability::QuantityModification;
+
     let mut adjusted = count;
     for (replacement_source_id, replacement_source) in &state.objects {
         if replacement_source.zone != Zone::Battlefield || !replacement_source.is_phased_in() {
@@ -555,7 +557,14 @@ fn apply_assemble_replacements(state: &GameState, source_id: ObjectId, count: u3
                 matches_target_filter(state, source_id, filter, &ctx)
             });
             if matches_source {
-                adjusted = adjusted.saturating_mul(2);
+                adjusted = match replacement.quantity_modification {
+                    Some(QuantityModification::Times { factor }) => adjusted.saturating_mul(factor),
+                    Some(QuantityModification::Half) => adjusted / 2,
+                    Some(QuantityModification::Plus { value }) => adjusted.saturating_add(value),
+                    Some(QuantityModification::Minus { value }) => adjusted.saturating_sub(value),
+                    Some(QuantityModification::Prevent) => 0,
+                    None => adjusted,
+                };
             }
         }
     }

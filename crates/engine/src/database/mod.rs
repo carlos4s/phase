@@ -21,8 +21,6 @@ pub mod unearth;
 #[cfg(test)]
 mod augment_tests;
 #[cfg(test)]
-mod contraptions_tests;
-#[cfg(test)]
 mod embalm_eternalize_tests;
 #[cfg(test)]
 mod encore_tests;

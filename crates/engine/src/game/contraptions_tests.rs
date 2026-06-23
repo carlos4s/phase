@@ -1,4 +1,3 @@
-use crate::database::contraptions::synthesize_contraptions;
 use crate::game::contraptions::{
     perform_contraption_upkeep_turn_based_action, resolve as resolve_contraptions,
 };
@@ -6,9 +5,9 @@ use crate::game::deck_loading::create_contraption_deck_card;
 use crate::game::engine_resolution_choices::run_batch_completion;
 use crate::game::printed_cards::apply_card_face_to_object;
 use crate::game::zones::create_object;
+use crate::parser::oracle::parse_oracle_text;
 use crate::types::ability::{
-    AbilityDefinition, AbilityKind, Effect, QuantityExpr, ReassembleControlMode, ResolvedAbility,
-    TargetFilter,
+    Effect, QuantityExpr, ReassembleControlMode, ResolvedAbility, TargetFilter,
 };
 use crate::types::card::CardFace;
 use crate::types::card_type::CoreType;
@@ -56,20 +55,14 @@ fn steamflogger_boss_face() -> CardFace {
         },
         ..CardFace::default()
     };
-    face.abilities.push(
-        AbilityDefinition::new(
-            AbilityKind::Spell,
-            Effect::Unimplemented {
-                name: "replacement_structure".to_string(),
-                description: Some("replacement".to_string()),
-            },
-        )
-        .description(
-            "If a Rigger you control would assemble a Contraption, it assembles two Contraptions instead."
-                .to_string(),
-        ),
+    let parsed = parse_oracle_text(
+        face.oracle_text.as_deref().unwrap(),
+        &face.name,
+        &[],
+        &["Creature".to_string()],
+        &["Goblin".to_string(), "Rigger".to_string()],
     );
-    synthesize_contraptions(&mut face);
+    face.replacements = parsed.replacements;
     face
 }
 
