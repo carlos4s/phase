@@ -7,7 +7,8 @@ use crate::game::engine_resolution_choices::run_batch_completion;
 use crate::game::printed_cards::apply_card_face_to_object;
 use crate::game::zones::create_object;
 use crate::types::ability::{
-    AbilityDefinition, AbilityKind, Effect, QuantityExpr, ResolvedAbility, TargetFilter,
+    AbilityDefinition, AbilityKind, Effect, QuantityExpr, ReassembleControlMode, ResolvedAbility,
+    TargetFilter,
 };
 use crate::types::card::CardFace;
 use crate::types::card_type::CoreType;
@@ -321,7 +322,7 @@ fn reassemble_with_gain_control_uses_controller_change_path() {
     let prompt = ResolvedAbility::new(
         Effect::ReassembleContraption {
             target: TargetFilter::SpecificObject { id: contraption },
-            gain_control: true,
+            control_mode: ReassembleControlMode::GainControl,
         },
         Vec::new(),
         ObjectId(999),
@@ -348,7 +349,7 @@ fn reassemble_with_gain_control_uses_controller_change_path() {
         Effect::ReassembleContraptionOnSprocket {
             target: TargetFilter::SpecificObject { id: contraption },
             sprocket: 2,
-            gain_control: true,
+            control_mode: ReassembleControlMode::GainControl,
         },
         Vec::new(),
         ObjectId(999),

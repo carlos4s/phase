@@ -7,8 +7,8 @@ use crate::game::game_object::GameObject;
 use crate::game::quantity::resolve_quantity_with_targets;
 use crate::game::targeting::resolved_object_ids_for_filter;
 use crate::types::ability::{
-    AbilityDefinition, AbilityKind, Effect, EffectError, EffectKind, ResolvedAbility,
-    SubAbilityLink, TargetFilter,
+    AbilityDefinition, AbilityKind, Effect, EffectError, EffectKind, ReassembleControlMode,
+    ResolvedAbility, SubAbilityLink, TargetFilter,
 };
 use crate::types::events::GameEvent;
 use crate::types::game_state::{BatchCompletion, GameState, PendingContinuation, WaitingFor};
@@ -96,9 +96,9 @@ pub fn resolve(
         }
         Effect::ReassembleContraption {
             target,
-            gain_control,
+            control_mode,
         } => {
-            prompt_reassemble_sprocket_choice(state, ability, target, *gain_control)?;
+            prompt_reassemble_sprocket_choice(state, ability, target, *control_mode)?;
             events.push(GameEvent::EffectResolved {
                 kind: EffectKind::ReassembleContraption,
                 source_id: ability.source_id,
@@ -108,9 +108,9 @@ pub fn resolve(
         Effect::ReassembleContraptionOnSprocket {
             target,
             sprocket,
-            gain_control,
+            control_mode,
         } => {
-            apply_reassemble_to_sprocket(state, ability, target, *sprocket, *gain_control, events)?;
+            apply_reassemble_to_sprocket(state, ability, target, *sprocket, *control_mode, events)?;
             events.push(GameEvent::EffectResolved {
                 kind: EffectKind::ReassembleContraptionOnSprocket,
                 source_id: ability.source_id,
@@ -361,7 +361,7 @@ fn prompt_reassemble_sprocket_choice(
     state: &mut GameState,
     ability: &ResolvedAbility,
     target: &TargetFilter,
-    gain_control: bool,
+    control_mode: ReassembleControlMode,
 ) -> Result<(), EffectError> {
     let mut targets = resolved_object_ids_for_filter(state, ability, target);
     targets.sort_by_key(|id| id.0);
@@ -373,7 +373,7 @@ fn prompt_reassemble_sprocket_choice(
         .objects
         .get(&target_id)
         .and_then(|obj| obj.contraption_sprocket);
-    let changing_controller = gain_control
+    let changing_controller = matches!(control_mode, ReassembleControlMode::GainControl)
         && state
             .objects
             .get(&target_id)
@@ -389,7 +389,7 @@ fn prompt_reassemble_sprocket_choice(
                         id: TrackedSetId(0),
                     },
                     sprocket,
-                    gain_control,
+                    control_mode,
                 },
             )
             .description(format!("Move it onto sprocket {sprocket}."))
@@ -420,7 +420,7 @@ fn apply_reassemble_to_sprocket(
     ability: &ResolvedAbility,
     target: &TargetFilter,
     sprocket: u8,
-    gain_control: bool,
+    control_mode: ReassembleControlMode,
     events: &mut Vec<GameEvent>,
 ) -> Result<(), EffectError> {
     let mut targets = resolved_object_ids_for_filter(state, ability, target);
@@ -436,9 +436,10 @@ fn apply_reassemble_to_sprocket(
         if obj.zone != Zone::Battlefield || !is_contraption_card(obj) {
             return Ok(());
         }
-        gain_control && obj.controller != ability.controller
+        matches!(control_mode, ReassembleControlMode::GainControl)
+            && obj.controller != ability.controller
     };
-    if gain_control {
+    if matches!(control_mode, ReassembleControlMode::GainControl) {
         gain_control::apply_permanent_control_change(
             state,
             ability.source_id,

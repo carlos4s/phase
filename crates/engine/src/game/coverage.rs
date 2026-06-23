@@ -2430,11 +2430,14 @@ fn effect_details(effect: &Effect) -> Vec<(String, String)> {
         }
         Effect::ReassembleContraption {
             target,
-            gain_control,
+            control_mode,
         } => {
             d.push(("target".into(), fmt_target(target)));
-            if *gain_control {
-                d.push(("gain_control".into(), "yes".into()));
+            if !matches!(
+                control_mode,
+                crate::types::ability::ReassembleControlMode::KeepController
+            ) {
+                d.push(("control_mode".into(), format!("{control_mode:?}")));
             }
         }
         Effect::AssembleContraptionOnSprocket {
@@ -2450,12 +2453,15 @@ fn effect_details(effect: &Effect) -> Vec<(String, String)> {
         Effect::ReassembleContraptionOnSprocket {
             target,
             sprocket,
-            gain_control,
+            control_mode,
         } => {
             d.push(("target".into(), fmt_target(target)));
             d.push(("sprocket".into(), sprocket.to_string()));
-            if *gain_control {
-                d.push(("gain_control".into(), "yes".into()));
+            if !matches!(
+                control_mode,
+                crate::types::ability::ReassembleControlMode::KeepController
+            ) {
+                d.push(("control_mode".into(), format!("{control_mode:?}")));
             }
         }
         Effect::RevealTop { player, count } => {

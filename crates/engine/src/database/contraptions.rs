@@ -2,7 +2,8 @@
 
 use crate::types::ability::{
     AbilityDefinition, AbilityKind, ControllerRef, Effect, FilterProp, QuantityExpr, QuantityRef,
-    ReplacementDefinition, ReplacementMode, TargetFilter, TypeFilter, TypedFilter,
+    ReassembleControlMode, ReplacementDefinition, ReplacementMode, TargetFilter, TypeFilter,
+    TypedFilter,
 };
 use crate::types::card::CardFace;
 use crate::types::replacements::ReplacementEvent;
@@ -73,54 +74,7 @@ fn synthesized_effect_for_unimplemented(effect: &Effect) -> Option<Effect> {
     };
 
     let description = description.trim();
-    match description {
-        "~ assembles a Contraption"
-        | "it assembles a Contraption"
-        | "Assemble a Contraption"
-        | "This Contraption assembles a Contraption" => {
-            Some(Effect::AssembleContraptions { count: fixed(1) })
-        }
-        "Assemble two Contraptions" => Some(Effect::AssembleContraptions { count: fixed(2) }),
-        "Assemble X Contraptions" => Some(Effect::AssembleContraptions {
-            count: x_quantity(),
-        }),
-        "Assemble X plus one Contraptions" => Some(Effect::AssembleContraptions {
-            count: QuantityExpr::Offset {
-                inner: Box::new(x_quantity()),
-                offset: 1,
-            },
-        }),
-        "Assemble a number of Contraptions equal to the result" => {
-            Some(Effect::AssembleContraptions {
-                count: event_amount(),
-            })
-        }
-        "This Contraption assembles a number of Contraptions equal to the difference between those results" => {
-            Some(Effect::AssembleContraptionsFromRollDifference)
-        }
-        "it assembles a Contraption for each Contraption you control" => {
-            Some(Effect::AssembleContraptions {
-                count: QuantityExpr::Ref {
-                    qty: QuantityRef::ObjectCount {
-                        filter: controlled_battlefield_contraption_filter(),
-                    },
-                },
-            })
-        }
-        "Reassemble target Contraption you control" => Some(Effect::ReassembleContraption {
-            target: contraption_filter().controller(ControllerRef::You).into(),
-            gain_control: false,
-        }),
-        "it reassembles target Contraption that player controls" => {
-            Some(Effect::ReassembleContraption {
-                target: contraption_filter()
-                    .controller(ControllerRef::TriggeringPlayer)
-                    .into(),
-                gain_control: true,
-            })
-        }
-        _ => None,
-    }
+    parse_assemble_effect(description).or_else(|| parse_reassemble_effect(description))
 }
 
 fn assemble_follow_up_from_description(ability: &AbilityDefinition) -> Option<AbilityDefinition> {
@@ -221,5 +175,73 @@ fn x_quantity() -> QuantityExpr {
 fn event_amount() -> QuantityExpr {
     QuantityExpr::Ref {
         qty: QuantityRef::EventContextAmount,
+    }
+}
+
+fn parse_assemble_effect(description: &str) -> Option<Effect> {
+    let body = strip_assemble_subject(description)?;
+    let count = match body {
+        "a Contraption" => Some(fixed(1)),
+        "two Contraptions" => Some(fixed(2)),
+        "X Contraptions" => Some(x_quantity()),
+        "X plus one Contraptions" => Some(QuantityExpr::Offset {
+            inner: Box::new(x_quantity()),
+            offset: 1,
+        }),
+        "a number of Contraptions equal to the result" => Some(event_amount()),
+        "a Contraption for each Contraption you control" => Some(QuantityExpr::Ref {
+            qty: QuantityRef::ObjectCount {
+                filter: controlled_battlefield_contraption_filter(),
+            },
+        }),
+        "a number of Contraptions equal to the difference between those results" => None,
+        _ => return None,
+    };
+
+    if body == "a number of Contraptions equal to the difference between those results" {
+        return Some(Effect::AssembleContraptionsFromRollDifference);
+    }
+
+    Some(Effect::AssembleContraptions { count: count? })
+}
+
+fn strip_assemble_subject(description: &str) -> Option<&str> {
+    [
+        "~ assembles ",
+        "it assembles ",
+        "This Contraption assembles ",
+        "Assemble ",
+    ]
+    .into_iter()
+    .find_map(|prefix| description.strip_prefix(prefix))
+}
+
+fn parse_reassemble_effect(description: &str) -> Option<Effect> {
+    if let Some(body) = description.strip_prefix("Reassemble ") {
+        return Some(Effect::ReassembleContraption {
+            target: parse_reassemble_target(body)?,
+            control_mode: ReassembleControlMode::KeepController,
+        });
+    }
+    if let Some(body) = description.strip_prefix("it reassembles ") {
+        return Some(Effect::ReassembleContraption {
+            target: parse_reassemble_target(body)?,
+            control_mode: ReassembleControlMode::GainControl,
+        });
+    }
+    None
+}
+
+fn parse_reassemble_target(description: &str) -> Option<TargetFilter> {
+    match description {
+        "target Contraption you control" => {
+            Some(contraption_filter().controller(ControllerRef::You).into())
+        }
+        "target Contraption that player controls" => Some(
+            contraption_filter()
+                .controller(ControllerRef::TriggeringPlayer)
+                .into(),
+        ),
+        _ => None,
     }
 }

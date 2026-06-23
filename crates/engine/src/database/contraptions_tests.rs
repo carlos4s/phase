@@ -1,7 +1,7 @@
 use crate::database::contraptions::synthesize_contraptions;
 use crate::types::ability::{
-    AbilityDefinition, AbilityKind, ControllerRef, Effect, QuantityExpr, TargetFilter, TypeFilter,
-    TypedFilter,
+    AbilityDefinition, AbilityKind, ControllerRef, Effect, QuantityExpr, ReassembleControlMode,
+    TargetFilter, TypeFilter, TypedFilter,
 };
 use crate::types::card::CardFace;
 use crate::types::card_type::{CardType, CoreType};
@@ -128,7 +128,7 @@ fn synthesize_contraptions_rewrites_reassemble_target() {
     assert!(matches!(
         face.abilities[0].effect.as_ref(),
         Effect::ReassembleContraption {
-            gain_control: false,
+            control_mode: ReassembleControlMode::KeepController,
             ..
         }
     ));

@@ -3657,6 +3657,13 @@ pub enum EffectScope {
     All,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReassembleControlMode {
+    #[default]
+    KeepController,
+    GainControl,
+}
+
 /// CR 701.26a (tap) / CR 701.26b (untap): Direction of an `Effect::SetTapState`.
 /// Parameterizes the tap/untap axis so a single effect variant covers both
 /// keyword actions.
@@ -9459,7 +9466,7 @@ pub enum Effect {
     ReassembleContraption {
         target: TargetFilter,
         #[serde(default)]
-        gain_control: bool,
+        control_mode: ReassembleControlMode,
     },
     /// Internal Contraption helper: resolve one assemble onto the chosen
     /// sprocket, then continue with any remaining assembles.
@@ -9475,7 +9482,7 @@ pub enum Effect {
         target: TargetFilter,
         sprocket: u8,
         #[serde(default)]
-        gain_control: bool,
+        control_mode: ReassembleControlMode,
     },
     /// CR 123.3: Put one or more stickers you have access to on a target object.
     PutSticker {
