@@ -2008,6 +2008,8 @@ fn effect_details(effect: &Effect) -> Vec<(String, String)> {
         | Effect::CopySpell { target, .. }
         | Effect::CastCopyOfCard { target, .. }
         | Effect::BecomeCopy { target, .. }
+        // CR 113.1a + CR 611.2: report the donor whose activated abilities are gained.
+        | Effect::GainActivatedAbilitiesOfTarget { target, .. }
         | Effect::Suspect { target, .. }
         | Effect::Unsuspect { target, .. }
         | Effect::Connive { target, .. }
@@ -3045,8 +3047,8 @@ fn ability_details(def: &AbilityDefinition) -> Vec<(String, String)> {
             },
         ));
     }
-    if def.condition.is_some() {
-        d.push(("conditional".into(), "yes".into()));
+    if let Some(cond) = &def.condition {
+        d.push(("conditional".into(), format!("{cond:?}")));
     }
     if def.is_sorcery_speed() {
         d.push(("timing".into(), "sorcery speed".into()));
@@ -3100,11 +3102,11 @@ fn trigger_details(trig: &TriggerDefinition) -> Vec<(String, String)> {
     if let Some(vs) = &trig.valid_source {
         d.push(("valid source".into(), fmt_target(vs)));
     }
-    if trig.constraint.is_some() {
-        d.push(("constraint".into(), "yes".into()));
+    if let Some(constraint) = &trig.constraint {
+        d.push(("constraint".into(), format!("{constraint:?}")));
     }
-    if trig.condition.is_some() {
-        d.push(("condition".into(), "yes".into()));
+    if let Some(cond) = &trig.condition {
+        d.push(("condition".into(), format!("{cond:?}")));
     }
     d
 }
@@ -3273,8 +3275,8 @@ fn static_details(stat: &StaticDefinition) -> Vec<(String, String)> {
     if !simple.is_empty() {
         d.push(("mods".into(), simple.join(", ")));
     }
-    if stat.condition.is_some() {
-        d.push(("conditional".into(), "yes".into()));
+    if let Some(cond) = &stat.condition {
+        d.push(("conditional".into(), format!("{cond:?}")));
     }
     if stat.characteristic_defining {
         d.push(("CDA".into(), "yes".into()));
