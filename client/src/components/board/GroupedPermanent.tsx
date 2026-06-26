@@ -518,12 +518,17 @@ function BoardChoiceGroupControls({
   // Immediate single pick: nothing to distinguish — resolve with one click on a
   // labelled action button using the first eligible id.
   if (isBoardChoiceImmediate(choice)) {
+    // Guard against an empty eligible list: the picker only opens when there is
+    // at least one eligible id, but defending here avoids ever dispatching an
+    // action with an undefined id payload.
+    const firstId = eligibleIds[0];
+    if (firstId === undefined) return null;
     return (
       <button
         type="button"
         className="w-full rounded bg-sky-700 px-2 py-1.5 font-bold text-white hover:bg-sky-600"
         onClick={() => {
-          dispatchAction(buildBoardChoiceAction(choice, [eligibleIds[0]]));
+          dispatchAction(buildBoardChoiceAction(choice, [firstId]));
           onClose();
         }}
       >
