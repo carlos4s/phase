@@ -2867,12 +2867,21 @@ fn priority_actions(state: &GameState, player: PlayerId) -> Vec<CandidateAction>
         // CR 702.37a (Morph) + CR 702.121a (Disguise): a card with one of the
         // face-down-cast keywords may be cast face down from hand. The engine
         // models this as a priority-time move from hand onto the battlefield
-        // face down (see `morph::play_face_down`); the cost is deferred (no
-        // affordability gate here — matches the handler, which does not charge
-        // the morph cost yet). CR 702.61a: a morph face-down cast is a spell
-        // cast, so it lives under the split-second gate above. CR 702.37a uses
-        // normal spell timing, so it additionally requires the main-phase /
-        // empty-stack / own-turn window (sorcery-speed for the permanent cast).
+        // face down (see `morph::play_face_down`, which requires the hand zone);
+        // the cost is deferred (no affordability gate here — matches the
+        // handler, which does not charge the morph cost yet). CR 702.61a: a
+        // morph face-down cast is a spell cast, so it lives under the
+        // split-second gate above. CR 702.37a uses normal spell timing, so it
+        // additionally requires the main-phase / empty-stack / own-turn window
+        // (sorcery-speed for the permanent cast). The flash exception (a morph
+        // creature with intrinsic/granted flash) and morph casts from non-hand
+        // zones (Future Sight, Outpost Siege) are deferred: both require routing
+        // the face-down cast through the normal casting pipeline (cost, stack,
+        // per-card flash/timing permission) instead of this standalone move —
+        // the same family of deferred work as the morph-cost payment gap (see
+        // `mana.rs` `SpecialAction::TurnFaceUp`). Offering it any time priority
+        // is held (matching the handler's leniency) would instead surface
+        // rules-wrong instant-speed morph casts for ordinary creatures.
         if is_main_phase && stack_empty && is_active {
             for &obj_id in &p.hand {
                 let Some(obj) = state.objects.get(&obj_id) else {
@@ -2881,6 +2890,7 @@ fn priority_actions(state: &GameState, player: PlayerId) -> Vec<CandidateAction>
                 if obj.controller != player {
                     continue;
                 }
+                // allow-raw-authority: Morph/Megamorph/Disguise are intrinsic printed keywords on a hand object (never off-zone granted; Disguise has no KeywordKind), so the kind-based state authority can't represent all three.
                 let has_face_down_cast = obj.keywords.iter().any(|k| {
                     matches!(
                         k,
@@ -3196,6 +3206,7 @@ fn priority_actions(state: &GameState, player: PlayerId) -> Vec<CandidateAction>
         let Some(back_face) = &obj.back_face else {
             continue;
         };
+        // allow-raw-authority: reads a BackFaceData characteristic snapshot (not a live GameObject); mirrors morph::turn_face_up's identical back_face.keywords query — the state/object authorities operate on GameObject/state and don't apply to snapshots.
         let has_morph_cost = back_face.keywords.iter().any(|k| {
             matches!(
                 k,

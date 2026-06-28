@@ -724,6 +724,8 @@ export interface GameObject {
    * when the identity is redacted. Gate any "show the real face-down card"
    * rendering on `!face_down || identity_revealed` — never on `!face_down`
    * alone, which would hide even the controller's own face-down permanents.
+   * Typed optional so test fixtures/mocks can omit it (absent ⇒ falsy ⇒ hide,
+   * the safe default); the backend always serializes it for live game state.
    */
   identity_revealed?: boolean;
   flipped: boolean;
