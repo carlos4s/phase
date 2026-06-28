@@ -2864,6 +2864,44 @@ fn priority_actions(state: &GameState, player: PlayerId) -> Vec<CandidateAction>
             }
         }
 
+        // CR 702.37a (Morph) + CR 702.121a (Disguise): a card with one of the
+        // face-down-cast keywords may be cast face down from hand. The engine
+        // models this as a priority-time move from hand onto the battlefield
+        // face down (see `morph::play_face_down`); the cost is deferred (no
+        // affordability gate here — matches the handler, which does not charge
+        // the morph cost yet). CR 702.61a: a morph face-down cast is a spell
+        // cast, so it lives under the split-second gate above. CR 702.37a uses
+        // normal spell timing, so it additionally requires the main-phase /
+        // empty-stack / own-turn window (sorcery-speed for the permanent cast).
+        if is_main_phase && stack_empty && is_active {
+            for &obj_id in &p.hand {
+                let Some(obj) = state.objects.get(&obj_id) else {
+                    continue;
+                };
+                if obj.controller != player {
+                    continue;
+                }
+                let has_face_down_cast = obj.keywords.iter().any(|k| {
+                    matches!(
+                        k,
+                        crate::types::keywords::Keyword::Morph(_)
+                            | crate::types::keywords::Keyword::Megamorph(_)
+                            | crate::types::keywords::Keyword::Disguise(_)
+                    )
+                });
+                if has_face_down_cast {
+                    actions.push(candidate(
+                        GameAction::PlayFaceDown {
+                            object_id: obj_id,
+                            card_id: obj.card_id,
+                        },
+                        TacticalClass::Spell,
+                        Some(player),
+                    ));
+                }
+            }
+        }
+
         // CR 601.2b + CR 118.9a: Opt-in CastFromHandFree once-per-turn candidates
         // (Zaffai and the Tempests). Each (hand spell, source) pair that passes the
         // filter AND hasn't had its slot consumed this turn yields one candidate.
@@ -3133,6 +3171,52 @@ fn priority_actions(state: &GameState, player: PlayerId) -> Vec<CandidateAction>
                     Some(player),
                 ));
             }
+        }
+    }
+
+    // CR 702.37c + CR 116.2b: Turning a face-down permanent face up is a special
+    // action that does not use the stack and is available any time its controller
+    // has priority — including under split second, which (CR 702.61a) bars only
+    // spells and non-mana abilities, not special actions. Offer one candidate per
+    // face-down permanent the player controls whose stored `back_face` carries a
+    // morph/megamorph/disguise cost OR is a manifested creature (CR 701.40a),
+    // mirroring the preconditions in `morph::turn_face_up`. CR 116.2b + CR 708.7:
+    // skip permanents an active `CantBeTurnedFaceUp` static prohibits (Karlov
+    // Watchdog).
+    for &obj_id in &state.battlefield {
+        let Some(obj) = state.objects.get(&obj_id) else {
+            continue;
+        };
+        if obj.controller != player || !obj.face_down {
+            continue;
+        }
+        if crate::game::morph::is_blocked_by_cant_be_turned_face_up(state, obj_id) {
+            continue;
+        }
+        let Some(back_face) = &obj.back_face else {
+            continue;
+        };
+        let has_morph_cost = back_face.keywords.iter().any(|k| {
+            matches!(
+                k,
+                crate::types::keywords::Keyword::Morph(_)
+                    | crate::types::keywords::Keyword::Megamorph(_)
+                    | crate::types::keywords::Keyword::Disguise(_)
+            )
+        });
+        // CR 701.40a: a manifested creature can be turned face up by paying its
+        // mana cost (handled free in this engine — see `morph::turn_face_up`).
+        let is_manifested_creature = !has_morph_cost
+            && back_face
+                .card_types
+                .core_types
+                .contains(&CoreType::Creature);
+        if has_morph_cost || is_manifested_creature {
+            actions.push(candidate(
+                GameAction::TurnFaceUp { object_id: obj_id },
+                TacticalClass::Ability,
+                Some(player),
+            ));
         }
     }
 
@@ -6585,6 +6669,124 @@ mod tests {
             Some(TacticalClass::Mana),
             "CR 605.1a: Jack-o'-Lantern's graveyard-activated mana ability \
              must be offered as a Mana-class ActivateAbility candidate"
+        );
+    }
+
+    // --- Face-down / morph candidate emission (issue #4381) ---
+
+    /// Helper: a creature card carrying a Morph keyword in `player`'s hand.
+    fn morph_creature_in_hand(state: &mut GameState, player: PlayerId) -> ObjectId {
+        let id = create_object(
+            state,
+            CardId(1),
+            player,
+            "Secret Beast".to_string(),
+            Zone::Hand,
+        );
+        let obj = state.objects.get_mut(&id).unwrap();
+        obj.card_types = crate::types::card_type::CardType {
+            supertypes: vec![],
+            core_types: vec![CoreType::Creature],
+            subtypes: vec!["Beast".to_string()],
+        };
+        obj.keywords = vec![Keyword::Morph(crate::types::mana::ManaCost::Cost {
+            generic: 3,
+            shards: vec![],
+        })];
+        id
+    }
+
+    fn set_priority_main(state: &mut GameState, player: PlayerId) {
+        state.active_player = player;
+        state.priority_player = player;
+        state.phase = Phase::PreCombatMain;
+        state.waiting_for = WaitingFor::Priority { player };
+    }
+
+    /// CR 702.37c + CR 116.2b: the controller of a face-down morph permanent
+    /// must be offered a `TurnFaceUp` candidate during priority.
+    #[test]
+    fn priority_actions_offer_turn_face_up_for_controlled_face_down_morph() {
+        let mut state = GameState::new_two_player(42);
+        let p0 = PlayerId(0);
+        set_priority_main(&mut state, p0);
+
+        let id = morph_creature_in_hand(&mut state, p0);
+        let mut events = Vec::new();
+        crate::game::morph::play_face_down(&mut state, p0, id, &mut events).unwrap();
+        // Re-assert priority in case the zone pipeline touched waiting_for.
+        set_priority_main(&mut state, p0);
+
+        let has_turn_up = crate::ai_support::legal_actions(&state)
+            .iter()
+            .any(|a| matches!(a, GameAction::TurnFaceUp { object_id } if *object_id == id));
+        assert!(
+            has_turn_up,
+            "must offer TurnFaceUp for a controlled face-down morph permanent"
+        );
+    }
+
+    /// CR 702.37c: only the *controller* may turn a face-down permanent face
+    /// up. The opponent holding priority must NOT receive a TurnFaceUp
+    /// candidate for a permanent they do not control.
+    #[test]
+    fn priority_actions_skip_turn_face_up_for_opponent_face_down_morph() {
+        let mut state = GameState::new_two_player(42);
+        let p0 = PlayerId(0);
+        let p1 = PlayerId(1);
+        set_priority_main(&mut state, p0);
+
+        let id = morph_creature_in_hand(&mut state, p0);
+        let mut events = Vec::new();
+        crate::game::morph::play_face_down(&mut state, p0, id, &mut events).unwrap();
+        // Opponent now holds priority.
+        set_priority_main(&mut state, p1);
+
+        let has_turn_up = crate::ai_support::legal_actions(&state)
+            .iter()
+            .any(|a| matches!(a, GameAction::TurnFaceUp { object_id } if *object_id == id));
+        assert!(
+            !has_turn_up,
+            "must NOT offer TurnFaceUp for a permanent the acting player does not control"
+        );
+    }
+
+    /// CR 702.37a: a Morph card in hand must surface a `PlayFaceDown` candidate
+    /// during the controller's main phase with an empty stack.
+    #[test]
+    fn priority_actions_offer_play_face_down_for_morph_card_in_hand() {
+        let mut state = GameState::new_two_player(42);
+        let p0 = PlayerId(0);
+        set_priority_main(&mut state, p0);
+
+        let id = morph_creature_in_hand(&mut state, p0);
+
+        let has_play_face_down = crate::ai_support::legal_actions(&state)
+            .iter()
+            .any(|a| matches!(a, GameAction::PlayFaceDown { object_id, .. } if *object_id == id));
+        assert!(
+            has_play_face_down,
+            "must offer PlayFaceDown for a Morph card in hand during the main phase"
+        );
+    }
+
+    /// CR 702.37a: morph face-down cast follows normal spell timing — it must
+    /// NOT be offered outside the sorcery-speed window (opponent's turn).
+    #[test]
+    fn priority_actions_skip_play_face_down_off_sorcery_window() {
+        let mut state = GameState::new_two_player(42);
+        let p0 = PlayerId(0);
+        let p1 = PlayerId(1);
+        // p0 owns the morph card but p1 is active / holds priority.
+        let id = morph_creature_in_hand(&mut state, p0);
+        set_priority_main(&mut state, p1);
+
+        let has_play_face_down = crate::ai_support::legal_actions(&state)
+            .iter()
+            .any(|a| matches!(a, GameAction::PlayFaceDown { object_id, .. } if *object_id == id));
+        assert!(
+            !has_play_face_down,
+            "must NOT offer PlayFaceDown outside the controller's sorcery-speed window"
         );
     }
 }

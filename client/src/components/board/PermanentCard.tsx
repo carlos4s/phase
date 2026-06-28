@@ -343,6 +343,10 @@ export const PermanentCard = memo(function PermanentCard({ objectId, attachments
     controllerIdentity || undefined,
   );
   const { name: imgName, faceIndex: imgFace, oracleId: imgOracleId, faceName: imgFaceName } = cardImageLookup(obj);
+  // CR 708.5: render the card back only for face-down objects whose identity
+  // has NOT been revealed to this viewer by the engine's visibility layer. The
+  // controller (and look-permitted viewers) see the real card image instead.
+  const renderAsFaceDown = obj.face_down && !obj.identity_revealed;
   const hasSummoningSickness = obj.has_summoning_sickness ?? false;
 
   const ptDisplay = computePTDisplay(obj);
@@ -700,7 +704,7 @@ export const PermanentCard = memo(function PermanentCard({ objectId, attachments
       ) : (
         <>
           <div className="relative z-10 rounded-lg overflow-hidden">
-            <CardImage cardName={imgName} faceIndex={imgFace} oracleId={imgOracleId} faceName={imgFaceName} size="small" unimplementedMechanics={obj.unimplemented_mechanics} colors={displayColors} isToken={obj.display_source === "Token"} tokenFilters={obj.display_source === "Token" ? tokenFiltersForObject(obj) : undefined} tokenImageRef={obj.token_image_ref} oracleText={obj.display_source === "Token" ? obj.token_rules_text : undefined} faceDown={obj.face_down} />
+            <CardImage cardName={imgName} faceIndex={imgFace} oracleId={imgOracleId} faceName={imgFaceName} size="small" unimplementedMechanics={obj.unimplemented_mechanics} colors={displayColors} isToken={obj.display_source === "Token"} tokenFilters={obj.display_source === "Token" ? tokenFiltersForObject(obj) : undefined} tokenImageRef={obj.token_image_ref} oracleText={obj.display_source === "Token" ? obj.token_rules_text : undefined} faceDown={renderAsFaceDown} />
             {/* Keyword strip overlay — inside the card image wrapper so absolute positioning works */}
             {showKeywordStrip && obj.keywords.length > 0 && !obj.face_down && (
               <KeywordStrip
@@ -920,6 +924,9 @@ const ExileGhostCard = memo(function ExileGhostCard({ objectId, offset }: ExileG
     controllerIdentity || undefined,
   );
   const { name: imgName, faceIndex: imgFace, oracleId: imgOracleId, faceName: imgFaceName } = cardImageLookup(obj);
+  // CR 708.5: mirror the other render branch — only mask the card image when
+  // the engine has not revealed this face-down object's identity to this viewer.
+  const renderAsFaceDown = obj.face_down && !obj.identity_revealed;
   const useArtCrop = battlefieldCardDisplay === "art_crop";
 
   return (
@@ -933,7 +940,7 @@ const ExileGhostCard = memo(function ExileGhostCard({ objectId, offset }: ExileG
       {useArtCrop ? (
         <ArtCropCard objectId={objectId} />
       ) : (
-        <CardImage cardName={imgName} faceIndex={imgFace} oracleId={imgOracleId} faceName={imgFaceName} size="small" colors={displayColors} isToken={obj.display_source === "Token"} tokenFilters={obj.display_source === "Token" ? tokenFiltersForObject(obj) : undefined} tokenImageRef={obj.token_image_ref} oracleText={obj.display_source === "Token" ? obj.token_rules_text : undefined} faceDown={obj.face_down} />
+        <CardImage cardName={imgName} faceIndex={imgFace} oracleId={imgOracleId} faceName={imgFaceName} size="small" colors={displayColors} isToken={obj.display_source === "Token"} tokenFilters={obj.display_source === "Token" ? tokenFiltersForObject(obj) : undefined} tokenImageRef={obj.token_image_ref} oracleText={obj.display_source === "Token" ? obj.token_rules_text : undefined} faceDown={renderAsFaceDown} />
       )}
     </div>
   );

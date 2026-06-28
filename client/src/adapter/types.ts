@@ -716,6 +716,16 @@ export interface GameObject {
   zone: Zone;
   tapped: boolean;
   face_down: boolean;
+  /**
+   * CR 708.5: Viewer-derived flag set by the engine's visibility layer.
+   * Meaningful only when `face_down` is true: `true` when this viewer may look
+   * at the face-down object's real identity (the controller, or a viewer with
+   * an active "you may look at face-down [filter]" static); absent/`false`
+   * when the identity is redacted. Gate any "show the real face-down card"
+   * rendering on `!face_down || identity_revealed` — never on `!face_down`
+   * alone, which would hide even the controller's own face-down permanents.
+   */
+  identity_revealed?: boolean;
   flipped: boolean;
   transformed: boolean;
   damage_marked: number;

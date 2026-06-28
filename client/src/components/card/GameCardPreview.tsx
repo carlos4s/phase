@@ -42,13 +42,21 @@ export function GameCardPreview() {
   // obj.name to the back-face name — cardImageLookup recovers the front name
   // from obj.back_face. See services/cardImageLookup.ts (issue #90).
   const inspectedLookup = inspectedObj ? cardImageLookup(inspectedObj) : null;
-  const inspectedCardName = inspectedObj && !inspectedObj.face_down
+  // CR 708.5: a face-down object's identity is shown only when the engine's
+  // visibility layer has revealed it to this viewer (`identity_revealed`). The
+  // controller (and look-permitted viewers) may peek at their own face-down
+  // permanents; other viewers see the redacted 2/2. Gate on
+  // `!face_down || identity_revealed` — never on `!face_down` alone, which
+  // would hide even the controller's own cards.
+  const identityVisible = !inspectedObj?.face_down || !!inspectedObj?.identity_revealed;
+
+  const inspectedCardName = inspectedObj && identityVisible
     ? inspectedFaceIndex === 1 && inspectedObj.back_face
       ? inspectedObj.back_face.name
       : inspectedLookup?.name ?? inspectedObj.name
     : null;
   // The "other" face: when viewing front, this is back_face; when viewing back, this is the front.
-  const inspectedOtherFaceName = inspectedObj?.back_face && !inspectedObj.face_down
+  const inspectedOtherFaceName = inspectedObj?.back_face && identityVisible
     ? inspectedFaceIndex === 1 ? inspectedObj.name : inspectedObj.back_face.name
     : null;
 

@@ -349,6 +349,18 @@ pub struct GameObject {
     // Battlefield state
     pub tapped: bool,
     pub face_down: bool,
+    /// CR 708.5: Viewer-derived flag (set during `visibility` filtering, never
+    /// on canonical state) indicating whether this face-down object's real
+    /// identity is visible to the current viewer. Only meaningful when
+    /// `face_down == true`: the controller (or a viewer with an active "you may
+    /// look at face-down [filter]" static) may look at their own face-down
+    /// permanents, so the engine reveals the real `name`/`printed_ref`/`back_face`
+    /// and sets this `true`. Other viewers get `false` with the identity
+    /// redacted. Absent/false ⇒ do not display the real card. The frontend must
+    /// gate any "show the real face-down card" rendering on this rather than on
+    /// `!face_down`, which would hide even the controller's own face-down cards.
+    #[serde(default)]
+    pub identity_revealed: bool,
     pub flipped: bool,
     pub transformed: bool,
     /// CR 712.8a + CR 400.7: True when this object is showing its MDFC back face
@@ -1217,6 +1229,7 @@ impl GameObject {
             zone,
             tapped: false,
             face_down: false,
+            identity_revealed: false,
             flipped: false,
             transformed: false,
             modal_back_face: false,

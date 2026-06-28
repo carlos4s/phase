@@ -292,6 +292,11 @@ pub fn filter_state_for_viewer(state: &GameState, viewer: PlayerId) -> GameState
             if let Some(obj) = filtered.objects.get_mut(&obj_id) {
                 if viewer_may_look {
                     reveal_face_down_identity_to_controller(obj);
+                    // CR 708.5: surface an explicit viewer-derived flag so the
+                    // frontend can render the real card for a controller / look-
+                    // permitted viewer without inferring it from `back_face`
+                    // presence (CLAUDE.md: the engine owns derived state).
+                    obj.identity_revealed = true;
                 } else {
                     redact_face_down_identity_from_observer(obj);
                 }
@@ -1048,6 +1053,50 @@ mod tests {
 
         assert_eq!(hidden.name, "Hidden Card");
         assert!(hidden.back_face.is_none());
+    }
+
+    /// CR 708.5: a battlefield face-down permanent's `identity_revealed` flag
+    /// must be set for the controller (and look-permitted viewers) and cleared
+    /// for everyone else, so the frontend can render the real card to the
+    /// controller without inferring it (issue #4381).
+    #[test]
+    fn battlefield_face_down_identity_revealed_flag_split_by_viewer() {
+        let mut state = GameState::new_two_player(42);
+        let card_id = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(0),
+            "Morph Beast".to_string(),
+            Zone::Battlefield,
+        );
+        {
+            let obj = state.objects.get_mut(&card_id).unwrap();
+            let back_face = snapshot_object_face(obj);
+            obj.back_face = Some(back_face);
+            obj.face_down = true;
+            // Controller can still see the real name (reveal applies during
+            // filtering), matching how `morph::turn_face_up` leaves the object.
+        }
+
+        // Controller view: identity revealed.
+        let owner_view = filter_state_for_viewer(&state, PlayerId(0));
+        let owner_obj = owner_view.objects.get(&card_id).unwrap();
+        assert!(owner_obj.face_down);
+        assert!(
+            owner_obj.identity_revealed,
+            "controller must see identity_revealed for their own face-down permanent"
+        );
+        assert_eq!(owner_obj.name, "Morph Beast");
+
+        // Opponent view: identity redacted, flag false.
+        let opponent_view = filter_state_for_viewer(&state, PlayerId(1));
+        let opponent_obj = opponent_view.objects.get(&card_id).unwrap();
+        assert!(opponent_obj.face_down);
+        assert!(
+            !opponent_obj.identity_revealed,
+            "opponent must NOT see identity_revealed for a face-down permanent"
+        );
+        assert_eq!(opponent_obj.name, "Hidden Card");
     }
 
     #[test]
