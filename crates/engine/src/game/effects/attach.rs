@@ -139,6 +139,26 @@ fn current_attachment_target(state: &GameState, attachment_id: ObjectId) -> Opti
         .map(target_ref_from_attach_target)
 }
 
+fn attachment_tree_contains(state: &GameState, root_id: ObjectId, candidate_id: ObjectId) -> bool {
+    let mut remaining = vec![root_id];
+    let mut visited = Vec::new();
+
+    while let Some(id) = remaining.pop() {
+        if visited.contains(&id) {
+            continue;
+        }
+        if id == candidate_id {
+            return true;
+        }
+        visited.push(id);
+        if let Some(object) = state.objects.get(&id) {
+            remaining.extend(object.attachments.iter().copied());
+        }
+    }
+
+    false
+}
+
 /// CR 608.2d + CR 601.2c: Optional or activation-deferred attach sub-instructions
 /// (Nahiri, the Lithomancer +2) choose the Equipment only after the controller
 /// accepts at resolution. When multiple Equipment match, prompt instead of
@@ -405,8 +425,17 @@ pub fn attach_to(
         return None;
     }
 
-    let old_target = current_attachment_target(state, attachment_id)
-        .filter(|target| *target != TargetRef::Object(target_id));
+    // CR 613.7e + CR 701.3b/c: read the UNFILTERED prior host once. The timestamp
+    // bump (below) must distinguish first-attach (None) from a same-host re-attach
+    // (Some(host)); `old_target` collapses both to `None` and cannot. `old_target`
+    // is just the filtered view, so derive it from the single read rather than
+    // querying the attachment's host twice.
+    let prior_host = current_attachment_target(state, attachment_id);
+    // Discriminate the timestamp bump (below) before `filter` consumes `prior_host`:
+    // `==` borrows, `Option::filter` moves. True on first-attach (None) or a move to a
+    // different host; false only on a same-host re-attach (CR 701.3b keeps the stamp).
+    let moving_to_new_host = prior_host != Some(TargetRef::Object(target_id));
+    let old_target = prior_host.filter(|target| *target != TargetRef::Object(target_id));
 
     // CR 701.3a: Attaching moves attachment onto target.
     // If already attached to something, detach first. We only need to clear an
@@ -427,6 +456,15 @@ pub fn attach_to(
     // (`attach_to_player`).
     if let Some(attachment) = state.objects.get_mut(&attachment_id) {
         attachment.attached_to = Some(target_id.into());
+    }
+
+    // CR 613.7e + CR 701.3c: first attach (None) or a move to a different host
+    // bumps the timestamp; a same-host re-attach (CR 701.3b) does not.
+    if moving_to_new_host {
+        let ts = state.next_timestamp();
+        if let Some(attachment) = state.objects.get_mut(&attachment_id) {
+            attachment.timestamp = ts;
+        }
     }
 
     // Add to target's attachments list
@@ -474,6 +512,13 @@ pub(crate) fn attachment_illegality(
     // attached to itself.) Single-authority self-attach guard protecting both
     // `can_attach_to_object` and `attach_to`.
     if attachment_id == host_id {
+        return Some(AttachIllegality::Prohibited);
+    }
+    // CR 701.3b + CR 301.5c + CR 303.4d: an illegal attachment attempt does
+    // nothing. A host already attached, directly or indirectly, to the proposed
+    // attachment would make the attachment graph cyclic, the same invalid shape
+    // as self-attach.
+    if attachment_tree_contains(state, attachment_id, host_id) {
         return Some(AttachIllegality::Prohibited);
     }
     // CR 701.3a: `CantBeAttached` blocks any attachment from being attached to
@@ -637,8 +682,16 @@ pub fn attach_to_player(
         return None;
     }
 
-    let old_target = current_attachment_target(state, attachment_id)
-        .filter(|target| *target != TargetRef::Player(target_player));
+    // CR 613.7e + CR 701.3b/c: read the UNFILTERED prior host once so a first-attach
+    // (None) and a same-player re-attach (Some(player)) are distinguishable —
+    // `old_target` collapses both to `None`. Derive the filtered view from the
+    // single read rather than querying the attachment's host twice.
+    let prior_host = current_attachment_target(state, attachment_id);
+    // Discriminate the timestamp bump (below) before `filter` consumes `prior_host`:
+    // `==` borrows, `Option::filter` moves. True on first-attach (None) or a move to a
+    // different player; false only on a same-player re-attach (CR 701.3b keeps the stamp).
+    let moving_to_new_host = prior_host != Some(TargetRef::Player(target_player));
+    let old_target = prior_host.filter(|target| *target != TargetRef::Player(target_player));
 
     // CR 701.3a: If already attached to an object, detach from that object's
     // `attachments` list. Re-attaching to a player has no symmetric cleanup —
@@ -655,6 +708,15 @@ pub fn attach_to_player(
 
     if let Some(attachment) = state.objects.get_mut(&attachment_id) {
         attachment.attached_to = Some(AttachTarget::Player(target_player));
+    }
+
+    // CR 613.7e + CR 701.3c: first attach (None) or a move to a different player
+    // host bumps the timestamp; a same-player re-attach (CR 701.3b) does not.
+    if moving_to_new_host {
+        let ts = state.next_timestamp();
+        if let Some(attachment) = state.objects.get_mut(&attachment_id) {
+            attachment.timestamp = ts;
+        }
     }
 
     crate::game::layers::mark_layers_full(state);
@@ -904,6 +966,56 @@ mod tests {
         assert_eq!(
             state.objects.get(&creature).unwrap().attachments,
             vec![sword, shield]
+        );
+    }
+
+    /// E1: re-attaching Equipment to a DIFFERENT host issues a new timestamp on
+    /// each attach — CR 613.7e (first attach) then CR 701.3c (move to a
+    /// different host). Reverting Step 2 leaves the timestamp at 0 throughout,
+    /// so both strict-increase asserts fail.
+    #[test]
+    fn reattach_to_different_host_bumps_timestamp() {
+        let mut state = setup();
+        let sword = spawn_with_subtype(&mut state, "Sword", "Equipment");
+        let bear_a = spawn_creature(&mut state, "Bear A");
+        let bear_b = spawn_creature(&mut state, "Bear B");
+
+        let ts_initial = state.objects[&sword].timestamp;
+
+        attach_to(&mut state, sword, bear_a);
+        let ts_after_a = state.objects[&sword].timestamp;
+        assert!(
+            ts_after_a > ts_initial,
+            "first attach must issue a new timestamp (CR 613.7e)"
+        );
+
+        attach_to(&mut state, sword, bear_b);
+        let ts_after_b = state.objects[&sword].timestamp;
+        assert!(
+            ts_after_b > ts_after_a,
+            "moving to a different host must issue a new timestamp (CR 701.3c)"
+        );
+    }
+
+    /// E2: re-attaching to the SAME host issues no new timestamp — CR 701.3b
+    /// (the effect does nothing). This row discriminates the LOW-1 fix: the gate
+    /// reads the UNFILTERED prior host, so a same-host re-attach is recognized as
+    /// a no-op. Reverting to the filtered `old_target` local collapses the
+    /// same-host case to `None`, which compares unequal and would bump.
+    #[test]
+    fn reattach_to_same_host_does_not_bump_timestamp() {
+        let mut state = setup();
+        let sword = spawn_with_subtype(&mut state, "Sword", "Equipment");
+        let bear = spawn_creature(&mut state, "Bear");
+
+        attach_to(&mut state, sword, bear);
+        let ts_after_first = state.objects[&sword].timestamp;
+
+        attach_to(&mut state, sword, bear);
+        let ts_after_second = state.objects[&sword].timestamp;
+        assert_eq!(
+            ts_after_first, ts_after_second,
+            "re-attaching to the same host must not issue a new timestamp (CR 701.3b)"
         );
     }
 
@@ -1654,6 +1766,38 @@ mod tests {
             state.objects.get(&equip).unwrap().attachments.is_empty(),
             "self-attach adds nothing to attachments"
         );
+    }
+
+    #[test]
+    fn attachment_cycle_is_prohibited_and_no_op() {
+        let mut state = setup();
+        let creature = spawn_creature(&mut state, "Bearer");
+        let equipment = spawn_equipment(&mut state, "Assassin Gauntlet", 10);
+
+        attach_to(&mut state, equipment, creature);
+
+        assert_eq!(
+            attachment_illegality(&state, creature, equipment),
+            Some(AttachIllegality::Prohibited),
+            "attaching a host to its own attachment would create a cycle"
+        );
+        assert!(!can_attach_to_object(&state, creature, equipment));
+        assert_eq!(attach_to(&mut state, creature, equipment), None);
+        assert_eq!(state.objects.get(&creature).unwrap().attached_to, None);
+        assert_eq!(
+            state.objects.get(&equipment).unwrap().attached_to,
+            Some(AttachTarget::Object(creature))
+        );
+        assert_eq!(
+            state.objects.get(&creature).unwrap().attachments,
+            vec![equipment]
+        );
+        assert!(state
+            .objects
+            .get(&equipment)
+            .unwrap()
+            .attachments
+            .is_empty());
     }
 
     #[test]
