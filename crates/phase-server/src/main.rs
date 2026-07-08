@@ -10,8 +10,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use axum::extract::ws::{Message, WebSocket};
-use axum::extract::{State, WebSocketUpgrade};
-use axum::response::IntoResponse;
+use axum::extract::{Request, State, WebSocketUpgrade};
+use axum::middleware::{from_fn, Next};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use clap::Parser;
@@ -267,7 +268,7 @@ fn build_game_started_message(
         },
         derived,
         player_token,
-        events,
+        events: server_core::filter_events_for_player(&events, &session.state, player),
     }
 }
 
@@ -316,7 +317,7 @@ fn build_state_update_message(
 
     Ok(ServerMessage::StateUpdate {
         state: filtered,
-        events: events.clone(),
+        events: server_core::filter_events_for_player(events, raw_state, player),
         legal_actions: if is_actor {
             legal_actions.clone()
         } else {
@@ -382,7 +383,7 @@ fn build_spectator_state_update_message(
 
     Ok(ServerMessage::StateUpdate {
         state: filtered,
-        events: events.to_vec(),
+        events: server_core::filter_events_for_player(events, raw_state, SPECTATOR_PLAYER_ID),
         legal_actions: Vec::new(),
         auto_pass_recommended: false,
         eliminated_players,
@@ -905,13 +906,20 @@ async fn main() {
         match game_db.load_all_drafts() {
             Ok(persisted_drafts) => {
                 let mut dsm = draft_sessions.lock().await;
+                let mut lob_guard = lobby.lock().await;
+                let lob = lob_guard.lobby_mut();
                 let mut restored_drafts = 0u32;
                 for (draft_code, json) in &persisted_drafts {
                     match serde_json::from_str::<server_core::persist::PersistedDraftSession>(json)
                     {
                         Ok(ps) => {
+                            let register_req =
+                                server_core::persist::restored_draft_lobby_register_request(&ps);
                             let timer_ms = ps.timer_remaining_ms;
                             dsm.restore_session(ps);
+                            if let Some(req) = register_req {
+                                lob.register_game(draft_code, req, &SysEnv);
+                            }
                             if let Some(ms) = timer_ms {
                                 info!(draft = %draft_code, remaining_ms = ms, "draft session has pending timer");
                             }
@@ -1130,35 +1138,44 @@ async fn main() {
         info!(public_url = %url, "advertising public URL for join-code sharing");
     }
 
-    let app = Router::new()
+    // Public, client-facing HTTP surface. `/p2p-draft-backup*` is part of the
+    // normal P2P draft flow; only the administrative `/admin/*` routes are gated.
+    let mut app = Router::new()
         .route("/ws", get(ws_handler))
         .route("/health", get(health))
-        .route("/admin/drafts", get(admin::admin_list_drafts))
-        .route(
-            "/admin/drafts/{code}",
-            get(admin::admin_get_draft).delete(admin::admin_delete_draft),
-        )
         .route("/p2p-draft-backup", post(admin::p2p_backup_store))
         .route(
             "/p2p-draft-backup/{code}",
             get(admin::p2p_backup_get).delete(admin::p2p_backup_delete),
-        )
-        .layer(cors)
-        .with_state(AppState {
-            sessions: state,
-            draft_sessions,
-            draft_pools,
-            connections,
-            db,
-            lobby,
-            lobby_subscribers,
-            player_count,
-            game_db,
-            draft_spectators,
-            game_spectators,
-            mode,
-            public_url: advertised_public_url,
-        });
+        );
+
+    // Administrative endpoints are destructive and information-disclosing, and
+    // reachable through the same reverse proxy as `/ws` (see deploy nginx).
+    // Mount them only when PHASE_ADMIN_TOKEN is set; otherwise absent (404).
+    let admin_token = admin_token_from_env();
+    match admin_token.as_deref() {
+        Some(_) => info!("admin HTTP endpoints enabled (bearer-token authenticated)"),
+        None => info!("admin HTTP endpoints disabled (set PHASE_ADMIN_TOKEN to enable)"),
+    }
+    if let Some(token) = admin_token.as_deref().filter(|t| !t.is_empty()) {
+        app = mount_admin_routes(app, token);
+    }
+
+    let app = app.layer(cors).with_state(AppState {
+        sessions: state,
+        draft_sessions,
+        draft_pools,
+        connections,
+        db,
+        lobby,
+        lobby_subscribers,
+        player_count,
+        game_db,
+        draft_spectators,
+        game_spectators,
+        mode,
+        public_url: advertised_public_url,
+    });
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", cli.port))
         .await
@@ -1240,6 +1257,80 @@ async fn shutdown_signal() {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+/// Constant-time byte comparison so admin-token validation does not leak the
+/// expected token through response timing.
+fn tokens_match(presented: &[u8], expected: &[u8]) -> bool {
+    if presented.len() != expected.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (a, b) in presented.iter().zip(expected.iter()) {
+        diff |= a ^ b;
+    }
+    diff == 0
+}
+
+/// Load the admin bearer token from the environment. Intentionally not a CLI
+/// flag — command-line secrets leak via process listings and shell history.
+fn admin_token_from_env() -> Option<String> {
+    std::env::var("PHASE_ADMIN_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+}
+
+/// Mount bearer-guarded `/admin/*` routes on a router that will receive `AppState`.
+fn mount_admin_routes(app: Router<AppState>, admin_token: &str) -> Router<AppState> {
+    let auth_layer = |expected: Arc<str>| {
+        from_fn(move |request: Request, next: Next| {
+            let expected = expected.clone();
+            async move { require_admin_auth(expected, request, next).await }
+        })
+    };
+    let list_auth = auth_layer(Arc::from(admin_token));
+    let detail_auth = auth_layer(Arc::from(admin_token));
+    app.route(
+        "/admin/drafts",
+        get(admin::admin_list_drafts).route_layer(list_auth),
+    )
+    .route(
+        "/admin/drafts/{code}",
+        get(admin::admin_get_draft)
+            .delete(admin::admin_delete_draft)
+            .route_layer(detail_auth),
+    )
+}
+
+/// Decide whether an `Authorization` header value authorizes an admin request.
+/// Scheme must be `Bearer` (case-insensitive per RFC 9110); credential must
+/// match `expected` in constant time.
+fn admin_request_authorized(auth_header: Option<&str>, expected: &str) -> bool {
+    let Some(value) = auth_header.map(str::trim) else {
+        return false;
+    };
+    let Some((scheme, credentials)) = value.split_once(' ') else {
+        return false;
+    };
+    if !scheme.eq_ignore_ascii_case("Bearer") {
+        return false;
+    }
+    tokens_match(credentials.trim().as_bytes(), expected.as_bytes())
+}
+
+/// Auth guard for the administrative `/admin/*` routes.
+async fn require_admin_auth(expected: Arc<str>, request: Request, next: Next) -> Response {
+    let auth_header = request
+        .headers()
+        .get(http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok());
+
+    if admin_request_authorized(auth_header, &expected) {
+        next.run(request).await
+    } else {
+        (http::StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
+    }
 }
 
 /// Validate an operator-supplied public URL at the system boundary. It must
@@ -1896,6 +1987,128 @@ fn persist_session_async(
             error!(game = %code, error = %e, "failed to serialize game session");
         }
     });
+}
+
+/// Session-configuration inputs for [`create_and_connect_multiplayer_session`].
+struct MultiplayerSessionRequest {
+    resolved: engine::game::deck_loading::PlayerDeckPayload,
+    display_name: String,
+    timer_seconds: Option<u32>,
+    pc: u8,
+    match_config: engine::types::match_config::MatchConfig,
+    format_config: Option<engine::types::format::FormatConfig>,
+    start_when_full: bool,
+    ranked: bool,
+    ai_requests: Vec<(
+        u8,
+        phase_ai::config::AiDifficulty,
+        engine::game::deck_loading::PlayerDeckPayload,
+    )>,
+    public: bool,
+    password: Option<String>,
+    host_tx: mpsc::UnboundedSender<ServerMessage>,
+}
+
+/// Phases 1–2 of the `CreateGameWithSettings` full multiplayer path.
+///
+/// Phase 1 (state lock): creates the session, configures AI seats and lobby
+/// metadata, and extracts the initial player count. The state guard is
+/// unconditionally dropped at the end of the inner block before this function
+/// returns.
+///
+/// Phase 2 (connections lock): registers the host's sender. The connections
+/// guard is unconditionally dropped at the end of its inner block.
+///
+/// Both locks are therefore free when this function returns, so callers may
+/// safely call `broadcast_player_slots` immediately after — that function
+/// re-acquires both. This extraction exists so that the test in
+/// `issue_4548_deadlock_tests` exercises the exact same lock-scoping code that
+/// the handler uses; a regression that holds either guard across the return
+/// boundary would deadlock the test's subsequent `broadcast_player_slots` call.
+async fn create_and_connect_multiplayer_session(
+    state: &SharedState,
+    connections: &SharedConnections,
+    game_db: &SharedGameDb,
+    req: MultiplayerSessionRequest,
+) -> (String, String, u32) {
+    let MultiplayerSessionRequest {
+        resolved,
+        display_name,
+        timer_seconds,
+        pc,
+        match_config,
+        format_config,
+        start_when_full,
+        ranked,
+        ai_requests,
+        public,
+        password,
+        host_tx,
+    } = req;
+
+    // Phase 1 ── state lock; released at end of block.
+    let (game_code, player_token, initial_player_count) = {
+        let mut mgr = state.lock().await;
+        let (game_code, player_token) = mgr.create_game_n_players(
+            resolved,
+            display_name.clone(),
+            timer_seconds,
+            pc,
+            match_config,
+            format_config,
+        );
+        info!(game = %game_code, host = %display_name, players = pc, "game created via lobby");
+
+        if let Some(session) = mgr.sessions.get_mut(&game_code) {
+            session.start_when_full = start_when_full;
+            session.ranked = ranked;
+            for (seat_index, difficulty, deck) in &ai_requests {
+                let seat = *seat_index as usize;
+                session.display_names[seat] = format!("AI ({difficulty:?})");
+                session.connected[seat] = true;
+                session.decks[seat] = Some(deck.clone());
+                let pid = PlayerId(*seat_index);
+                session.ai_seats.insert(pid);
+                let config = phase_ai::config::create_config_for_players(
+                    *difficulty,
+                    phase_ai::config::Platform::Native,
+                    pc,
+                );
+                session.ai_configs.insert(pid, config);
+            }
+        }
+
+        let initial_player_count = mgr
+            .sessions
+            .get(&game_code)
+            .map(|s| s.current_player_count())
+            .unwrap_or(1);
+
+        if let Some(session) = mgr.sessions.get_mut(&game_code) {
+            session.lobby_meta = Some(server_core::PersistedLobbyMeta {
+                host_name: display_name.clone(),
+                public,
+                password,
+                timer_seconds,
+                start_when_full,
+                ranked,
+            });
+            persist_session_async(game_db, &game_code, session);
+        }
+
+        (game_code, player_token, initial_player_count)
+    }; // state lock released here
+
+    // Phase 2 ── connections lock; released at end of block.
+    {
+        let mut conns = connections.lock().await;
+        conns
+            .entry(game_code.clone())
+            .or_default()
+            .insert(PlayerId(0), host_tx);
+    } // connections lock released here
+
+    (game_code, player_token, initial_player_count)
 }
 
 /// Broadcast `DraftSpectatorView` to all spectators watching a draft.
@@ -3093,7 +3306,9 @@ async fn handle_client_message(
                                     };
                                     let _ = s.send(ServerMessage::StateUpdate {
                                         state: pstate.clone(),
-                                        events: events.clone(),
+                                        events: server_core::filter_events_for_player(
+                                            &events, &raw_state, *pid,
+                                        ),
                                         legal_actions: player_legals,
                                         auto_pass_recommended: p_auto_pass,
                                         eliminated_players: eliminated.clone(),
@@ -3192,7 +3407,11 @@ async fn handle_client_message(
                                     };
                                     let _ = s.send(ServerMessage::StateUpdate {
                                         state: pstate.clone(),
-                                        events: ai_events.clone(),
+                                        events: server_core::filter_events_for_player(
+                                            ai_events,
+                                            ai_raw_state,
+                                            *pid,
+                                        ),
                                         legal_actions: player_legals,
                                         auto_pass_recommended: p_auto_pass,
                                         eliminated_players: eliminated.clone(),
@@ -3732,64 +3951,56 @@ async fn handle_client_message(
                 info!(game = %game_code, host = %display_name, "AI game started");
             } else {
                 // --- Standard multiplayer path ---
+                //
+                // DEADLOCK PREVENTION: `broadcast_player_slots` re-acquires
+                // both `state` and `connections`.  Each MutexGuard must be
+                // fully dropped (not merely "last-used" by NLL) before the
+                // call, because Tokio's async state machine can keep guards
+                // alive across `.await` points even after their last
+                // syntactic use.  All three locks are therefore held inside
+                // explicit `{ }` blocks so the guard is unconditionally
+                // released before the first `.await` that follows.
+                //
+                // Phase 1 ── create session, configure it, and extract every
+                // value needed by later phases; state lock is held for this
+                // entire phase and nowhere else.
+
                 // Capture the format before `format_config` is consumed so we
                 // can stamp it on the lobby entry below.
                 let format_config_for_lobby = format_config.clone();
-                let (game_code, player_token, initial_player_count) = {
-                    let mut mgr = state.lock().await;
-                    let (game_code, player_token) = mgr.create_game_n_players(
-                        resolved,
-                        display_name.clone(),
-                        timer_seconds,
-                        pc,
-                        match_config,
-                        format_config,
-                    );
-                    info!(game = %game_code, host = %display_name, players = pc, "game created via lobby");
 
-                    let mut initial_player_count = 1;
-                    if let Some(session) = mgr.sessions.get_mut(&game_code) {
-                        session.start_when_full = start_when_full;
-                        session.ranked = ranked;
-                        for (seat_index, difficulty, deck) in &ai_requests {
-                            let seat = *seat_index as usize;
-                            session.display_names[seat] = format!("AI ({difficulty:?})");
-                            session.connected[seat] = true;
-                            session.decks[seat] = Some(deck.clone());
-                            let pid = PlayerId(*seat_index);
-                            session.ai_seats.insert(pid);
-                            let config = phase_ai::config::create_config_for_players(
-                                *difficulty,
-                                phase_ai::config::Platform::Native,
-                                pc,
-                            );
-                            session.ai_configs.insert(pid, config);
-                        }
-
-                        initial_player_count = session.current_player_count();
-                        session.lobby_meta = Some(server_core::PersistedLobbyMeta {
-                            host_name: display_name.clone(),
-                            public,
-                            password: password.clone(),
+                // Phases 1–2: create+configure the session (state lock) and
+                // register the host connection (connections lock).  Both locks
+                // are released inside `create_and_connect_multiplayer_session`
+                // before it returns, so `broadcast_player_slots` (Phase 4) can
+                // re-acquire them without deadlocking.
+                let (game_code, player_token, initial_player_count) =
+                    create_and_connect_multiplayer_session(
+                        state,
+                        connections,
+                        game_db,
+                        MultiplayerSessionRequest {
+                            resolved,
+                            display_name: display_name.clone(),
                             timer_seconds,
+                            pc,
+                            match_config,
+                            format_config,
                             start_when_full,
                             ranked,
-                        });
-                        persist_session_async(game_db, &game_code, session);
-                    }
-
-                    (game_code, player_token, initial_player_count)
-                };
+                            ai_requests,
+                            public,
+                            password: password.clone(), // original still needed for Phase 3
+                            host_tx: tx.clone(),
+                        },
+                    )
+                    .await;
 
                 identity.set_session(game_code.clone(), PlayerId(0), player_token.clone());
 
-                {
-                    let mut conns = connections.lock().await;
-                    conns
-                        .entry(game_code.clone())
-                        .or_default()
-                        .insert(PlayerId(0), tx.clone());
-                }
+                // Phase 3 ── register with lobby broker and snapshot the
+                // public-game entry while the lobby lock is held; released
+                // before the subsequent .await calls.
 
                 // Pull the client's advertised build identity from the
                 // stored ClientHello. `client_hello` is guaranteed Some here
@@ -3843,9 +4054,18 @@ async fn handle_client_message(
                         },
                         &SysEnv,
                     );
-                    lob.public_game(&game_code)
-                };
+                    // Snapshot the public-game entry while the lock is still
+                    // held; avoids re-locking lobby after the broadcast below.
+                    if public {
+                        lob.public_game(&game_code)
+                    } else {
+                        None
+                    }
+                }; // lobby lock released here
 
+                // Phase 4 ── all locks are free; send replies and broadcast.
+                // `broadcast_player_slots` re-acquires state + connections —
+                // both are available now.
                 let msg = ServerMessage::GameCreated {
                     game_code: game_code.clone(),
                     player_token,
@@ -3854,7 +4074,7 @@ async fn handle_client_message(
                     let _ = socket.send(Message::text(json)).await;
                 }
 
-                // Send initial slot state so host sees themselves in the room
+                // Send initial slot state so host sees themselves in the room.
                 broadcast_player_slots(state, connections, &game_code).await;
 
                 if let Some(game) = lobby_added_game {
@@ -5196,7 +5416,19 @@ async fn handle_client_message(
 
             let (draft_code, player_token, seat_index) = {
                 let mut mgr = draft_state.lock().await;
-                mgr.create_draft(config, display_name.clone())
+                let (draft_code, player_token, seat_index) =
+                    mgr.create_draft(config, display_name.clone());
+                if let Some(session) = mgr.sessions.get_mut(&draft_code) {
+                    session.lobby_meta = Some(server_core::PersistedLobbyMeta {
+                        host_name: display_name.clone(),
+                        public,
+                        password: password.clone(),
+                        timer_seconds,
+                        start_when_full: true,
+                        ranked: false,
+                    });
+                }
+                (draft_code, player_token, seat_index)
             };
 
             identity.draft_code = Some(draft_code.clone());
@@ -5342,6 +5574,15 @@ async fn handle_client_message(
                     }
                 }
                 Err(reason) => {
+                    if reason == "password_required" {
+                        let msg = ServerMessage::PasswordRequired {
+                            game_code: draft_code.clone(),
+                        };
+                        if let Ok(json) = serde_json::to_string(&msg) {
+                            let _ = socket.send(Message::text(json)).await;
+                        }
+                        return;
+                    }
                     let msg = ServerMessage::DraftActionRejected { reason };
                     if let Ok(json) = serde_json::to_string(&msg) {
                         let _ = socket.send(Message::text(json)).await;
@@ -5407,6 +5648,18 @@ async fn handle_client_message(
                 None
             };
 
+            let public_before = if is_start {
+                draft_state
+                    .lock()
+                    .await
+                    .sessions
+                    .get(&draft_code)
+                    .and_then(|s| s.lobby_meta.as_ref())
+                    .is_some_and(|m| m.public)
+            } else {
+                false
+            };
+
             let result = {
                 let mut mgr = draft_state.lock().await;
                 let before_window = mgr.sessions.get(&draft_code).map(|s| {
@@ -5438,6 +5691,25 @@ async fn handle_client_message(
 
             match result {
                 Ok((views, should_rearm_timer)) => {
+                    if is_start {
+                        let removed = {
+                            let mut lob_guard = lobby.lock().await;
+                            let lob = lob_guard.lobby_mut();
+                            let existed = lob.has_game(&draft_code);
+                            lob.unregister_game(&draft_code);
+                            existed
+                        };
+                        if removed && public_before {
+                            broadcast_to_lobby_subscribers(
+                                lobby_subscribers,
+                                ServerMessage::LobbyGameRemoved {
+                                    game_code: draft_code.clone(),
+                                },
+                            )
+                            .await;
+                        }
+                    }
+
                     // Broadcast DraftStateUpdate to all connected sockets in the pod
                     broadcast_draft_views(&draft_code, &views, connections, draft_state).await;
 
@@ -6738,5 +7010,450 @@ mod handshake_tests {
             Some((DraftStatus::Drafting, 2, 13)),
             Some((DraftStatus::Deckbuilding, 2, 13)),
         ));
+    }
+}
+
+// Regression test for https://github.com/phase-rs/phase/issues/4548:
+// `broadcast_player_slots` must be callable without holding either the
+// `state` or `connections` lock — both are re-acquired internally.
+// The fix scopes every MutexGuard inside an explicit `{ }` block so the
+// guard is unconditionally released before the `.await` inside
+// `broadcast_player_slots`.
+#[cfg(test)]
+mod issue_4548_deadlock_tests {
+    use super::*;
+    use engine::game::deck_loading::PlayerDeckPayload;
+    use tempfile::NamedTempFile;
+
+    #[tokio::test]
+    async fn broadcast_player_slots_completes_when_no_locks_held() {
+        let state: SharedState = Arc::new(Mutex::new(SessionManager::new()));
+        let connections: SharedConnections = Arc::new(Mutex::new(HashMap::new()));
+
+        let game_code = {
+            let mut mgr = state.lock().await;
+            let (code, _token) = mgr.create_game(PlayerDeckPayload::default());
+            code
+        }; // state lock released here — matches the fixed handler path
+
+        // If the old code were in effect (mgr held across this call), this
+        // `.await` would block forever.  With the fix the lock is already
+        // released, so it completes immediately.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            broadcast_player_slots(&state, &connections, &game_code),
+        )
+        .await
+        .expect("broadcast_player_slots must not deadlock when called without holding locks");
+    }
+
+    #[tokio::test]
+    async fn broadcast_player_slots_completes_while_lobby_lock_held() {
+        // Regression: the old code kept `lob_guard` alive past the broadcast
+        // call.  `broadcast_player_slots` does not acquire lobby, so holding
+        // the lobby lock while calling it must not deadlock.
+        let state: SharedState = Arc::new(Mutex::new(SessionManager::new()));
+        let connections: SharedConnections = Arc::new(Mutex::new(HashMap::new()));
+        let lobby: SharedLobby = Arc::new(Mutex::new(Broker::new()));
+
+        let game_code = {
+            let mut mgr = state.lock().await;
+            let (code, _token) = mgr.create_game(PlayerDeckPayload::default());
+            code
+        };
+
+        // Deliberately hold the lobby lock — should not deadlock.
+        let _lob_guard = lobby.lock().await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            broadcast_player_slots(&state, &connections, &game_code),
+        )
+        .await
+        .expect("broadcast_player_slots must not deadlock when lobby lock is held by caller");
+    }
+
+    /// Handler-path regression: drives `create_and_connect_multiplayer_session`,
+    /// the exact function the `CreateGameWithSettings` handler uses for Phases 1–2.
+    ///
+    /// If that function were to hold the state or connections guard past its
+    /// return boundary (the old deadlock pattern), the `broadcast_player_slots`
+    /// call below would block waiting to re-acquire the same mutex and the
+    /// two-second timeout would fire, failing this test.
+    ///
+    /// The two earlier tests above verify `broadcast_player_slots` itself; this
+    /// test verifies the handler's lock-release contract by sharing the
+    /// production code path.
+    #[tokio::test]
+    async fn create_and_connect_multiplayer_session_releases_locks_before_broadcast() {
+        let state: SharedState = Arc::new(Mutex::new(SessionManager::new()));
+        let connections: SharedConnections = Arc::new(Mutex::new(HashMap::new()));
+        let game_db = {
+            let file = NamedTempFile::new().unwrap();
+            Arc::new(persistence::GameDb::open(file.path()).unwrap())
+        };
+        let (tx, _rx) = mpsc::unbounded_channel::<ServerMessage>();
+
+        let (game_code, _token, _count) = create_and_connect_multiplayer_session(
+            &state,
+            &connections,
+            &game_db,
+            MultiplayerSessionRequest {
+                resolved: PlayerDeckPayload::default(),
+                display_name: "Alice".to_string(),
+                timer_seconds: None,
+                pc: 2,
+                match_config: Default::default(),
+                format_config: None,
+                start_when_full: false,
+                ranked: false,
+                ai_requests: vec![],
+                public: false,
+                password: None,
+                host_tx: tx,
+            },
+        )
+        .await;
+
+        // Both state and connections locks must be free at this point.
+        // A regression that holds either guard across the helper's return
+        // causes this call to deadlock → timeout fires → test fails.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            broadcast_player_slots(&state, &connections, &game_code),
+        )
+        .await
+        .expect(
+            "create_and_connect_multiplayer_session must release state+connections before returning",
+        );
+    }
+}
+
+#[cfg(test)]
+mod admin_auth_tests {
+    use std::sync::atomic::AtomicU32;
+    use std::sync::Arc;
+
+    use axum::http::StatusCode;
+    use axum::routing::get;
+    use axum::Router;
+    use lobby_broker::Broker;
+    use server_core::draft_session::DraftSessionManager;
+    use server_core::session::SessionManager;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::sync::Mutex;
+    use url::Url;
+
+    use super::{
+        admin_request_authorized, draft_pools, mount_admin_routes, persistence, tokens_match,
+        AppState, ServerMode,
+    };
+
+    const TOKEN: &str = "s3cr3t-admin-token";
+
+    fn test_app_state(temp_dir: &tempfile::TempDir) -> AppState {
+        let game_db_path = temp_dir.path().join("games.db");
+        let game_db = Arc::new(persistence::GameDb::open(&game_db_path).expect("game db"));
+        AppState {
+            sessions: Arc::new(Mutex::new(SessionManager::new())),
+            draft_sessions: Arc::new(Mutex::new(DraftSessionManager::new())),
+            draft_pools: Arc::new(draft_pools::DraftPools::default()),
+            connections: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            db: Arc::new(engine::database::CardDatabase::default()),
+            lobby: Arc::new(Mutex::new(Broker::new())),
+            lobby_subscribers: Arc::new(Mutex::new(Vec::new())),
+            player_count: Arc::new(AtomicU32::new(0)),
+            game_db,
+            draft_spectators: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            game_spectators: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            mode: ServerMode::Full,
+            public_url: None,
+        }
+    }
+
+    async fn spawn_admin_http_test(
+        admin_token: Option<&str>,
+    ) -> (String, tokio::task::JoinHandle<()>, tempfile::TempDir) {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let app_state = test_app_state(&temp_dir);
+        // Mirror production: establish Router<AppState> before mounting admin routes.
+        let mut app = Router::new().route("/ws", get(super::ws_handler));
+        if let Some(token) = admin_token.filter(|t| !t.is_empty()) {
+            app = mount_admin_routes(app, token);
+        }
+        let app = app.with_state(app_state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("local addr");
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("test server");
+        });
+        (format!("http://{addr}"), handle, temp_dir)
+    }
+
+    async fn get_admin_drafts(base_url: &str, auth: Option<&str>) -> StatusCode {
+        let url = Url::parse(&format!("{base_url}/admin/drafts")).expect("url");
+        let host = url.host_str().expect("host");
+        let port = url.port().expect("port");
+        let mut stream = tokio::net::TcpStream::connect((host, port))
+            .await
+            .expect("connect");
+        let mut request = String::from("GET /admin/drafts HTTP/1.1\r\n");
+        request.push_str(&format!("Host: {host}\r\n"));
+        if let Some(value) = auth {
+            request.push_str(&format!("Authorization: {value}\r\n"));
+        }
+        request.push_str("Connection: close\r\n\r\n");
+        stream.write_all(request.as_bytes()).await.expect("write");
+        let mut buf = [0u8; 1024];
+        let n = stream.read(&mut buf).await.expect("read");
+        let response = std::str::from_utf8(&buf[..n]).expect("utf8");
+        let status_code = response
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|s| s.parse::<u16>().ok())
+            .expect("status line");
+        StatusCode::from_u16(status_code).expect("status code")
+    }
+
+    #[test]
+    fn tokens_match_is_exact() {
+        assert!(tokens_match(b"abc", b"abc"));
+        assert!(!tokens_match(b"abc", b"abd"));
+        assert!(!tokens_match(b"abc", b"ab"));
+        assert!(!tokens_match(b"", b"x"));
+        assert!(tokens_match(b"", b""));
+    }
+
+    #[test]
+    fn authorized_only_with_matching_bearer_token() {
+        let ok = format!("Bearer {TOKEN}");
+        assert!(admin_request_authorized(Some(&ok), TOKEN));
+        let padded = format!("Bearer   {TOKEN}  ");
+        assert!(admin_request_authorized(Some(&padded), TOKEN));
+        assert!(admin_request_authorized(
+            Some(&format!("bearer {TOKEN}")),
+            TOKEN
+        ));
+        assert!(admin_request_authorized(
+            Some(&format!("BEARER {TOKEN}")),
+            TOKEN
+        ));
+    }
+
+    #[test]
+    fn rejects_missing_wrong_or_malformed_header() {
+        assert!(!admin_request_authorized(None, TOKEN));
+        assert!(!admin_request_authorized(Some(""), TOKEN));
+        assert!(!admin_request_authorized(Some("Bearer wrong-token"), TOKEN));
+        let basic = format!("Basic {TOKEN}");
+        assert!(!admin_request_authorized(Some(&basic), TOKEN));
+        assert!(!admin_request_authorized(Some(TOKEN), TOKEN));
+    }
+
+    #[tokio::test]
+    async fn admin_routes_absent_without_token() {
+        let (base_url, server, _temp) = spawn_admin_http_test(None).await;
+        assert_eq!(
+            get_admin_drafts(&base_url, None).await,
+            StatusCode::NOT_FOUND
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn admin_routes_reject_missing_bearer() {
+        let (base_url, server, _temp) = spawn_admin_http_test(Some(TOKEN)).await;
+        assert_eq!(
+            get_admin_drafts(&base_url, None).await,
+            StatusCode::UNAUTHORIZED
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn admin_routes_reject_wrong_bearer() {
+        let (base_url, server, _temp) = spawn_admin_http_test(Some(TOKEN)).await;
+        assert_eq!(
+            get_admin_drafts(&base_url, Some("Bearer wrong-token")).await,
+            StatusCode::UNAUTHORIZED
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn admin_routes_accept_valid_bearer() {
+        let (base_url, server, _temp) = spawn_admin_http_test(Some(TOKEN)).await;
+        assert_eq!(
+            get_admin_drafts(&base_url, Some(&format!("Bearer {TOKEN}"))).await,
+            StatusCode::OK
+        );
+        server.abort();
+    }
+}
+
+#[cfg(test)]
+mod p2p_backup_delete_tests {
+    use std::sync::atomic::AtomicU32;
+    use std::sync::Arc;
+
+    use axum::http::StatusCode;
+    use axum::routing::{get, post};
+    use axum::Router;
+    use lobby_broker::Broker;
+    use server_core::draft_session::DraftSessionManager;
+    use server_core::session::SessionManager;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::sync::Mutex;
+    use url::Url;
+
+    use super::{admin, draft_pools, persistence, AppState, ServerMode};
+
+    const DRAFT_CODE: &str = "BACK01";
+    const HOST_PEER: &str = "peer-host-owner";
+    const OTHER_PEER: &str = "peer-not-owner";
+    const SNAPSHOT: &str = r#"{"status":"Drafting"}"#;
+
+    fn test_app_state(temp_dir: &tempfile::TempDir) -> AppState {
+        let game_db_path = temp_dir.path().join("games.db");
+        let game_db = Arc::new(persistence::GameDb::open(&game_db_path).expect("game db"));
+        AppState {
+            sessions: Arc::new(Mutex::new(SessionManager::new())),
+            draft_sessions: Arc::new(Mutex::new(DraftSessionManager::new())),
+            draft_pools: Arc::new(draft_pools::DraftPools::default()),
+            connections: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            db: Arc::new(engine::database::CardDatabase::default()),
+            lobby: Arc::new(Mutex::new(Broker::new())),
+            lobby_subscribers: Arc::new(Mutex::new(Vec::new())),
+            player_count: Arc::new(AtomicU32::new(0)),
+            game_db,
+            draft_spectators: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            game_spectators: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            mode: ServerMode::Full,
+            public_url: None,
+        }
+    }
+
+    async fn spawn_p2p_backup_http_test(
+        app_state: AppState,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route("/p2p-draft-backup", post(admin::p2p_backup_store))
+            .route(
+                "/p2p-draft-backup/{code}",
+                get(admin::p2p_backup_get).delete(admin::p2p_backup_delete),
+            )
+            .with_state(app_state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("local addr");
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("test server");
+        });
+        (format!("http://{addr}"), handle)
+    }
+
+    async fn request_status(base_url: &str, method: &str, path: &str) -> StatusCode {
+        let url = Url::parse(&format!("{base_url}{path}")).expect("url");
+        let host = url.host_str().expect("host");
+        let port = url.port().expect("port");
+        let mut stream = tokio::net::TcpStream::connect((host, port))
+            .await
+            .expect("connect");
+        let mut request = format!("{method} {path} HTTP/1.1\r\n");
+        request.push_str(&format!("Host: {host}\r\n"));
+        request.push_str("Connection: close\r\n\r\n");
+        stream.write_all(request.as_bytes()).await.expect("write");
+        let mut buf = [0u8; 1024];
+        let n = stream.read(&mut buf).await.expect("read");
+        let response = std::str::from_utf8(&buf[..n]).expect("utf8");
+        let status_code = response
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|s| s.parse::<u16>().ok())
+            .expect("status line");
+        StatusCode::from_u16(status_code).expect("status code")
+    }
+
+    fn seed_backup(app_state: &AppState) {
+        app_state
+            .game_db
+            .save_p2p_backup(DRAFT_CODE, HOST_PEER, SNAPSHOT)
+            .expect("seed backup");
+    }
+
+    #[tokio::test]
+    async fn delete_rejects_missing_host_peer_id_and_preserves_row() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let app_state = test_app_state(&temp_dir);
+        seed_backup(&app_state);
+        let game_db = Arc::clone(&app_state.game_db);
+        let (base_url, server) = spawn_p2p_backup_http_test(app_state).await;
+
+        assert_eq!(
+            request_status(
+                &base_url,
+                "DELETE",
+                &format!("/p2p-draft-backup/{DRAFT_CODE}")
+            )
+            .await,
+            StatusCode::BAD_REQUEST,
+        );
+        assert!(
+            game_db.load_p2p_backup(DRAFT_CODE).expect("load").is_some(),
+            "backup must survive DELETE without host_peer_id"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn delete_rejects_mismatched_host_peer_id_and_preserves_row() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let app_state = test_app_state(&temp_dir);
+        seed_backup(&app_state);
+        let game_db = Arc::clone(&app_state.game_db);
+        let (base_url, server) = spawn_p2p_backup_http_test(app_state).await;
+
+        assert_eq!(
+            request_status(
+                &base_url,
+                "DELETE",
+                &format!("/p2p-draft-backup/{DRAFT_CODE}?host_peer_id={OTHER_PEER}"),
+            )
+            .await,
+            StatusCode::FORBIDDEN,
+        );
+        assert!(
+            game_db.load_p2p_backup(DRAFT_CODE).expect("load").is_some(),
+            "backup must survive DELETE with wrong host_peer_id"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn delete_accepts_matching_host_peer_id() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let app_state = test_app_state(&temp_dir);
+        seed_backup(&app_state);
+        let game_db = Arc::clone(&app_state.game_db);
+        let (base_url, server) = spawn_p2p_backup_http_test(app_state).await;
+
+        assert_eq!(
+            request_status(
+                &base_url,
+                "DELETE",
+                &format!("/p2p-draft-backup/{DRAFT_CODE}?host_peer_id={HOST_PEER}"),
+            )
+            .await,
+            StatusCode::OK,
+        );
+        assert!(
+            game_db.load_p2p_backup(DRAFT_CODE).expect("load").is_none(),
+            "backup must be removed after authorized DELETE"
+        );
+        server.abort();
     }
 }

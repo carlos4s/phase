@@ -13,12 +13,12 @@ use crate::types::ability::{
     AggregateFunction, AttackScope, AttackSubject, CardPlayMode, CastFromZoneDriver,
     CastManaObjectScope, CastManaSpentMetric, CastVariantPaid, ChoiceType, Comparator,
     ContinuousModification, ControllerRef, CopyRetargetPermission, CounterTriggerFilter,
-    DamageKindFilter, DamageModification, DelayedTriggerCondition, Duration, Effect, EffectScope,
-    FilterProp, KickerVariant, ManaContribution, ManaProduction, ModalSelectionCondition,
-    ModalSelectionConstraint, NinjutsuVariant, ObjectScope, ParsedCondition, PlayerFilter,
-    PlayerScope, PtStat, PtValue, PtValueScope, QuantityExpr, QuantityRef, RenownSubject,
-    ReplacementCondition, ReplacementDefinition, RuntimeHandler, SacrificeCost,
-    SearchSelectionConstraint, StaticCondition, StaticDefinition, TapStateChange,
+    DamageChannel, DamageKindFilter, DamageModification, DelayedTriggerCondition, Duration, Effect,
+    EffectScope, FilterProp, KickerVariant, ManaContribution, ManaProduction,
+    ModalSelectionCondition, ModalSelectionConstraint, NinjutsuVariant, ObjectScope,
+    ParsedCondition, PlayerFilter, PlayerScope, PtStat, PtValue, PtValueScope, QuantityExpr,
+    QuantityRef, RenownSubject, ReplacementCondition, ReplacementDefinition, RuntimeHandler,
+    SacrificeCost, SearchSelectionConstraint, StaticCondition, StaticDefinition, TapStateChange,
     TargetChoiceTiming, TargetFilter, TriggerCondition, TriggerDefinition, TypeFilter, TypedFilter,
     UnlessPayModifier,
 };
@@ -476,32 +476,39 @@ pub fn synthesize_basic_land_mana(face: &mut CardFace) {
 /// authority that sets both the display flag and pushes
 /// `ActivationRestriction::AsSorcery` so the runtime legality gate enforces
 /// timing at activation time.
+/// CR 702.6: Build the equip activated ability for a single `Keyword::Equip(cost)`
+/// — `{cost}: Attach this permanent to target creature you control`, activatable
+/// only as a sorcery. Returns `None` for any other keyword. Shared by card-load
+/// synthesis (`synthesize_equip`) and the battlefield runtime granted-keyword
+/// appender (`runtime_granted_equip_abilities`), so a printed and a statically
+/// granted equip keyword (Bram, Bludgeon Brawl) produce the identical ability.
+pub(crate) fn equip_ability_for_keyword(keyword: &Keyword) -> Option<AbilityDefinition> {
+    let Keyword::Equip(cost) = keyword else {
+        return None;
+    };
+    let mut def = AbilityDefinition::new(
+        AbilityKind::Activated,
+        Effect::Attach {
+            attachment: TargetFilter::SelfRef,
+            target: TargetFilter::Typed(TypedFilter::creature().controller(ControllerRef::You)),
+        },
+    )
+    .cost(AbilityCost::Mana { cost: cost.clone() })
+    // CR 702.6a: "Activate only as a sorcery."
+    .sorcery_speed();
+    // CR 702.6a: tag the synthesized ability as the Equip action so cost
+    // reductions and Equipment-source mana restrictions recognize it (matching
+    // the parser's `try_parse_equip` path).
+    def.ability_tag = Some(AbilityTag::Equip);
+    Some(def)
+}
+
 pub fn synthesize_equip(face: &mut CardFace) {
     let equip_abilities: Vec<AbilityDefinition> = face
         .keywords
         .iter()
-        .filter_map(|kw| {
-            if let Keyword::Equip(cost) = kw {
-                Some(
-                    AbilityDefinition::new(
-                        AbilityKind::Activated,
-                        Effect::Attach {
-                            attachment: TargetFilter::SelfRef,
-                            target: TargetFilter::Typed(
-                                TypedFilter::creature().controller(ControllerRef::You),
-                            ),
-                        },
-                    )
-                    .cost(AbilityCost::Mana { cost: cost.clone() })
-                    // CR 702.6a: "Activate only as a sorcery."
-                    .sorcery_speed(),
-                )
-            } else {
-                None
-            }
-        })
+        .filter_map(equip_ability_for_keyword)
         .collect();
-
     face.abilities.extend(equip_abilities);
 }
 
@@ -666,7 +673,9 @@ pub fn synthesize_craft(face: &mut CardFace) {
                     enters_attacking: false,
                     up_to: false,
                     enter_with_counters: Vec::new(),
+                    conditional_enter_with_counters: vec![],
                     face_down_profile: None,
+                    enters_modified_if: None,
                 },
             )
             .cost(AbilityCost::Composite {
@@ -1758,7 +1767,9 @@ pub fn cycling_ability_for_keyword(keyword: &Keyword) -> Option<AbilityDefinitio
                     enters_attacking: false,
                     up_to: false,
                     enter_with_counters: vec![],
+                    conditional_enter_with_counters: vec![],
                     face_down_profile: None,
+                    enters_modified_if: None,
                 },
             );
             put_in_hand_def.sub_ability = Some(Box::new(shuffle_def));
@@ -1840,7 +1851,9 @@ pub fn synthesize_transmute(face: &mut CardFace) {
                         enters_attacking: false,
                         up_to: false,
                         enter_with_counters: vec![],
+                        conditional_enter_with_counters: vec![],
                         face_down_profile: None,
+                        enters_modified_if: None,
                     },
                 );
                 put_in_hand_def.sub_ability = Some(Box::new(shuffle_def));
@@ -1934,7 +1947,9 @@ pub fn synthesize_transfigure(face: &mut CardFace) {
                     enters_attacking: false,
                     up_to: false,
                     enter_with_counters: vec![],
+                    conditional_enter_with_counters: vec![],
                     face_down_profile: None,
+                    enters_modified_if: None,
                 },
             );
             put_on_battlefield_def.sub_ability = Some(Box::new(shuffle_def));
@@ -2838,7 +2853,9 @@ pub fn synthesize_madness_intrinsics(face: &mut CardFace) {
                 enters_attacking: false,
                 up_to: false,
                 enter_with_counters: vec![],
+                conditional_enter_with_counters: vec![],
                 face_down_profile: None,
+                enters_modified_if: None,
             },
         )));
         face.replacements.push(replacement);
@@ -2907,7 +2924,9 @@ pub fn synthesize_dredge(face: &mut CardFace) {
             enters_attacking: false,
             up_to: false,
             enter_with_counters: vec![],
+            conditional_enter_with_counters: vec![],
             face_down_profile: None,
+            enters_modified_if: None,
         },
     );
     // CR 702.52a: "mill N cards", then return — `TargetFilter::Controller`
@@ -4224,7 +4243,9 @@ fn build_soulshift_trigger(n: u32) -> TriggerDefinition {
         enters_attacking: false,
         up_to: false,
         enter_with_counters: vec![],
+        conditional_enter_with_counters: vec![],
         face_down_profile: None,
+        enters_modified_if: None,
     };
 
     // CR 603.5 + CR 702.46a "you may": optionality lives on the execute ability
@@ -5030,6 +5051,12 @@ pub(crate) fn enlist_tap_target_filter() -> TargetFilter {
     // CR 702.154a-c: the enlisted creature must be another untapped creature you
     // control, must not be a creature you chose to attack with, and must either
     // have haste or have been controlled continuously since turn began.
+    //
+    // The "can't become tapped" exclusion (CR 701.26a) is not expressible as a
+    // static `TargetFilter` prop, so the offer layer (`enlist_eligible_targets`
+    // in `engine_combat.rs`) applies it via the single `object_cant_tap`
+    // authority after evaluating this filter — mirroring the convoke/crew
+    // auto-tap gate. The commit taps through `tap_permanent_for_cost`.
     TargetFilter::And {
         filters: vec![
             TargetFilter::Typed(
@@ -6039,7 +6066,9 @@ fn build_recover_self_change_zone(destination: Zone) -> Effect {
         enters_attacking: false,
         up_to: false,
         enter_with_counters: Vec::new(),
+        conditional_enter_with_counters: vec![],
         face_down_profile: None,
+        enters_modified_if: None,
     }
 }
 
@@ -6336,7 +6365,9 @@ fn build_dies_return_with_counter_trigger(
         enters_attacking: false,
         up_to: false,
         enter_with_counters: vec![(counter_type.clone(), QuantityExpr::Fixed { value: 1 })],
+        conditional_enter_with_counters: vec![],
         face_down_profile: None,
+        enters_modified_if: None,
     };
 
     let execute = AbilityDefinition::new(AbilityKind::Spell, return_effect).description(format!(
@@ -6420,6 +6451,7 @@ fn build_suspend_last_counter_cast_trigger() -> TriggerDefinition {
             // resolves, not via a lingering permission — this arms the
             // sorcery-speed timing bypass for an upkeep recast (issue #1520).
             driver: CastFromZoneDriver::DuringResolution,
+            mana_spend_permission: None,
         },
     )
     .optional();
@@ -6539,6 +6571,7 @@ fn build_fading_upkeep_trigger() -> TriggerDefinition {
     .condition(AbilityCondition::PreviousEffectAmount {
         comparator: Comparator::EQ,
         rhs: QuantityExpr::Fixed { value: 0 },
+        channel: crate::types::ability::DamageChannel::Total,
     });
     let remove_one = AbilityDefinition::new(
         AbilityKind::Spell,
@@ -6634,6 +6667,7 @@ fn is_fading_upkeep_trigger(t: &TriggerDefinition) -> bool {
                     Some(AbilityCondition::PreviousEffectAmount {
                         comparator: Comparator::EQ,
                         rhs: QuantityExpr::Fixed { value: 0 },
+                        ..
                     })
                 ) && matches!(
                     &*sub.effect,
@@ -7491,6 +7525,7 @@ pub fn synthesize_backup(face: &mut CardFace) {
                     condition: Box::new(AbilityCondition::TargetMatchesFilter {
                         filter: TargetFilter::SelfRef,
                         use_lki: false,
+                        subject_slot: None,
                     }),
                 })
                 .description(
@@ -7624,7 +7659,9 @@ fn build_champion_etb_trigger(type_str: &str) -> TriggerDefinition {
             enters_attacking: false,
             up_to: false,
             enter_with_counters: Vec::new(),
+            conditional_enter_with_counters: vec![],
             face_down_profile: None,
+            enters_modified_if: None,
         },
     )
     .description(format!("Exile another {type_str} you control"));
@@ -7681,7 +7718,9 @@ fn build_champion_ltb_return_trigger() -> TriggerDefinition {
             enters_attacking: false,
             up_to: false,
             enter_with_counters: Vec::new(),
+            conditional_enter_with_counters: vec![],
             face_down_profile: None,
+            enters_modified_if: None,
         },
     )
     .description("Return the exiled card to the battlefield under its owner's control".to_string());
@@ -8071,7 +8110,7 @@ fn bloodthirst_counter_quantity(value: &BloodthirstValue) -> QuantityExpr {
                 group_by: None,
                 damage_kind: DamageKindFilter::Any,
 
-                excess_only: false,
+                channel: DamageChannel::Total,
             },
         },
     }
@@ -8802,6 +8841,7 @@ pub fn synthesize_read_ahead(face: &mut CardFace) {
             choice_type: ChoiceType::NumberRange {
                 min: 1,
                 max: final_chapter.min(u8::MAX as u32) as u8,
+                distinctness: crate::types::ability::NumberDistinctness::Repeatable,
             },
             persist: true,
             selection: crate::types::ability::TargetSelectionMode::Chosen,
@@ -9414,7 +9454,9 @@ pub fn synthesize_partner_with(face: &mut CardFace) {
             enters_attacking: false,
             up_to: false,
             enter_with_counters: vec![],
+            conditional_enter_with_counters: vec![],
             face_down_profile: None,
+            enters_modified_if: None,
         },
     )
     .sub_ability(shuffle);
@@ -9531,6 +9573,7 @@ pub fn synthesize_siege_intrinsics(face: &mut CardFace) {
                 // router already routed this shape through during-resolution;
                 // the explicit discriminator preserves that.)
                 driver: CastFromZoneDriver::DuringResolution,
+                mana_spend_permission: None,
             },
         )
         .optional();
@@ -9547,7 +9590,9 @@ pub fn synthesize_siege_intrinsics(face: &mut CardFace) {
                 enters_attacking: false,
                 up_to: false,
                 enter_with_counters: vec![],
+                conditional_enter_with_counters: vec![],
                 face_down_profile: None,
+                enters_modified_if: None,
             },
         )
         .sub_ability(cast_sub);
@@ -10500,6 +10545,7 @@ mod cycling_synthesis_tests {
                 scryfall_id: Some("fractured-sanity-test-face".to_string()),
             },
             foreign_data: Vec::new(),
+            related_cards: crate::database::mtgjson::SetRelatedCards::default(),
         };
 
         let face = build_oracle_face(&mtgjson, None);
@@ -10568,6 +10614,7 @@ mod cycling_synthesis_tests {
                 scryfall_id: Some("storm-queen-test-face".to_string()),
             },
             foreign_data: Vec::new(),
+            related_cards: crate::database::mtgjson::SetRelatedCards::default(),
         };
 
         let face = build_oracle_face(&storm, None);
@@ -10619,6 +10666,7 @@ mod cycling_synthesis_tests {
                 scryfall_id: Some("flying-men-test-face".to_string()),
             },
             foreign_data: Vec::new(),
+            related_cards: crate::database::mtgjson::SetRelatedCards::default(),
         };
 
         let face = build_oracle_face(&men, None);
@@ -11222,6 +11270,7 @@ mod evoke_synthesis_tests {
                 scryfall_oracle_id: None,
             },
             foreign_data: Vec::new(),
+            related_cards: crate::database::mtgjson::SetRelatedCards::default(),
         };
 
         let face = build_oracle_face(&mtgjson, None);
@@ -13624,6 +13673,7 @@ mod provoke_synthesis_tests {
                 scryfall_oracle_id: None,
             },
             foreign_data: Vec::new(),
+            related_cards: crate::database::mtgjson::SetRelatedCards::default(),
         };
 
         let face = build_oracle_face(&mtgjson, None);
@@ -14700,6 +14750,7 @@ mod increment_synthesis_tests {
                 scryfall_id: Some("increment-dedupe-test-face".to_string()),
             },
             foreign_data: Vec::new(),
+            related_cards: crate::database::mtgjson::SetRelatedCards::default(),
         }
     }
 
@@ -19030,7 +19081,9 @@ mod backup_synthesis_tests {
         // Verify the condition is Not(TargetMatchesFilter(SelfRef))
         match &sub_ability.condition {
             Some(AbilityCondition::Not { condition }) => match condition.as_ref() {
-                AbilityCondition::TargetMatchesFilter { filter, use_lki } => {
+                AbilityCondition::TargetMatchesFilter {
+                    filter, use_lki, ..
+                } => {
                     assert!(matches!(filter, TargetFilter::SelfRef));
                     assert!(!use_lki);
                 }
@@ -21214,6 +21267,7 @@ mod bloodthirst_synthesis_tests {
                 scryfall_oracle_id: None,
             },
             foreign_data: Vec::new(),
+            related_cards: crate::database::mtgjson::SetRelatedCards::default(),
         };
 
         let face = build_oracle_face(&mtgjson, None);
@@ -21277,6 +21331,7 @@ mod bloodthirst_synthesis_tests {
                 scryfall_oracle_id: None,
             },
             foreign_data: Vec::new(),
+            related_cards: crate::database::mtgjson::SetRelatedCards::default(),
         }
     }
 
@@ -21396,6 +21451,7 @@ mod bloodthirst_synthesis_tests {
                 scryfall_oracle_id: None,
             },
             foreign_data: Vec::new(),
+            related_cards: crate::database::mtgjson::SetRelatedCards::default(),
         }
     }
 
@@ -21527,6 +21583,7 @@ mod bloodthirst_synthesis_tests {
                 scryfall_oracle_id: None,
             },
             foreign_data: Vec::new(),
+            related_cards: crate::database::mtgjson::SetRelatedCards::default(),
         };
 
         let face = build_oracle_face(&mtgjson, None);
@@ -22536,7 +22593,7 @@ mod devour_synthesis_tests {
             .expect("read-ahead ETB replacement");
         let execute = etb.execute.as_deref().expect("execute body");
         let Effect::Choose {
-            choice_type: ChoiceType::NumberRange { min, max },
+            choice_type: ChoiceType::NumberRange { min, max, .. },
             persist,
             ..
         } = &*execute.effect
@@ -23118,6 +23175,7 @@ mod fading_vanishing_tests {
             Some(AbilityCondition::PreviousEffectAmount {
                 comparator: Comparator::EQ,
                 rhs: QuantityExpr::Fixed { value: 0 },
+                ..
             })
         ));
         assert!(matches!(
@@ -25121,6 +25179,7 @@ mod absorb_synthesis_tests {
                 },
                 target: TargetFilter::Any,
                 damage_source: None,
+                excess: None,
             },
             vec![TargetRef::Object(target)],
             source,

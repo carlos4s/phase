@@ -17,6 +17,7 @@ use super::effects::change_zone::shuffle_library;
 use super::engine::EngineError;
 use super::game_object::AttachTarget;
 use super::zones;
+use crate::game::token_presets::TokenPtProvenance;
 
 pub fn apply_debug_action(
     state: &mut GameState,
@@ -98,6 +99,8 @@ pub fn apply_debug_action(
             {
                 super::sacrifice::SacrificeOutcome::Complete => {
                     super::triggers::process_triggers(state, events); // CR 603: dies/LTB triggers
+                    let delayed = super::triggers::check_delayed_triggers(state, events);
+                    events.extend(delayed);
                     super::sba::check_state_based_actions(state, events); // CR 704
                 }
                 super::sacrifice::SacrificeOutcome::NeedsReplacementChoice(player) => {
@@ -403,11 +406,12 @@ pub fn apply_debug_action(
         DebugAction::SetInfiniteMana { player_id, enabled } => {
             validate_player(state, player_id)?;
             if enabled {
-                state.debug_infinite_mana.insert(player_id);
+                // Delegate to the single write authority; record the six Mana axes.
+                state.mark_unbounded_loop(player_id, &super::mana_payment::INFINITE_MANA_AXES);
                 // Seed immediately so the pool reads full before the next probe.
                 super::mana_payment::refill_infinite_mana(state);
             } else {
-                state.debug_infinite_mana.remove(&player_id);
+                state.clear_unbounded_loop(player_id);
             }
         }
 
@@ -436,6 +440,8 @@ pub fn apply_debug_action(
                 DebugTokenRequest::Preset {
                     preset_id,
                     owner,
+                    power_override,
+                    toughness_override,
                     enter_with_counters,
                 } => {
                     let preset = crate::game::token_presets::known_token_preset_by_id(&preset_id)
@@ -444,9 +450,31 @@ pub fn apply_debug_action(
                             "Debug: unknown token preset id {preset_id}"
                         ))
                     })?;
+                    let mut characteristics = preset.body.clone();
+                    match (&preset.pt_provenance, power_override, toughness_override) {
+                        (
+                            TokenPtProvenance::SourceDefinedOrDynamic { .. },
+                            Some(power),
+                            Some(toughness),
+                        ) => {
+                            characteristics.power = Some(power);
+                            characteristics.toughness = Some(toughness);
+                        }
+                        (TokenPtProvenance::SourceDefinedOrDynamic { .. }, _, _) => {
+                            return Err(EngineError::InvalidAction(format!(
+                                "Debug: token preset {preset_id} requires both power_override and toughness_override"
+                            )));
+                        }
+                        (TokenPtProvenance::FixedOrAbsent, None, None) => {}
+                        (TokenPtProvenance::FixedOrAbsent, _, _) => {
+                            return Err(EngineError::InvalidAction(format!(
+                                "Debug: token preset {preset_id} has fixed or absent P/T and does not accept overrides"
+                            )));
+                        }
+                    }
                     (
                         owner,
-                        preset.body.clone(),
+                        characteristics,
                         enter_with_counters,
                         preset.token_image_ref.clone(),
                     )
@@ -485,17 +513,25 @@ pub fn apply_debug_action(
                 count: 1,
                 applied: HashSet::new(),
             };
-            let first_created_id = state.next_object_id;
             match super::replacement::replace_event(state, proposed, events) {
                 super::replacement::ReplacementResult::Execute(event) => {
                     super::effects::token::apply_create_token_after_replacement(
                         state, event, events,
                     );
+                    // CR 111.4 + CR 707.2a: Preset spawns must install catalog
+                    // `rules_text` abilities (SOS Pest attack-life trigger, etc.)
+                    // after linking the preset image ref. The apply path runs
+                    // `inject_catalog_token_abilities` during creation when
+                    // `token_image_ref` is already set; debug preset creation
+                    // deferred the ref until here, so inject + reindex now.
                     if let Some(image_ref) = preset_image_ref {
-                        for (id, obj) in state.objects.iter_mut() {
-                            if id.0 >= first_created_id {
+                        let created_ids = state.last_created_token_ids.clone();
+                        for token_id in created_ids {
+                            if let Some(obj) = state.objects.get_mut(&token_id) {
                                 obj.token_image_ref = Some(image_ref.clone());
                             }
+                            super::effects::token::inject_catalog_token_abilities(state, token_id);
+                            super::trigger_index::reindex_object_triggers(state, token_id);
                         }
                     }
                     // "Run ETB effects" unchecked: the token is still created
@@ -854,6 +890,128 @@ mod tests {
     /// `+1/+1` counters in `enter_with_counters` enters as a 2/2 because
     /// the counters apply during the same ETB replacement window that
     /// engine-driven token creation uses. CR 704.5f does not kill it.
+    /// CR 111.4 + CR 603.6a: Debug preset spawns must install catalog
+    /// `rules_text` triggers and register them in the trigger index — same as
+    /// engine-driven token creation (issue #853).
+    #[test]
+    fn debug_create_preset_token_installs_catalog_triggers() {
+        let mut state = sandbox_state();
+        let sos_pest_preset_id = "00a0801d-0212-5890-8957-3cde30f382f9";
+        let action = GameAction::Debug(DebugAction::CreateToken {
+            request: DebugTokenRequest::Preset {
+                preset_id: sos_pest_preset_id.to_string(),
+                owner: PlayerId(0),
+                power_override: None,
+                toughness_override: None,
+                enter_with_counters: Vec::new(),
+            },
+            run_etb: true,
+        });
+        let result = crate::game::engine::apply(&mut state, PlayerId(0), action)
+            .expect("debug CreateToken preset should succeed");
+
+        let token_id = result
+            .events
+            .iter()
+            .find_map(|event| match event {
+                GameEvent::TokenCreated { object_id, .. } => Some(*object_id),
+                _ => None,
+            })
+            .expect("TokenCreated event should fire");
+
+        let obj = state
+            .objects
+            .get(&token_id)
+            .expect("pest token should exist on battlefield");
+        assert_eq!(
+            obj.trigger_definitions.len(),
+            1,
+            "SOS Pest preset must install its attack-life trigger"
+        );
+        assert_eq!(
+            obj.trigger_definitions[0].mode,
+            crate::types::triggers::TriggerMode::Attacks
+        );
+        assert!(
+            state
+                .trigger_index
+                .by_key
+                .values()
+                .any(|bucket| bucket.contains(&token_id)),
+            "catalog trigger must be registered in the trigger index"
+        );
+    }
+
+    #[test]
+    fn debug_create_source_defined_preset_requires_both_pt_overrides() {
+        let mut state = sandbox_state();
+        let action = GameAction::Debug(DebugAction::CreateToken {
+            request: DebugTokenRequest::Preset {
+                preset_id: "1545ee29-d9c1-57ff-acae-431cfd6d60cf".to_string(),
+                owner: PlayerId(0),
+                power_override: Some(4),
+                toughness_override: None,
+                enter_with_counters: Vec::new(),
+            },
+            run_etb: true,
+        });
+
+        let err = crate::game::engine::apply(&mut state, PlayerId(0), action)
+            .expect_err("source-defined preset must reject incomplete P/T overrides");
+
+        assert!(format!("{err:?}").contains("requires both power_override and toughness_override"));
+    }
+
+    #[test]
+    fn debug_create_source_defined_preset_accepts_pt_overrides() {
+        let mut state = sandbox_state();
+        let action = GameAction::Debug(DebugAction::CreateToken {
+            request: DebugTokenRequest::Preset {
+                preset_id: "1545ee29-d9c1-57ff-acae-431cfd6d60cf".to_string(),
+                owner: PlayerId(0),
+                power_override: Some(4),
+                toughness_override: Some(5),
+                enter_with_counters: Vec::new(),
+            },
+            run_etb: true,
+        });
+        let result = crate::game::engine::apply(&mut state, PlayerId(0), action)
+            .expect("complete source-defined P/T overrides should create token");
+
+        let token_id = result
+            .events
+            .iter()
+            .find_map(|event| match event {
+                GameEvent::TokenCreated { object_id, .. } => Some(*object_id),
+                _ => None,
+            })
+            .expect("TokenCreated event should fire");
+        let token = state.objects.get(&token_id).expect("token remains live");
+
+        assert_eq!(token.power, Some(4));
+        assert_eq!(token.toughness, Some(5));
+    }
+
+    #[test]
+    fn debug_create_fixed_preset_rejects_pt_overrides() {
+        let mut state = sandbox_state();
+        let action = GameAction::Debug(DebugAction::CreateToken {
+            request: DebugTokenRequest::Preset {
+                preset_id: "25b62fd5-b036-5c64-88fd-8f50d0675e4d".to_string(),
+                owner: PlayerId(0),
+                power_override: Some(4),
+                toughness_override: Some(5),
+                enter_with_counters: Vec::new(),
+            },
+            run_etb: true,
+        });
+
+        let err = crate::game::engine::apply(&mut state, PlayerId(0), action)
+            .expect_err("fixed preset must reject P/T overrides");
+
+        assert!(format!("{err:?}").contains("does not accept overrides"));
+    }
+
     #[test]
     fn debug_create_token_enters_with_counters_survives_sba() {
         let mut state = sandbox_state();

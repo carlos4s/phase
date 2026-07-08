@@ -1,7 +1,14 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-import type { FormatConfig, GameFormat, LobbyGame, MatchType, PlayerId } from "../adapter/types";
+import type {
+  FormatConfig,
+  GameFormat,
+  LobbyGame,
+  LoopDetectionMode,
+  MatchType,
+  PlayerId,
+} from "../adapter/types";
 import { FORMAT_REGISTRY } from "../data/formatRegistry";
 import { PROTOCOL_VERSION, type ServerInfo } from "../adapter/ws-adapter";
 import {
@@ -29,6 +36,10 @@ import {
   type ReconnectHandle,
 } from "../services/openPhaseSocket";
 import { isValidWebSocketUrl } from "../services/serverDetection";
+import {
+  DEFAULT_MULTIPLAYER_SERVER_URL,
+  isOfficialMultiplayerServerUrl,
+} from "../config/multiplayerServer";
 import { saveActiveGame, useGameStore } from "./gameStore";
 import type { P2PHostAdapter } from "../adapter/p2p-adapter";
 import {
@@ -161,6 +172,8 @@ export interface RememberedHostConfig {
   formatConfig: FormatConfig;
   playerCount: number;
   matchType: MatchType;
+  /** CR 732.2a: combo (infinite-loop) detector opt-in, chosen at match creation. */
+  loopDetection: LoopDetectionMode;
   isPublic: boolean;
   startWhenFull: boolean;
   ranked: boolean;
@@ -176,6 +189,8 @@ export interface HostingSettings {
   timerSeconds: number | null;
   formatConfig: FormatConfig;
   matchType: MatchType;
+  /** CR 732.2a: combo (infinite-loop) detector opt-in, chosen at match creation. */
+  loopDetection: LoopDetectionMode;
   aiSeats: AiSeatConfig[];
   startWhenFull: boolean;
   /** Optional per-match label shown in the lobby, distinct from `displayName`
@@ -487,22 +502,36 @@ export const FORMAT_DEFAULTS: Record<GameFormat, FormatConfig> = Object.fromEntr
   FORMAT_REGISTRY.map((m) => [m.format, m.default_config]),
 ) as Record<GameFormat, FormatConfig>;
 
-/**
- * Canonical official lobby URL, mirroring `DEFAULT_SERVER` in serverDetection.
- * Kept as a local literal (not imported) because this constant is read at the
- * top level during `create()`, and serverDetection ↔ multiplayerStore form an
- * import cycle — a top-level read of the imported value could hit a TDZ crash
- * depending on bundler load order. The migration below uses the same constant
- * to retire the decommissioned regional host from persisted state.
- */
-const OFFICIAL_LOBBY_URL = "wss://lobby.phase-rs.dev/ws";
+export function migrateOfficialServerAddress(
+  address: unknown,
+  targetAddress: string,
+): unknown {
+  return typeof address === "string" && isOfficialMultiplayerServerUrl(address)
+    ? targetAddress
+    : address;
+}
+
+export function migratePersistedMultiplayerState(
+  persisted: unknown,
+  version: number,
+): unknown {
+  if (!persisted || typeof persisted !== "object") return persisted;
+  const migrated = persisted as Record<string, unknown>;
+  if (version < 2) {
+    migrated.serverAddress = migrateOfficialServerAddress(
+      migrated.serverAddress,
+      DEFAULT_MULTIPLAYER_SERVER_URL,
+    );
+  }
+  return migrated;
+}
 
 export const useMultiplayerStore = create<MultiplayerState & MultiplayerActions>()(
   persist(
     (set, get) => ({
       playerId: crypto.randomUUID(),
       displayName: "",
-      serverAddress: OFFICIAL_LOBBY_URL,
+      serverAddress: DEFAULT_MULTIPLAYER_SERVER_URL,
       connectionStatus: "disconnected",
       activePlayerId: null,
       opponentDisplayName: null,
@@ -820,7 +849,10 @@ export const useMultiplayerStore = create<MultiplayerState & MultiplayerActions>
               password: settings.password || null,
               timer_seconds: settings.timerSeconds,
               player_count: settings.formatConfig.max_players,
-              match_config: { match_type: settings.matchType },
+              match_config: {
+                match_type: settings.matchType,
+                loop_detection: settings.loopDetection,
+              },
               format_config: settings.formatConfig,
               ai_seats: aiSeats,
               room_name: settings.roomName,
@@ -946,7 +978,10 @@ export const useMultiplayerStore = create<MultiplayerState & MultiplayerActions>
               password: settings.password || null,
               timerSeconds: null,
               playerCount: settings.formatConfig.max_players,
-              matchConfig: { match_type: settings.matchType },
+              matchConfig: {
+                match_type: settings.matchType,
+                loop_detection: settings.loopDetection,
+              },
               formatConfig: settings.formatConfig,
               aiSeats,
               roomName: opts.roomName ?? null,
@@ -970,7 +1005,7 @@ export const useMultiplayerStore = create<MultiplayerState & MultiplayerActions>
             host.onGuestConnected,
             settings.formatConfig.max_players,
             settings.formatConfig,
-            { match_type: settings.matchType },
+            { match_type: settings.matchType, loop_detection: settings.loopDetection },
             undefined,
             broker ?? undefined,
             false,
@@ -1308,24 +1343,12 @@ export const useMultiplayerStore = create<MultiplayerState & MultiplayerActions>
     }),
     {
       name: "phase-multiplayer",
-      version: 1,
-      // v0 → v1: the regional "us.phase-rs.dev" lobby was retired in favour of
-      // the single global broker at "lobby.phase-rs.dev". A returning user's
-      // persisted serverAddress overrides the in-code default on rehydrate, so
-      // without this rewrite they stay pinned to the dead host forever. Only the
-      // old official host is rewritten — custom self-hosted addresses are left
-      // untouched.
-      migrate: (persisted: unknown, version: number) => {
-        if (!persisted || typeof persisted !== "object") return persisted;
-        const migrated = persisted as Record<string, unknown>;
-        if (version < 1) {
-          const addr = migrated.serverAddress;
-          if (typeof addr === "string" && addr.includes("us.phase-rs.dev")) {
-            migrated.serverAddress = OFFICIAL_LOBBY_URL;
-          }
-        }
-        return migrated;
-      },
+      version: 2,
+      // v0/v1 → v2: official hosted lobby addresses are deployment defaults,
+      // not user intent. A self-hosted build must move returning browsers from
+      // the official lobby to its configured default while preserving explicit
+      // custom/self-hosted addresses.
+      migrate: migratePersistedMultiplayerState,
       partialize: (state) => ({
         playerId: state.playerId,
         displayName: state.displayName,

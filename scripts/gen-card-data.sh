@@ -23,6 +23,11 @@ DECKS_OUTPUT="${OUTPUT_DIR}/decks.json"
 
 echo "=== Card Data Generation ==="
 
+# Pin the release-gate "as of" date to UTC today so `GATED_SETS` auto-unlocks
+# sets whose MTGJSON releaseDate has passed (issue #4365). Override in tests
+# with GATED_SETS_AS_OF=YYYY-MM-DD.
+export GATED_SETS_AS_OF="${GATED_SETS_AS_OF:-$(date -u +%Y-%m-%d)}"
+
 # Download MTGJSON AtomicCards if not present. mtgjson_download prefers the
 # gzipped artifact (~50 MB vs ~156 MB uncompressed) and retries the
 # mid-transfer connection resets mtgjson hands out on large anonymous reads.
@@ -259,7 +264,7 @@ elif [ ! -s "$WARNING_PATTERNS_OUTPUT_TMP" ] || ! jq -e '.' "$WARNING_PATTERNS_O
   coverage_ok=0
 fi
 if [ "$coverage_ok" = 1 ]; then
-  if ! jq '{total_cards, supported_cards, coverage_pct, coverage_by_format, coverage_by_set}' \
+  if ! jq '{total_cards, supported_cards, coverage_pct, coverage_by_format, coverage_by_set, token_coverage}' \
         "$COVERAGE_OUTPUT_TMP" > "$COVERAGE_SUMMARY_TMP"; then
     echo "WARNING: coverage-summary derivation failed; leaving existing $COVERAGE_SUMMARY in place." >&2
   else

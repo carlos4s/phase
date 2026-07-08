@@ -90,7 +90,7 @@ pub fn acting_players(state: &GameState) -> Vec<PlayerId> {
 /// CR 103.5: True iff `player` is one of the actors permitted to submit an
 /// action for the current WaitingFor. Replaces the
 /// `acting_player(state) == Some(player)` idiom at multiplayer routing sites
-/// so the simultaneous-decision states (MulliganDecision, MulliganBottomCards,
+/// so the simultaneous-decision states (MulliganDecision,
 /// OpeningHandBottomCards)
 /// route legal actions to every pending player, not just the first.
 pub fn is_acting(state: &GameState, player: PlayerId) -> bool {
@@ -289,11 +289,18 @@ impl GameSession {
         let format_config = self.state.format_config.clone();
         let match_config = self.state.match_config;
         self.state = GameState::new(format_config, player_count, rand::rng().random());
-        self.state.match_config = if player_count == 2 {
+        // CR 732.2a: re-read the immutable match config (incl. the combo-detector
+        // opt-in) so a Bo3 rematch keeps a consistent detector across games. Bo3 is
+        // 2-player-only; `loop_detection` is player-count-agnostic.
+        let match_config = if player_count == 2 {
             match_config
         } else {
-            MatchConfig::default()
+            MatchConfig {
+                loop_detection: match_config.loop_detection,
+                ..MatchConfig::default()
+            }
         };
+        self.state.set_match_config(match_config);
         // Preserve sandbox seeding through rematch — the format flag is
         // immutable, so debug capability survives the new game. Every seat
         // is permitted by default (see initial create site for rationale);
@@ -738,11 +745,20 @@ impl SessionManager {
             player_count,
             rand::rng().random(),
         );
-        state.match_config = if player_count == 2 {
+        // CR 732.2a: Bo3 is inherently 2-player, but the combo-detector opt-in is
+        // player-count-agnostic (infinite loops are a Commander staple), so carry
+        // `loop_detection` through for any table size while resetting `match_type`.
+        // `set_match_config` is the single authority that projects the opt-in onto
+        // the runtime `GameState::loop_detection` gate.
+        let match_config = if player_count == 2 {
             match_config
         } else {
-            MatchConfig::default()
+            MatchConfig {
+                loop_detection: match_config.loop_detection,
+                ..MatchConfig::default()
+            }
         };
+        state.set_match_config(match_config);
         // Sandbox capability: the engine-level `debug_mode` gate must agree
         // with the transport-level `allow_debug_actions` flag, otherwise a
         // sandbox-permitted action would pass the server gate only to be
@@ -1056,25 +1072,50 @@ impl SessionManager {
             ));
         }
 
-        // SetPhaseStops: preference propagation keyed to the authenticated player,
-        // not whoever currently holds priority. Mirrors CancelAutoPass — the engine's
-        // own handler would key by `authorized_submitter`, which is the priority
-        // holder in multiplayer, so we must intercept here to write to the correct
-        // player's entry.
-        if let GameAction::SetPhaseStops { stops } = &action {
-            if stops.is_empty() {
-                session.state.phase_stops.remove(&player);
-            } else {
-                session.state.phase_stops.insert(player, stops.clone());
-            }
+        // SetPhaseStops: per-player preference keyed to the authenticated player,
+        // not the priority holder. Bypasses the turn/legal-action prechecks (any
+        // player may adjust their own stops at any time) and delegates the
+        // mutation to the engine (single authority — the write handler keys by
+        // `actor`, i.e. the authenticated player). Not an undo point → no
+        // takeback snapshot. CR 102.1 (scope resolves against the active player).
+        if matches!(action, GameAction::SetPhaseStops { .. }) {
+            let result = apply(&mut session.state, player, action).map_err(|e| {
+                warn!(game = %game_code, player = ?player, error = %e, reason = "engine_error", "action rejected");
+                format!("Engine error: {}", e)
+            })?;
             let (new_legal_actions, spell_costs, by_object) =
                 engine_legal_actions_full(&session.state);
             let auto_pass = auto_pass_recommended(&session.state, &new_legal_actions);
             return Ok((
                 session.state.clone(),
-                vec![],
+                result.events,
                 new_legal_actions,
-                vec![],
+                result.log_entries,
+                auto_pass,
+                spell_costs,
+                by_object,
+            ));
+        }
+
+        // SetPriorityYield: per-player standing priority-yield preference keyed
+        // to the authenticated player, not the priority holder. Bypasses the
+        // turn/legal-action prechecks (any player may adjust their own yields at
+        // any time) and delegates the mutation to the engine (single authority).
+        // A preference toggle is not an undo point, so — unlike ReorderHand — it
+        // takes NO takeback snapshot. CR 117.3d.
+        if matches!(action, GameAction::SetPriorityYield { .. }) {
+            let result = apply(&mut session.state, player, action).map_err(|e| {
+                warn!(game = %game_code, player = ?player, error = %e, reason = "engine_error", "action rejected");
+                format!("Engine error: {}", e)
+            })?;
+            let (new_legal_actions, spell_costs, by_object) =
+                engine_legal_actions_full(&session.state);
+            let auto_pass = auto_pass_recommended(&session.state, &new_legal_actions);
+            return Ok((
+                session.state.clone(),
+                result.events,
+                new_legal_actions,
+                result.log_entries,
                 auto_pass,
                 spell_costs,
                 by_object,
@@ -1188,7 +1229,16 @@ impl SessionManager {
                 && session
                     .state
                     .waiting_for
-                    .accepts_freeform_blocker_damage_assignment());
+                    .accepts_freeform_blocker_damage_assignment())
+            // CR 107.1c: "remove any number of counters" has a combinatorial legal
+            // space the coarse AI candidates cannot enumerate; the engine handler
+            // (validate_counter_selection) is the real validation boundary, so the
+            // server bypasses its candidate gate for a human's intermediate submit.
+            || (matches!(action, GameAction::ChooseCountersToRemove { .. })
+                && session
+                    .state
+                    .waiting_for
+                    .accepts_freeform_counter_removal());
         if !skip_legality {
             let (legal_actions, _, _) = engine_legal_actions_full(&session.state);
             if !legal_actions.contains(&action) {
@@ -1368,6 +1418,7 @@ mod tests {
     use engine::types::card_type::CardType;
     use engine::types::game_state::WaitingFor;
     use engine::types::mana::ManaCost;
+    use engine::types::phase::{Phase, PhaseStop, PhaseStopScope};
     use seat_reducer::types::SeatMutation;
 
     fn make_deck() -> PlayerDeckPayload {
@@ -1484,6 +1535,56 @@ mod tests {
 
         assert_eq!(team_indices, vec![0, 0, 1, 1]);
         assert_eq!(positions, vec![0, 1, 0, 1]);
+    }
+
+    /// CR 732.2a (#4603 opt-in, Best-of-N): the combo-detector opt-in lives on the
+    /// immutable `MatchConfig` and is projected onto `GameState::loop_detection` by
+    /// `set_match_config` at BOTH game creation AND the between-games rebuild, so a Bo3
+    /// match keeps a consistent detector across every game. No mid-game action can flip
+    /// it (removed as the security fix) — the config is the sole provenance.
+    ///
+    /// REVERT-FAIL: change either provenance site (create_game_n_players or
+    /// rebuild_pregame_state) back to a raw `state.match_config = …` assignment that
+    /// drops the `loop_detection` projection ⇒ the corresponding `is_on()` flips.
+    #[test]
+    fn loop_detection_config_persists_across_bo3_rebuild() {
+        use engine::types::game_state::LoopDetectionMode;
+        use engine::types::match_config::MatchType;
+
+        let mut mgr = SessionManager::new();
+        let (code, _) = mgr.create_game_n_players(
+            make_deck(),
+            "Host".to_string(),
+            None,
+            2,
+            MatchConfig {
+                match_type: MatchType::Bo3,
+                loop_detection: LoopDetectionMode::On,
+            },
+            None,
+        );
+
+        // Game 1: the creation site projects the opt-in onto the runtime flag.
+        assert!(
+            mgr.sessions
+                .get(&code)
+                .unwrap()
+                .state
+                .loop_detection
+                .is_on(),
+            "the MatchConfig opt-in must enable the detector at game-1 creation"
+        );
+
+        // Between-games rebuild (game 2): the immutable config is re-read, so the
+        // detector stays consistent across the whole Bo3 match.
+        mgr.sessions
+            .get_mut(&code)
+            .unwrap()
+            .rebuild_pregame_state(2);
+        assert!(
+            mgr.sessions.get(&code).unwrap().state.loop_detection.is_on(),
+            "the Bo3 between-games rebuild must re-derive the detector from the immutable MatchConfig"
+        );
     }
 
     #[test]
@@ -1718,6 +1819,54 @@ mod tests {
             }
         }
         (mgr, code, token0, token1)
+    }
+
+    /// `SetPhaseStops` is keyed to the authenticated player and delegated to the
+    /// engine write-handler (keyed by `actor`), so a non-priority player's stops
+    /// land on their OWN entry — not the priority holder's. Mirrors the
+    /// `SetPriorityYield` delegate precedent.
+    #[test]
+    fn set_phase_stops_lands_on_authenticated_players_entry() {
+        let (mut mgr, code, token0, token1) = setup_two_player_game();
+
+        let priority_player = match &mgr.sessions.get(&code).unwrap().state.waiting_for {
+            WaitingFor::Priority { player } => *player,
+            other => panic!("expected Priority, got {:?}", other),
+        };
+        // Dispatch from the player who does NOT hold priority.
+        let (non_priority_player, non_priority_token) = if priority_player == PlayerId(0) {
+            (PlayerId(1), token1)
+        } else {
+            (PlayerId(0), token0)
+        };
+
+        let stops = vec![PhaseStop {
+            phase: Phase::DeclareBlockers,
+            scope: PhaseStopScope::OpponentsTurns,
+        }];
+        let result = mgr.handle_action(
+            &code,
+            &non_priority_token,
+            GameAction::SetPhaseStops {
+                stops: stops.clone(),
+            },
+        );
+        assert!(
+            result.is_ok(),
+            "SetPhaseStops from a non-priority player should succeed: {:?}",
+            result.err()
+        );
+
+        let state = &mgr.sessions.get(&code).unwrap().state;
+        assert_eq!(
+            state.phase_stops.get(&non_priority_player),
+            Some(&stops),
+            "the write must land on the authenticated (non-priority) player's entry"
+        );
+        assert!(
+            !state.phase_stops.contains_key(&priority_player),
+            "the priority holder's entry must remain untouched"
+        );
     }
 
     /// `ReorderHand` succeeds even when the sender is not the priority holder.
@@ -2151,6 +2300,7 @@ mod tests {
             pending: vec![engine::types::game_state::MulliganDecisionEntry {
                 player: ai_pid,
                 mulligan_count: 0,
+                phase: engine::types::game_state::MulliganDecisionPhase::Declare,
             }],
             free_first_mulligan: true,
         };
@@ -2245,6 +2395,84 @@ mod tests {
             err.contains("not permitted") || err.contains("permission"),
             "{err}"
         );
+    }
+
+    // CR 107.1c: "remove any number of counters" — a human's intermediate submit
+    // ("remove 2 of 3") is not one of the coarse AI candidates (remove-none /
+    // remove-all), so the session must bypass its candidate legality gate via
+    // accepts_freeform_counter_removal + the skip_legality arm. Reverting either
+    // (#9 / #10) makes the intermediate submission fail as "Illegal action".
+    #[test]
+    fn remove_counters_intermediate_submit_bypasses_candidate_gate() {
+        use engine::types::ability::{
+            Effect, QuantityExpr, ResolvedAbility, TargetFilter, TargetRef,
+        };
+        use engine::types::counter::CounterType;
+        use engine::types::game_state::{CounterRemoveChoice, GameState, WaitingFor};
+        use engine::types::identifiers::CardId;
+        use engine::types::zones::Zone;
+
+        let mut mgr = SessionManager::new();
+        let (code, token) = mgr.create_game(make_deck());
+
+        let mut state = GameState::new_two_player(7);
+        let bearer = engine::game::zones::create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Bearer".to_string(),
+            Zone::Battlefield,
+        );
+        state
+            .objects
+            .get_mut(&bearer)
+            .unwrap()
+            .counters
+            .insert(CounterType::Plus1Plus1, 3);
+        let pending = ResolvedAbility::new(
+            Effect::RemoveCounter {
+                counter_type: None,
+                count: QuantityExpr::up_to(QuantityExpr::Fixed { value: -1 }),
+                target: TargetFilter::SelfRef,
+            },
+            vec![TargetRef::Object(bearer)],
+            bearer,
+            PlayerId(0),
+        );
+        state.priority_player = PlayerId(0);
+        state.waiting_for = WaitingFor::RemoveCountersChoice {
+            player: PlayerId(0),
+            source_id: bearer,
+            counter_type: None,
+            available: vec![(CounterType::Plus1Plus1, 3)],
+            pending_effect: Box::new(pending),
+        };
+        mgr.sessions.get_mut(&code).unwrap().state = state;
+
+        // Discriminating: this "remove 2 of 3" submit is absent from the coarse
+        // candidate set ({[], remove-all}); only the accepts_freeform bypass makes
+        // it legal (revert accepts_freeform_counter_removal -> false => rejected).
+        let result = mgr.handle_action(
+            &code,
+            &token,
+            GameAction::ChooseCountersToRemove {
+                selections: vec![CounterRemoveChoice {
+                    counter_type: CounterType::Plus1Plus1,
+                    count: 2,
+                }],
+            },
+        );
+
+        assert!(
+            result.is_ok(),
+            "intermediate removal must be accepted, not rejected as illegal: {result:?}"
+        );
+        let removed_to = mgr.sessions.get(&code).unwrap().state.objects[&bearer]
+            .counters
+            .get(&CounterType::Plus1Plus1)
+            .copied()
+            .unwrap_or(0);
+        assert_eq!(removed_to, 1, "exactly 2 of 3 +1/+1 counters removed");
     }
 
     #[test]

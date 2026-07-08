@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use crate::types::ability::{
-    AbilityTag, CoinFlipResult, ControllerRef, DamageKindFilter, DestinationConstraint, EffectKind,
-    OriginConstraint, TargetFilter, TargetRef, TriggerDefinition, TypedFilter,
+    AbilityTag, CoinFlipResult, ControllerRef, DamageKindFilter, DestinationConstraint,
+    DieResultFilter, EffectKind, OriginConstraint, TargetFilter, TargetRef, TriggerDefinition,
+    TypedFilter,
 };
 use crate::types::events::{GameEvent, PlayerActionKind};
 use crate::types::game_state::GameState;
@@ -151,6 +152,7 @@ pub fn trigger_matcher(mode: TriggerMode) -> Option<TriggerMatcher> {
         TriggerMode::NinjutsuActivated => match_ninjutsu_activated,
         TriggerMode::KeywordAbilityActivated(_) => match_keyword_ability_activated,
         TriggerMode::AbilityActivated => match_ability_activated,
+        TriggerMode::LoyaltyAbilityActivated => match_loyalty_ability_activated,
         TriggerMode::Firebend => match_firebend,
         TriggerMode::Airbend => match_airbend,
         TriggerMode::Earthbend => match_earthbend,
@@ -535,6 +537,12 @@ pub fn build_trigger_registry() -> HashMap<TriggerMode, TriggerMatcher> {
     // CR 602.1 + CR 605.1a: generic non-mana ability activation trigger
     // (Burning-Tree Shaman, Flamescroll Celebrant).
     r.insert(TriggerMode::AbilityActivated, match_ability_activated);
+    // CR 606.2: loyalty-ability activation trigger (Chandra's Regulator,
+    // Elspeth's Talent, Rowan's Talent, Keral Keep Disciples).
+    r.insert(
+        TriggerMode::LoyaltyAbilityActivated,
+        match_loyalty_ability_activated,
+    );
 
     // Avatar crossover: bending trigger matchers
     r.insert(TriggerMode::Firebend, match_firebend);
@@ -607,7 +615,7 @@ fn valid_source_controller_matches(
     }
 }
 
-pub(super) fn valid_player_matches(
+pub(crate) fn valid_player_matches(
     trigger: &TriggerDefinition,
     state: &GameState,
     player_id: PlayerId,
@@ -649,6 +657,22 @@ fn player_matches_filter(
                 .get(&source_id)
                 .and_then(|source| source.attached_to)
                 .and_then(|host| host.as_player())
+                == Some(player_id)
+        }
+        // CR 303.4e + CR 109.4: "enchanted [permanent]'s controller" — for an Aura
+        // phase trigger the scoped player is the CONTROLLER of the permanent the
+        // source is attached to (per CR 303.4e this may differ from the Aura's own
+        // controller). Resolves the attached object's current controller; a source
+        // attached to a player (not an object) or unattached never matches, so the
+        // trigger stays inert until the Aura is on a creature.
+        TargetFilter::ParentTargetController => {
+            state
+                .objects
+                .get(&source_id)
+                .and_then(|source| source.attached_to)
+                .and_then(|host| host.as_object())
+                .and_then(|obj_id| state.objects.get(&obj_id))
+                .map(|obj| obj.controller)
                 == Some(player_id)
         }
         _ => true,
@@ -736,6 +760,8 @@ pub(super) fn target_filter_matches_object(
         TargetFilter::ScopedPlayer => false,
         // SpecificPlayer scopes to a player, not an object — never matches an object.
         TargetFilter::SpecificPlayer { .. } => false,
+        // CR 607 (by analogy): PlayerWhoChoseLabel scopes to players, not objects.
+        TargetFilter::PlayerWhoChoseLabel { .. } => false,
         // CR 102.1 + CR 103.1: Neighbor scopes to a seating-relative player,
         // not an object — never matches an object.
         TargetFilter::Neighbor { .. } => false,
@@ -760,6 +786,9 @@ pub(super) fn target_filter_matches_object(
         | TargetFilter::Owner => false,
         TargetFilter::Any
         | TargetFilter::SelfRef
+        // CR 201.5a: a source-relative object ref, concretized to SpecificObject
+        // before any trigger evaluates; delegates like the other object refs.
+        | TargetFilter::GrantingObject
         | TargetFilter::SourceOrPaired
         | TargetFilter::Typed(_)
         | TargetFilter::Not { .. }
@@ -829,6 +858,7 @@ fn count_matching_trigger_event_subjects(
         GameEvent::AttackersDeclared { attacker_ids, .. } => count_slice(attacker_ids),
         GameEvent::CreatureExerted { object_id } => count_one(*object_id),
         GameEvent::CreatureEnlisted { attacker, .. } => count_one(*attacker),
+        GameEvent::ArmyAmassed { object_id, .. } => count_one(*object_id),
         GameEvent::ZoneChanged { object_id, .. }
         | GameEvent::Discarded { object_id, .. }
         | GameEvent::SpellCast { object_id, .. }
@@ -892,6 +922,9 @@ fn count_matching_trigger_event_subjects(
         | GameEvent::EffectResolved { .. }
         | GameEvent::Unattached { .. }
         | GameEvent::BlockersDeclared { .. }
+        // Mirrors BlockersDeclared: the "becomes blocked" trigger uses the
+        // dedicated matcher, not this generic per-object count helper.
+        | GameEvent::AttackerBecameBlockedByEffect { .. }
         | GameEvent::CombatTaxPaid { .. }
         | GameEvent::CombatTaxDeclined { .. }
         | GameEvent::VehicleCrewed { .. }
@@ -902,6 +935,7 @@ fn count_matching_trigger_event_subjects(
         | GameEvent::Specialized { .. }
         | GameEvent::DayNightChanged { .. }
         | GameEvent::TurnedFaceUp { .. }
+        | GameEvent::TurnedFaceDown { .. }
         | GameEvent::CardsRevealed { .. }
         | GameEvent::CombatDamageDealtToPlayer { .. }
         | GameEvent::PlayerEliminated { .. }
@@ -952,6 +986,7 @@ fn count_matching_trigger_event_subjects(
         | GameEvent::VoteResolved { .. }
         | GameEvent::PowerToughnessChanged { .. }
         | GameEvent::CascadeMissed { .. }
+        | GameEvent::CardPredicateGuessMade { .. }
         | GameEvent::DebugActionUsed { .. }
         | GameEvent::DebugPermissionGranted { .. }
         | GameEvent::DebugPermissionRevoked { .. }
@@ -2795,7 +2830,7 @@ pub(super) fn match_revealed(
 /// Extracted as a standalone authority so the aura mana-refund probe
 /// (`mana_sources::aura_taps_for_mana_sources_for_land`) can ask the same
 /// question without synthesizing a `GameEvent`.
-pub(super) fn taps_for_mana_card_matches(
+pub(crate) fn taps_for_mana_card_matches(
     trigger: &TriggerDefinition,
     state: &GameState,
     mana_source: ObjectId,
@@ -2845,21 +2880,70 @@ pub(super) fn match_taps_for_mana(
     }
 }
 
-/// ChangesController: fires when an object changes controller.
+/// CR 603.2 + CR 613.1b: ChangesController — fires on the `ControllerChanged`
+/// event a Layer-2 control change (or its end) emits. Every control-change path
+/// now emits this event (targeted `GainControl`, `GainControlAll`, `GiveControl`,
+/// `apply_permanent_control_change`, and the until-EOT expiry in
+/// `layers::prune_end_of_turn_effects`), so the redundant
+/// `EffectResolved { GainControl }` arm was dropped — matching both would have
+/// double-fired now that the gain also emits `ControllerChanged`.
+///
+/// The only producers of this mode are "When you lose control of ~"
+/// abilities (Khârn the Betrayer, Duplicity, Gustha's Scepter, and the S25
+/// Stolen Uniform reflexive). Two guards keep it from over-firing:
+///   * `valid_card` scopes the event to the tracked object (SelfRef for "~";
+///     the bound Equipment for Stolen Uniform's `ParentTarget`). Without this
+///     the trigger fired on *any* object's control change (the Portent trap).
+///   * "lose control" is directional: it fires only for the player *losing*
+///     control. Which side that is depends on whether the trigger source is the
+///     changing object itself:
+///     - Self-ref ("~", `source_id == object_id`): the source's live
+///       `controller` is unusable as the direction test. `collect_pending_triggers`
+///       calls `flush_layers` at its very top (before any trigger scan), so the
+///       object's controller has already flushed to `new_controller` by match
+///       time. Instead we rely on CR 603.10d look-back: a "loses control" ability
+///       is intrinsically the pre-change controller's, and `old != new` (checked
+///       above) already guarantees exactly one loser — fire for it.
+///     - Delayed/`SpecificObject` (Stolen Uniform): the source is the graveyard
+///       spell whose controller stays constant (the temp holder), so the
+///       `old_controller == source.controller` test correctly fires on the loss
+///       (old == caster == source.controller) and NOT on the initial gain
+///       (old == owner != caster).
 pub(super) fn match_changes_controller(
     event: &GameEvent,
-    _trigger: &TriggerDefinition,
-    _source_id: ObjectId,
-    _state: &GameState,
+    trigger: &TriggerDefinition,
+    source_id: ObjectId,
+    state: &GameState,
 ) -> bool {
-    matches!(
-        event,
-        GameEvent::ControllerChanged { .. }
-            | GameEvent::EffectResolved {
-                kind: EffectKind::GainControl,
-                ..
-            }
-    )
+    let GameEvent::ControllerChanged {
+        object_id,
+        old_controller,
+        new_controller,
+    } = event
+    else {
+        return false;
+    };
+    if old_controller == new_controller {
+        return false;
+    }
+    if !valid_card_matches(trigger, state, *object_id, source_id) {
+        return false;
+    }
+    if source_id == *object_id {
+        // CR 603.10d: "when you lose control of ~" looks back in time — the
+        // ability is intrinsically the pre-change controller's, i.e. the loser.
+        // The source IS the changing object, whose live `controller` already
+        // flushed to `new_controller` (flush_layers runs at the top of
+        // collect_pending_triggers, before this scan), so it can't gate the
+        // direction. `old != new` above already guarantees exactly one loser;
+        // fire for it.
+        return true;
+    }
+    // CR 603.2: delayed/`SpecificObject` case (Stolen Uniform). The source is the
+    // graveyard spell whose controller is the player who temporarily held the
+    // object; firing only when `old_controller == source.controller` fires on the
+    // loss and not on the initial gain.
+    state.objects.get(&source_id).map(|o| o.controller) == Some(*old_controller)
 }
 
 /// CR 712.14: Transformed trigger — fires when an object transforms.
@@ -3256,6 +3340,25 @@ pub(super) fn matching_becomes_blocked_events(
     source_id: ObjectId,
     state: &GameState,
 ) -> Vec<GameEvent> {
+    if let GameEvent::AttackerBecameBlockedByEffect { attacker } = event {
+        // CR 509.3d: an effect-driven block is NOT "blocked by a creature" — the
+        // "becomes blocked by a creature" form (which carries a `valid_target`
+        // blocker filter) must NOT fire. Only the bare "becomes blocked" form
+        // (CR 509.3c) fires, and only for the matching attacker.
+        if trigger.valid_target.is_some() {
+            return Vec::new();
+        }
+        let attacker_matches = if trigger.valid_card.is_some() {
+            valid_card_matches(trigger, state, *attacker, source_id)
+        } else {
+            *attacker == source_id
+        };
+        return if attacker_matches {
+            vec![event.clone()]
+        } else {
+            Vec::new()
+        };
+    }
     if let GameEvent::BlockersDeclared { assignments } = event {
         // CR 509.3d: the "becomes blocked by a creature [with quality]" form
         // (carries a `valid_target` blocker filter) triggers once for each
@@ -3639,11 +3742,27 @@ pub(super) fn match_rolled_die(
     state: &GameState,
 ) -> bool {
     if let GameEvent::DieRolled {
-        player_id, sides, ..
+        player_id,
+        sides,
+        result,
     } = event
     {
         if trigger.die_sides.is_some_and(|required| required != *sides) {
             return false;
+        }
+        // CR 706.2: result-face filter. CR 706.7: a planar (non-numeric) roll has
+        // result == None and never satisfies a numeric filter; a None filter is unaffected.
+        if let Some(filter) = &trigger.die_result {
+            let Some(rolled) = *result else {
+                return false;
+            };
+            let ok = match filter {
+                DieResultFilter::Exact(faces) => faces.contains(&rolled),
+                DieResultFilter::AtLeast(min) => rolled >= *min,
+            };
+            if !ok {
+                return false;
+            }
         }
         valid_player_matches(trigger, state, *player_id, source_id)
     } else {
@@ -3700,23 +3819,48 @@ pub(super) fn match_ring_tempts_you(
 /// Fires when a clash occurs and either clashing player matches `valid_target`.
 /// "Whenever you clash" sets `valid_target = Controller`; a generic "whenever
 /// a player clashes" leaves `valid_target` unset to match any clash.
+///
+/// CR 701.30d + CR 603.4: when the trigger carries a required clash outcome
+/// (`clash_result`, set for "...and win" cards like Sylvan Echoes), the win
+/// requirement is checked HERE, when the event occurs — so a lost or tied clash
+/// never creates a pending (no-op) trigger. The outcome is resolved from the
+/// ability's controller's perspective via `ClashResult::for_player`, the same
+/// source of truth used by resolution-time "if you won" gating
+/// (`event_outcome_was_won_by_controller`), so matching and resolution agree.
 pub(super) fn match_clash(
     event: &GameEvent,
     trigger: &TriggerDefinition,
     source_id: ObjectId,
     state: &GameState,
 ) -> bool {
-    match event {
-        GameEvent::Clash {
-            controller,
-            opponent,
-            ..
-        } => {
-            valid_player_matches(trigger, state, *controller, source_id)
-                || valid_player_matches(trigger, state, *opponent, source_id)
-        }
-        _ => false,
+    let GameEvent::Clash {
+        controller,
+        opponent,
+        result,
+        ..
+    } = event
+    else {
+        return false;
+    };
+    // Either clashing player must satisfy `valid_target` ("you clash" → the
+    // source's controller; a bare "a player clashes" → any player).
+    if !(valid_player_matches(trigger, state, *controller, source_id)
+        || valid_player_matches(trigger, state, *opponent, source_id))
+    {
+        return false;
     }
+    // CR 701.30d: an "...and win" trigger only fires when the ABILITY's
+    // controller won the clash. `None` (plain "you clash") fires on any outcome.
+    if let Some(required) = trigger.clash_result {
+        let Some(ability_controller) = state.objects.get(&source_id).map(|obj| obj.controller)
+        else {
+            return false;
+        };
+        if result.for_player(*controller, *opponent, ability_controller) != Some(required) {
+            return false;
+        }
+    }
+    true
 }
 
 /// CR 701.38: Match vote-resolved events.
@@ -4073,11 +4217,40 @@ pub(super) fn match_ability_activated(
     let GameEvent::AbilityActivated {
         player_id,
         source_id: activated_id,
+        ..
     } = event
     else {
         return false;
     };
     if !valid_player_matches(trigger, state, *player_id, source_id) {
+        return false;
+    }
+    valid_card_matches(trigger, state, *activated_id, source_id)
+}
+
+/// CR 606.2 + CR 109.5 + CR 603.2: Matches when a player activates a loyalty
+/// ability (a planeswalker ability paid with loyalty counters). Listens to
+/// `GameEvent::AbilityActivated` filtered to `ActivatedAbilityKind::Loyalty`.
+/// CR 109.5: the activating player must be the controller of the trigger source
+/// ("Whenever **you** activate a loyalty ability …"). The activated planeswalker
+/// is filtered via `valid_card` ("a Chandra planeswalker", "enchanted
+/// planeswalker"). Modeled on `match_keyword_ability_activated`.
+pub(super) fn match_loyalty_ability_activated(
+    event: &GameEvent,
+    trigger: &TriggerDefinition,
+    source_id: ObjectId,
+    state: &GameState,
+) -> bool {
+    let GameEvent::AbilityActivated {
+        player_id,
+        source_id: activated_id,
+        kind: crate::types::events::ActivatedAbilityKind::Loyalty,
+    } = event
+    else {
+        return false;
+    };
+    // CR 109.5: "you" = the controller of the trigger source.
+    if state.objects.get(&source_id).map(|o| o.controller) != Some(*player_id) {
         return false;
     }
     valid_card_matches(trigger, state, *activated_id, source_id)
@@ -4454,7 +4627,7 @@ mod tests {
         TriggerCondition, TriggerDefinition, TypeFilter, TypedFilter,
     };
     use crate::types::card_type::CoreType;
-    use crate::types::events::{GameEvent, ManaTapState, PlayerActionKind};
+    use crate::types::events::{ClashResult, GameEvent, ManaTapState, PlayerActionKind};
     use crate::types::game_state::{
         CastingVariant, GameState, StackEntry, StackEntryKind, ZoneChangeRecord,
     };
@@ -4484,9 +4657,72 @@ mod tests {
         assert!(registry.contains_key(&TriggerMode::CrankContraption));
     }
 
+    #[test]
+    fn trigger_registry_includes_loyalty_ability_activated() {
+        // CR 606.2: HashMap insert is not compile-enforced; guard the registry
+        // entry so "Whenever you activate a loyalty ability" cannot silently
+        // stop firing if the insert is dropped during a refactor.
+        let registry = build_trigger_registry();
+        assert!(registry.contains_key(&TriggerMode::LoyaltyAbilityActivated));
+    }
+
     /// Helper to create a minimal TriggerDefinition with typed fields.
     fn make_trigger(mode: TriggerMode) -> TriggerDefinition {
         TriggerDefinition::new(mode)
+    }
+
+    #[test]
+    fn effect_block_fires_becomes_blocked_but_not_block_side_matchers() {
+        // CR 509.3c: a bare "whenever ~ becomes blocked" trigger (valid_target =
+        // None) fires from an effect-block for the matching attacker.
+        // CR 509.3d: the blocker-side matchers (`matching_block_events`,
+        // `match_blockers_declared`) must ignore the effect-block event entirely —
+        // they concrete-match `BlockersDeclared`. These assertions fail if a
+        // synthetic `BlockersDeclared` were reintroduced for effect-blocks.
+        let mut state = setup();
+        let attacker = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Effect-Blocked Attacker".to_string(),
+            Zone::Battlefield,
+        );
+        let event = GameEvent::AttackerBecameBlockedByEffect { attacker };
+
+        // Positive (CR 509.3c): the bare becomes-blocked matcher fires, source == attacker.
+        let bare = make_trigger(TriggerMode::BecomesBlocked);
+        let fired = matching_becomes_blocked_events(&event, &bare, attacker, &state);
+        assert_eq!(fired.len(), 1, "bare becomes-blocked fires on effect-block");
+
+        // CR 509.3d: the "by a creature" form (valid_target set) must NOT fire.
+        let mut by_creature = make_trigger(TriggerMode::BecomesBlocked);
+        by_creature.valid_target = Some(TargetFilter::Any);
+        assert!(
+            matching_becomes_blocked_events(&event, &by_creature, attacker, &state).is_empty(),
+            "becomes-blocked-BY-A-CREATURE must not fire on an effect-block (CR 509.3d)"
+        );
+
+        // CR 509.3d: blocker-side matchers ignore the effect-block event.
+        let blocks = make_trigger(TriggerMode::Blocks);
+        assert!(
+            matching_block_events(&event, &blocks, attacker, &state).is_empty(),
+            "block-side matcher must ignore the effect-block event (CR 509.3d)"
+        );
+        assert!(
+            !match_blockers_declared(&event, &blocks, attacker, &state),
+            "match_blockers_declared must ignore the effect-block event (CR 509.3d)"
+        );
+
+        // Reach-guard: match_blockers_declared DOES fire on a real BlockersDeclared,
+        // proving the negative above is not vacuous.
+        assert!(match_blockers_declared(
+            &GameEvent::BlockersDeclared {
+                assignments: vec![(attacker, attacker)],
+            },
+            &blocks,
+            attacker,
+            &state,
+        ));
     }
 
     /// CR 702.143c: an effect-driven `BecameForetold` is NOT the foretell
@@ -4615,6 +4851,73 @@ mod tests {
     }
 
     #[test]
+    fn countered_trigger_valid_card_gates_own_spell() {
+        // CR 701.6a + CR 108.4: Multani's Presence -- "Whenever a spell you've
+        // cast is countered". The trigger gates the COUNTERED spell via
+        // `valid_card = Controller(You)`, so it fires only when the countered
+        // spell's controller matches the trigger source's controller. Prove
+        // the chosen `You` filter is honored: an own countered spell fires,
+        // an opponent's countered spell does not.
+        let mut state = setup();
+        let source = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Multani's Presence".to_string(),
+            Zone::Battlefield,
+        );
+        // A spell you control (owner/controller P0 == source controller).
+        let own_spell = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(0),
+            "Your Countered Spell".to_string(),
+            Zone::Stack,
+        );
+        // A spell an opponent controls (controller P1 != source controller).
+        let opponent_spell = create_object(
+            &mut state,
+            CardId(3),
+            PlayerId(1),
+            "Opponent's Countered Spell".to_string(),
+            Zone::Stack,
+        );
+        let countering_source = create_object(
+            &mut state,
+            CardId(4),
+            PlayerId(1),
+            "Some Counterspell".to_string(),
+            Zone::Battlefield,
+        );
+        let mut trigger = make_trigger(TriggerMode::Countered);
+        trigger.valid_card = Some(TargetFilter::Typed(
+            TypedFilter::default().controller(ControllerRef::You),
+        ));
+
+        // Your spell is countered -> trigger fires (regardless of who countered it).
+        let own_event = GameEvent::SpellCountered {
+            object_id: own_spell,
+            countered_by: countering_source,
+            countered_by_controller: PlayerId(1),
+        };
+        assert!(
+            match_countered(&own_event, &trigger, source, &state),
+            "your own countered spell must satisfy the trigger"
+        );
+
+        // An opponent's spell is countered -> trigger does NOT fire.
+        let opponent_event = GameEvent::SpellCountered {
+            object_id: opponent_spell,
+            countered_by: countering_source,
+            countered_by_controller: PlayerId(0),
+        };
+        assert!(
+            !match_countered(&opponent_event, &trigger, source, &state),
+            "an opponent's countered spell must not satisfy the trigger"
+        );
+    }
+
+    #[test]
     fn discarded_valid_target_controller_rejects_opponent_discard() {
         let mut state = setup();
         let source = create_object(
@@ -4651,6 +4954,102 @@ mod tests {
                 source_id: None,
             },
             &trigger,
+            source,
+            &state,
+        ));
+    }
+
+    #[test]
+    fn discarded_all_valid_target_and_valid_card_are_independent() {
+        let mut state = setup();
+        let source = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Doctor Doom, King of Latveria".to_string(),
+            Zone::Battlefield,
+        );
+        let p0_land = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(0),
+            "Discarded Land".to_string(),
+            Zone::Graveyard,
+        );
+        let p1_land = create_object(
+            &mut state,
+            CardId(3),
+            PlayerId(1),
+            "Opponent Discarded Land".to_string(),
+            Zone::Graveyard,
+        );
+        let p0_nonland = create_object(
+            &mut state,
+            CardId(4),
+            PlayerId(0),
+            "Discarded Creature".to_string(),
+            Zone::Graveyard,
+        );
+        for id in [p0_land, p1_land] {
+            state
+                .objects
+                .get_mut(&id)
+                .unwrap()
+                .card_types
+                .core_types
+                .push(CoreType::Land);
+        }
+        state
+            .objects
+            .get_mut(&p0_nonland)
+            .unwrap()
+            .card_types
+            .core_types
+            .push(CoreType::Creature);
+
+        let mut trigger =
+            make_trigger(TriggerMode::DiscardedAll).valid_target(TargetFilter::Controller);
+        trigger.valid_card = Some(TargetFilter::Typed(TypedFilter::new(TypeFilter::Land)));
+
+        assert!(match_discarded(
+            &GameEvent::Discarded {
+                player_id: PlayerId(0),
+                object_id: p0_land,
+                source_id: None,
+            },
+            &trigger,
+            source,
+            &state,
+        ));
+        assert!(!match_discarded(
+            &GameEvent::Discarded {
+                player_id: PlayerId(1),
+                object_id: p1_land,
+                source_id: None,
+            },
+            &trigger,
+            source,
+            &state,
+        ));
+        assert!(!match_discarded(
+            &GameEvent::Discarded {
+                player_id: PlayerId(0),
+                object_id: p0_nonland,
+                source_id: None,
+            },
+            &trigger,
+            source,
+            &state,
+        ));
+
+        let broad = make_trigger(TriggerMode::DiscardedAll).valid_target(TargetFilter::Controller);
+        assert!(match_discarded(
+            &GameEvent::Discarded {
+                player_id: PlayerId(0),
+                object_id: p0_nonland,
+                source_id: None,
+            },
+            &broad,
             source,
             &state,
         ));
@@ -4773,6 +5172,82 @@ mod tests {
             &trigger,
             source,
             &state,
+        ));
+    }
+
+    #[test]
+    fn rolled_die_matcher_filters_result_face() {
+        let mut state = setup();
+        let source = create_object(
+            &mut state,
+            CardId(3),
+            PlayerId(0),
+            "Complaints Clerk".to_string(),
+            Zone::Battlefield,
+        );
+        let roll = |result: Option<u8>| GameEvent::DieRolled {
+            player_id: PlayerId(0),
+            sides: 6,
+            result,
+        };
+
+        // CR 706.2: Exact([1]) — fires on Some(1), not Some(2).
+        let mut exact_one =
+            make_trigger(TriggerMode::RolledDieOnce).valid_target(TargetFilter::Controller);
+        exact_one.die_result = Some(DieResultFilter::Exact(vec![1]));
+        assert!(match_rolled_die(&roll(Some(1)), &exact_one, source, &state));
+        assert!(!match_rolled_die(
+            &roll(Some(2)),
+            &exact_one,
+            source,
+            &state
+        ));
+
+        // CR 706.2: Exact([1, 2]) — fires on 1 and 2, not 3.
+        let mut exact_disj =
+            make_trigger(TriggerMode::RolledDieOnce).valid_target(TargetFilter::Controller);
+        exact_disj.die_result = Some(DieResultFilter::Exact(vec![1, 2]));
+        assert!(match_rolled_die(
+            &roll(Some(1)),
+            &exact_disj,
+            source,
+            &state
+        ));
+        assert!(match_rolled_die(
+            &roll(Some(2)),
+            &exact_disj,
+            source,
+            &state
+        ));
+        assert!(!match_rolled_die(
+            &roll(Some(3)),
+            &exact_disj,
+            source,
+            &state
+        ));
+
+        // CR 706.2: AtLeast(3) — fires on Some(3)/Some(6), not Some(2).
+        let mut at_least =
+            make_trigger(TriggerMode::RolledDieOnce).valid_target(TargetFilter::Controller);
+        at_least.die_result = Some(DieResultFilter::AtLeast(3));
+        assert!(match_rolled_die(&roll(Some(3)), &at_least, source, &state));
+        assert!(match_rolled_die(&roll(Some(6)), &at_least, source, &state));
+        assert!(!match_rolled_die(&roll(Some(2)), &at_least, source, &state));
+
+        // CR 706.7: a numeric filter never fires on a non-numeric (planar) roll
+        // whose result is None.
+        assert!(!match_rolled_die(&roll(None), &exact_one, source, &state));
+
+        // A None filter is unaffected by a None result (any face, including planar).
+        let none_filter =
+            make_trigger(TriggerMode::RolledDieOnce).valid_target(TargetFilter::Controller);
+        assert_eq!(none_filter.die_result, None);
+        assert!(match_rolled_die(&roll(None), &none_filter, source, &state));
+        assert!(match_rolled_die(
+            &roll(Some(1)),
+            &none_filter,
+            source,
+            &state
         ));
     }
 
@@ -5570,6 +6045,7 @@ mod tests {
             &GameEvent::AbilityActivated {
                 player_id: PlayerId(1),
                 source_id: activated,
+                kind: crate::types::events::ActivatedAbilityKind::Normal,
             },
             &trigger,
             source,
@@ -5580,6 +6056,7 @@ mod tests {
             &GameEvent::AbilityActivated {
                 player_id: PlayerId(0),
                 source_id: activated,
+                kind: crate::types::events::ActivatedAbilityKind::Normal,
             },
             &trigger,
             source,
@@ -5617,6 +6094,7 @@ mod tests {
             &GameEvent::AbilityActivated {
                 player_id: PlayerId(1),
                 source_id: activated,
+                kind: crate::types::events::ActivatedAbilityKind::Normal,
             },
             &trigger,
             source,
@@ -5627,6 +6105,7 @@ mod tests {
             &GameEvent::AbilityActivated {
                 player_id: PlayerId(0),
                 source_id: activated,
+                kind: crate::types::events::ActivatedAbilityKind::Normal,
             },
             &trigger,
             source,
@@ -5654,6 +6133,197 @@ mod tests {
             },
             &trigger,
             source,
+            &state
+        ));
+    }
+
+    // --- CR 606.2: loyalty-ability-activated matcher ---
+
+    /// Create a planeswalker object on the battlefield with the given subtype
+    /// (e.g. "Chandra") under `owner`.
+    fn create_pw_with_subtype(
+        state: &mut GameState,
+        owner: PlayerId,
+        name: &str,
+        subtype: &str,
+    ) -> ObjectId {
+        let id = create_object(
+            state,
+            CardId(99),
+            owner,
+            name.to_string(),
+            Zone::Battlefield,
+        );
+        let obj = state.objects.get_mut(&id).unwrap();
+        obj.card_types.core_types.push(CoreType::Planeswalker);
+        obj.card_types.subtypes.push(subtype.to_string());
+        id
+    }
+
+    /// CR 606.2 + CR 205.3j: Chandra's Regulator / Keral Keep Disciples —
+    /// activating a loyalty ability of a Chandra planeswalker the source's
+    /// controller controls fires the trigger.
+    #[test]
+    fn loyalty_ability_activation_chandra_subtype_fires() {
+        let mut state = setup();
+        let regulator = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Chandra's Regulator".to_string(),
+            Zone::Battlefield,
+        );
+        let chandra =
+            create_pw_with_subtype(&mut state, PlayerId(0), "Chandra, Acolyte", "Chandra");
+        let mut trigger = make_trigger(TriggerMode::LoyaltyAbilityActivated);
+        trigger.valid_card = Some(TargetFilter::Typed(
+            TypedFilter::new(TypeFilter::Planeswalker).subtype("Chandra".to_string()),
+        ));
+
+        assert!(match_loyalty_ability_activated(
+            &GameEvent::AbilityActivated {
+                player_id: PlayerId(0),
+                source_id: chandra,
+                kind: crate::types::events::ActivatedAbilityKind::Loyalty,
+            },
+            &trigger,
+            regulator,
+            &state
+        ));
+    }
+
+    /// CR 606.2: a loyalty ability of a NON-Chandra planeswalker does not fire.
+    #[test]
+    fn loyalty_ability_activation_non_chandra_does_not_fire() {
+        let mut state = setup();
+        let regulator = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Chandra's Regulator".to_string(),
+            Zone::Battlefield,
+        );
+        let jace = create_pw_with_subtype(&mut state, PlayerId(0), "Jace, the Mind", "Jace");
+        let mut trigger = make_trigger(TriggerMode::LoyaltyAbilityActivated);
+        trigger.valid_card = Some(TargetFilter::Typed(
+            TypedFilter::new(TypeFilter::Planeswalker).subtype("Chandra".to_string()),
+        ));
+
+        assert!(!match_loyalty_ability_activated(
+            &GameEvent::AbilityActivated {
+                player_id: PlayerId(0),
+                source_id: jace,
+                kind: crate::types::events::ActivatedAbilityKind::Loyalty,
+            },
+            &trigger,
+            regulator,
+            &state
+        ));
+    }
+
+    /// CR 606.2: a NON-loyalty activated ability (kind == Normal) never fires
+    /// the loyalty matcher, even on a Chandra planeswalker.
+    #[test]
+    fn loyalty_ability_activation_normal_kind_does_not_fire() {
+        let mut state = setup();
+        let regulator = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Chandra's Regulator".to_string(),
+            Zone::Battlefield,
+        );
+        let chandra =
+            create_pw_with_subtype(&mut state, PlayerId(0), "Chandra, Acolyte", "Chandra");
+        let mut trigger = make_trigger(TriggerMode::LoyaltyAbilityActivated);
+        trigger.valid_card = Some(TargetFilter::Typed(
+            TypedFilter::new(TypeFilter::Planeswalker).subtype("Chandra".to_string()),
+        ));
+
+        assert!(!match_loyalty_ability_activated(
+            &GameEvent::AbilityActivated {
+                player_id: PlayerId(0),
+                source_id: chandra,
+                kind: crate::types::events::ActivatedAbilityKind::Normal,
+            },
+            &trigger,
+            regulator,
+            &state
+        ));
+    }
+
+    /// CR 109.5: "you" = the controller of the trigger source. An opponent
+    /// activating the loyalty ability does not fire the controller's trigger.
+    #[test]
+    fn loyalty_ability_activation_opponent_activator_does_not_fire() {
+        let mut state = setup();
+        let regulator = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Chandra's Regulator".to_string(),
+            Zone::Battlefield,
+        );
+        let chandra =
+            create_pw_with_subtype(&mut state, PlayerId(1), "Chandra, Acolyte", "Chandra");
+        let mut trigger = make_trigger(TriggerMode::LoyaltyAbilityActivated);
+        trigger.valid_card = Some(TargetFilter::Typed(
+            TypedFilter::new(TypeFilter::Planeswalker).subtype("Chandra".to_string()),
+        ));
+
+        // Opponent (PlayerId(1)) activates — regulator's controller is P0, so no fire.
+        assert!(!match_loyalty_ability_activated(
+            &GameEvent::AbilityActivated {
+                player_id: PlayerId(1),
+                source_id: chandra,
+                kind: crate::types::events::ActivatedAbilityKind::Loyalty,
+            },
+            &trigger,
+            regulator,
+            &state
+        ));
+    }
+
+    /// CR 303.4b + CR 303.4m: Elspeth's / Rowan's Talent — the loyalty ability of
+    /// the ENCHANTED planeswalker fires; a different (non-host) planeswalker does
+    /// not. `valid_card == AttachedTo` resolves against the aura's host.
+    #[test]
+    fn loyalty_ability_activation_enchanted_host_fires_non_host_does_not() {
+        let mut state = setup();
+        let host = create_pw_with_subtype(&mut state, PlayerId(0), "Host Walker", "Elspeth");
+        let other = create_pw_with_subtype(&mut state, PlayerId(0), "Other Walker", "Jace");
+        let talent = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(0),
+            "Elspeth's Talent".to_string(),
+            Zone::Battlefield,
+        );
+        state.objects.get_mut(&talent).unwrap().attached_to =
+            Some(crate::game::game_object::AttachTarget::Object(host));
+        let mut trigger = make_trigger(TriggerMode::LoyaltyAbilityActivated);
+        trigger.valid_card = Some(TargetFilter::AttachedTo);
+
+        // Loyalty ability of the enchanted host fires.
+        assert!(match_loyalty_ability_activated(
+            &GameEvent::AbilityActivated {
+                player_id: PlayerId(0),
+                source_id: host,
+                kind: crate::types::events::ActivatedAbilityKind::Loyalty,
+            },
+            &trigger,
+            talent,
+            &state
+        ));
+        // Loyalty ability of a different planeswalker does not fire.
+        assert!(!match_loyalty_ability_activated(
+            &GameEvent::AbilityActivated {
+                player_id: PlayerId(0),
+                source_id: other,
+                kind: crate::types::events::ActivatedAbilityKind::Loyalty,
+            },
+            &trigger,
+            talent,
             &state
         ));
     }
@@ -13037,6 +13707,112 @@ mod tests {
         assert!(
             match_clash(&event2, &trigger, source, &state),
             "clash trigger must fire when controller is the opponent participant"
+        );
+    }
+
+    /// CR 701.30d + CR 603.4: "Whenever you clash AND WIN" (Sylvan Echoes) carries
+    /// the win requirement into MATCHING via `clash_result = Some(Won)`. A lost or
+    /// tied clash must NOT match, so no pending (no-op) trigger is ever placed on
+    /// the stack — the win requirement is checked when the event occurs, not at
+    /// resolution. Only a clash the source's controller WON matches (and the
+    /// trigger's plain optional draw then resolves). Mirrors
+    /// `clash_trigger_fires_for_controller` but for the win-gated shape.
+    #[test]
+    fn clash_and_win_trigger_only_matches_on_controller_win() {
+        let mut state = setup();
+        // Sylvan Echoes is controlled by P0.
+        let source = create_object(
+            &mut state,
+            CardId(702),
+            PlayerId(0),
+            "Sylvan Echoes".to_string(),
+            Zone::Battlefield,
+        );
+        let mut trigger = make_trigger(TriggerMode::Clashed);
+        trigger.valid_target = Some(TargetFilter::Controller);
+        trigger.clash_result = Some(ClashResult::Won);
+
+        let clash =
+            |controller: PlayerId, opponent: PlayerId, result: ClashResult| GameEvent::Clash {
+                controller,
+                opponent,
+                controller_mana_value: None,
+                opponent_mana_value: None,
+                result,
+            };
+
+        // P0 initiated and WON — the only case that creates a pending trigger.
+        assert!(
+            match_clash(
+                &clash(PlayerId(0), PlayerId(1), ClashResult::Won),
+                &trigger,
+                source,
+                &state
+            ),
+            "must match when the controller (P0) won the clash they initiated"
+        );
+        // P0 was the chosen opponent and WON (controller P1 lost) — still a win
+        // for P0, so it matches.
+        assert!(
+            match_clash(
+                &clash(PlayerId(1), PlayerId(0), ClashResult::Lost),
+                &trigger,
+                source,
+                &state
+            ),
+            "must match when the controller (P0) won as the opponent participant"
+        );
+
+        // P0 LOST — no pending trigger.
+        assert!(
+            !match_clash(
+                &clash(PlayerId(0), PlayerId(1), ClashResult::Lost),
+                &trigger,
+                source,
+                &state
+            ),
+            "must NOT match a clash the controller lost"
+        );
+        assert!(
+            !match_clash(
+                &clash(PlayerId(1), PlayerId(0), ClashResult::Won),
+                &trigger,
+                source,
+                &state
+            ),
+            "must NOT match when the controller lost as the opponent participant"
+        );
+        // TIED — no pending trigger for either seating.
+        assert!(
+            !match_clash(
+                &clash(PlayerId(0), PlayerId(1), ClashResult::Tied),
+                &trigger,
+                source,
+                &state
+            ),
+            "must NOT match a tied clash"
+        );
+        assert!(
+            !match_clash(
+                &clash(PlayerId(1), PlayerId(0), ClashResult::Tied),
+                &trigger,
+                source,
+                &state
+            ),
+            "must NOT match a tied clash regardless of seating"
+        );
+
+        // Regression: the plain "you clash" shape (clash_result = None) still
+        // fires on any outcome, including a loss.
+        trigger.clash_result = None;
+        assert!(
+            match_clash(
+                &clash(PlayerId(1), PlayerId(0), ClashResult::Won),
+                &trigger,
+                source,
+                &state
+            ),
+            "a plain clash trigger must still fire on any outcome"
         );
     }
 

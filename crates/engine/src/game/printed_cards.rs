@@ -3,7 +3,7 @@ use crate::database::CardDatabase;
 use crate::types::ability::{
     AbilityCost, AbilityDefinition, ConjureSource, ContinuousModification, CopiableValues,
     CounterSourceRider, Effect, PtValue, QuantityExpr, ReplacementCondition, ReplacementDefinition,
-    ReplacementMode, StaticDefinition, TargetFilter, TriggerDefinition,
+    ReplacementMode, StaticDefinition, TargetFilter, TriggerDefinition, VoteSubject,
 };
 use crate::types::card::{CardFace, CardLayout, LayoutKind, PrintedCardRef};
 use crate::types::card_type::{CardType, CoreType};
@@ -597,6 +597,50 @@ pub fn snapshot_object_face(obj: &GameObject) -> BackFaceData {
     }
 }
 
+/// Snapshot an object's **printed/base** characteristics into a [`BackFaceData`],
+/// deliberately ignoring any live fields that continuous effects (CR 613) may
+/// have altered.
+///
+/// Use this instead of [`snapshot_object_face`] whenever the snapshot is taken
+/// from a permanent already on the battlefield — specifically when turning it
+/// face down via a spell or ability (CR 708.2a). At that point the live fields
+/// may include layer-applied modifications (e.g. a +1/+1 anthem making a 2/2
+/// appear as 3/3). If those inflated values were stored in `back_face`,
+/// [`apply_back_face_to_object`] would write them into both live and base on
+/// restoration (CR 708.8), causing the anthem to reapply from an already-
+/// inflated baseline and produce a permanently-wrong value.
+///
+/// Fields with no base equivalent (`modal`, `additional_cost`, `strive_cost`,
+/// `casting_restrictions`, `casting_options`) are invariant after card creation
+/// and are taken directly from the live object.
+pub fn snapshot_object_base_face(obj: &GameObject) -> BackFaceData {
+    BackFaceData {
+        name: obj.base_name.clone(),
+        power: obj.base_power,
+        toughness: obj.base_toughness,
+        loyalty: obj.base_loyalty,
+        defense: obj.base_defense,
+        card_types: obj.base_card_types.clone(),
+        mana_cost: obj.base_mana_cost.clone(),
+        keywords: obj.base_keywords.clone(),
+        abilities: (*obj.base_abilities).clone(),
+        // Share the Arc rather than deep-cloning the Vec — semantically
+        // identical and avoids an allocation on every face-down resolution.
+        trigger_definitions: Arc::clone(&obj.base_trigger_definitions).into(),
+        replacement_definitions: Arc::clone(&obj.base_replacement_definitions).into(),
+        static_definitions: Arc::clone(&obj.base_static_definitions).into(),
+        color: obj.base_color.clone(),
+        printed_ref: obj.base_printed_ref.clone(),
+        // Casting metadata: invariant after card creation, no base equivalent.
+        modal: obj.modal.clone(),
+        additional_cost: obj.additional_cost.clone(),
+        strive_cost: obj.strive_cost.clone(),
+        casting_restrictions: obj.casting_restrictions.clone(),
+        casting_options: obj.casting_options.clone(),
+        layout_kind: None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Conjure-target effect walker
 //
@@ -714,6 +758,7 @@ fn walk_continuous_mod(modification: &ContinuousModification, out: &mut Vec<Stri
         | ContinuousModification::SetPower { .. }
         | ContinuousModification::SetToughness { .. }
         | ContinuousModification::AddKeyword { .. }
+        | ContinuousModification::AddKeywordWithDerivedCost { .. }
         | ContinuousModification::RemoveKeyword { .. }
         | ContinuousModification::RemoveAllAbilities
         | ContinuousModification::AddType { .. }
@@ -746,6 +791,7 @@ fn walk_continuous_mod(modification: &ContinuousModification, out: &mut Vec<Stri
         | ContinuousModification::ChangeController
         | ContinuousModification::SetBasicLandType { .. }
         | ContinuousModification::SetChosenBasicLandType
+        | ContinuousModification::SetChosenName
         | ContinuousModification::RetainPrintedTriggerFromSource { .. }
         | ContinuousModification::RetainPrintedAbilityFromSource { .. }
         | ContinuousModification::AddSupertype { .. }
@@ -806,6 +852,8 @@ fn walk_cost(cost: &AbilityCost, out: &mut Vec<String>) {
         | AbilityCost::Behold { .. }
         | AbilityCost::Waterbend { .. }
         | AbilityCost::NinjutsuFamily { .. }
+        // CR 118.9: a borrowed keyword cost carries no nested effect/cost carrier.
+        | AbilityCost::KeywordCostOfCastSpell { .. }
         | AbilityCost::Unimplemented { .. } => {}
     }
 }
@@ -825,6 +873,12 @@ fn walk_effect(effect: &Effect, out: &mut Vec<String>) {
         // (Words of Worship/Wilding). Walk it so any conjure name it carries is
         // surfaced (GainLife/Token carry none today, but it is a nested carrier).
         Effect::CreateDrawReplacement { replacement_effect } => {
+            walk_effect(replacement_effect, out)
+        }
+        // CR 614.1a: A planeswalk replacement nests its substitute Effect (Fixed
+        // Point in Time: chaos ensues). Walk it so any conjure name it carries is
+        // surfaced (ChaosEnsues carries none today, but it is a nested carrier).
+        Effect::CreatePlaneswalkReplacement { replacement_effect } => {
             walk_effect(replacement_effect, out)
         }
         // Heist exiles a card from an opponent's library at random; it does not
@@ -853,12 +907,26 @@ fn walk_effect(effect: &Effect, out: &mut Vec<String>) {
         // `collect_conjure_names_from_face`), so nothing to gather here.
         Effect::DraftFromSpellbook { .. } => {}
         Effect::TurnFaceUp { .. } => {}
+        Effect::TurnFaceDown { .. } => {}
         // Nested-ability carriers — descend.
         Effect::Vote {
-            per_choice_effect, ..
+            per_choice_effect,
+            subject,
+            ..
         } => {
             for sub in per_choice_effect {
                 walk_ability_def(sub, out);
+            }
+            // CR 701.38b: object-pool votes (Council's Judgment, Prime
+            // Minister's Cabinet Room) leave `per_choice_effect` empty and
+            // carry the sole nested AbilityDefinition in `outcome_template`.
+            // Walk it so any conjure name a future object-vote outcome names is
+            // surfaced (the current exile-only class carries none).
+            if let VoteSubject::Objects {
+                outcome_template, ..
+            } = subject
+            {
+                walk_ability_def(outcome_template, out);
             }
         }
         Effect::SeparateIntoPiles {
@@ -945,6 +1013,7 @@ fn walk_effect(effect: &Effect, out: &mut Vec<String>) {
         // CR 120.1: leaf effect — the source/recipient filters carry no nested
         // ability or effect to walk.
         | Effect::EachDealsDamageEqualToPower { .. }
+        | Effect::EachSourceDealsDamage { .. }
         | Effect::Draw { .. }
         | Effect::Pump { .. }
         | Effect::PairWith { .. }
@@ -992,6 +1061,7 @@ fn walk_effect(effect: &Effect, out: &mut Vec<String>) {
         | Effect::EndCombatPhase
         | Effect::Populate
         | Effect::Clash
+        | Effect::Behold { .. }
         | Effect::SwitchPT { .. }
         | Effect::CopySpell { .. }
         | Effect::EpicCopy { .. }
@@ -1012,6 +1082,9 @@ fn walk_effect(effect: &Effect, out: &mut Vec<String>) {
         | Effect::PutCounter { .. }
         | Effect::PutCounterAll { .. }
         | Effect::MultiplyCounter { .. }
+        // Builds its PutCounter/RemoveCounter branches at resolution — carries no
+        // static conjure name to preload.
+        | Effect::ChooseCounterAdjustment { .. }
         | Effect::DoublePT { .. }
         | Effect::DoublePTAll { .. }
         | Effect::MoveCounters { .. }
@@ -1030,6 +1103,8 @@ fn walk_effect(effect: &Effect, out: &mut Vec<String>) {
         | Effect::ExileTop { .. }
         | Effect::TargetOnly { .. }
         | Effect::Choose { .. }
+        | Effect::OpponentGuess { .. }
+        | Effect::SwapChosenLabels { .. }
         | Effect::ChooseDamageSource { .. }
         | Effect::Suspect { .. }
         | Effect::Unsuspect { .. }
@@ -1042,11 +1117,13 @@ fn walk_effect(effect: &Effect, out: &mut Vec<String>) {
         | Effect::BecomePrepared { .. }
         | Effect::BecomeUnprepared { .. }
         | Effect::BecomeSaddled { .. }
+        | Effect::BecomeBlocked { .. }
         | Effect::SetClassLevel { .. }
         | Effect::AddRestriction { .. }
         | Effect::ReduceNextSpellCost { .. }
         | Effect::GrantNextSpellAbility { .. }
         | Effect::AddPendingETBCounters { .. }
+        | Effect::AddPendingEntersModifications { .. }
         | Effect::PayCost { .. }
         | Effect::CastFromZone { .. }
         | Effect::FreeCastFromZones { .. }
@@ -1059,6 +1136,8 @@ fn walk_effect(effect: &Effect, out: &mut Vec<String>) {
         | Effect::VentureInto { .. }
         | Effect::TakeTheInitiative
         | Effect::Planeswalk
+        | Effect::ChaosEnsues
+        | Effect::ReverseTurnOrder
         | Effect::OpenAttractions { .. }
         | Effect::RollToVisitAttractions
         | Effect::AssembleContraptions { .. }
@@ -1076,6 +1155,7 @@ fn walk_effect(effect: &Effect, out: &mut Vec<String>) {
         | Effect::ForEachCategoryExile { .. }
         | Effect::ChooseObjectsIntoTrackedSet { .. }
         | Effect::ChooseAndSacrificeRest { .. }
+        | Effect::EachPlayerCopyChosen { .. }
         | Effect::Exploit { .. }
         | Effect::GainEnergy { .. }
         | Effect::GivePlayerCounter { .. }
@@ -1131,6 +1211,9 @@ fn walk_effect(effect: &Effect, out: &mut Vec<String>) {
         // ContinuousModifications, never conjured card names.
         | Effect::ReturnAsAura { .. }
         | Effect::Specialize
+        // CR 608.2d + CR 122.1: counter-kind choice / consume carry no conjure names.
+        | Effect::ChooseCounterKind { .. }
+        | Effect::PutChosenCounter { .. }
         | Effect::Unimplemented { .. } => {}
     }
 }
@@ -1592,7 +1675,10 @@ fn shard_colors(shard: &ManaCostShard) -> Vec<ManaColor> {
 
 pub fn derive_colors_from_mana_cost(mana_cost: &ManaCost) -> Vec<ManaColor> {
     match mana_cost {
-        ManaCost::NoCost | ManaCost::SelfManaCost | ManaCost::SelfManaValue => vec![],
+        ManaCost::NoCost
+        | ManaCost::SelfManaCost
+        | ManaCost::SelfManaValue
+        | ManaCost::SelfManaCostReduced { .. } => vec![],
         ManaCost::Cost { shards, .. } => {
             let mut colors = Vec::new();
             for shard in shards {
@@ -2781,6 +2867,8 @@ mod tests {
             starting_with: ControllerRef::You,
             voter_scope: VoterScope::AllPlayers,
             tally_mode: crate::types::ability::VoteTally::PerVote,
+            subject: crate::types::ability::VoteSubject::Named,
+            visibility: crate::types::ability::VoteVisibility::Open,
         };
         walk_effect(&vote, &mut names);
 

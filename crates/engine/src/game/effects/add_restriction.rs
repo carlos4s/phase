@@ -12,9 +12,10 @@ pub fn resolve(
     events: &mut Vec<GameEvent>,
 ) -> Result<(), EffectError> {
     if let Effect::AddRestriction { restriction } = &ability.effect {
-        let mut restriction = restriction.clone();
-        fill_runtime_fields(state, &mut restriction, ability);
-        state.restrictions.push(restriction);
+        for mut restriction in expand_per_opponent_next_turn(state, restriction.clone(), ability) {
+            fill_runtime_fields(state, &mut restriction, ability);
+            state.restrictions.push(restriction);
+        }
         events.push(GameEvent::EffectResolved {
             kind: EffectKind::AddRestriction,
             source_id: ability.source_id,
@@ -27,6 +28,64 @@ pub fn resolve(
     }
 }
 
+/// CR 500.7 + CR 514.2 + CR 109.5: Fan out an "each opponent can't … during that
+/// player's next turn" prohibition (Sphinx's Decree, Azor) into one
+/// `SpecificPlayer` restriction per opponent, each anchored on that opponent's
+/// OWN next turn.
+///
+/// A single `OpponentsOfSourceController` restriction carrying the pre-armed
+/// `UntilEndOfNextTurnOf` marker cannot express this: `fill_runtime_fields` has
+/// no single restricted player to anchor on, so it falls back to the controller,
+/// and a controller-anchored marker stays dormant through every opponent's turn
+/// (`casting.rs` skips a still-pre-armed `UntilEndOfNextTurnOf`) and only arms on
+/// the controller's own next turn — when no opponent has a turn — so the ban
+/// never takes force. Splitting per opponent lets each marker arm on its own
+/// player's untap step (`turns.rs`).
+///
+/// Only the `OpponentsOfSourceController` + next-turn combination is fanned out;
+/// every other shape (including Kang's `AllPlayers` self-anchored power-up ban,
+/// which correctly anchors on the controller's own extra turn) passes through as
+/// a single-element vec.
+fn expand_per_opponent_next_turn(
+    state: &GameState,
+    restriction: GameRestriction,
+    ability: &ResolvedAbility,
+) -> Vec<GameRestriction> {
+    use crate::types::ability::{Duration, PlayerScope, RestrictionPlayerScope};
+
+    let is_next_turn = matches!(
+        ability.duration,
+        Some(Duration::UntilEndOfNextTurnOf {
+            player: PlayerScope::Controller,
+        })
+    );
+    if is_next_turn {
+        if let GameRestriction::ProhibitActivity {
+            affected_players: RestrictionPlayerScope::OpponentsOfSourceController,
+            ..
+        } = &restriction
+        {
+            let opponents = crate::game::players::opponents(state, ability.controller);
+            if !opponents.is_empty() {
+                return opponents
+                    .into_iter()
+                    .map(|opponent| {
+                        let mut per_opponent = restriction.clone();
+                        if let GameRestriction::ProhibitActivity {
+                            affected_players, ..
+                        } = &mut per_opponent
+                        {
+                            *affected_players = RestrictionPlayerScope::SpecificPlayer(opponent);
+                        }
+                        per_opponent
+                    })
+                    .collect();
+            }
+        }
+    }
+    vec![restriction]
+}
+
 /// Fill runtime-bound fields of a restriction using the resolving ability context.
 fn fill_runtime_fields(
     state: &GameState,
@@ -35,7 +94,8 @@ fn fill_runtime_fields(
 ) {
     match restriction {
         GameRestriction::DamagePreventionDisabled { source, .. }
-        | GameRestriction::ProhibitActivity { source, .. } => {
+        | GameRestriction::ProhibitActivity { source, .. }
+        | GameRestriction::CantEnterBattlefieldFrom { source, .. } => {
             *source = ability.source_id;
         }
     }
@@ -86,7 +146,10 @@ fn fill_runtime_fields(
                 | RestrictionPlayerScope::OpponentsOfSourceController => {}
             }
         }
-        GameRestriction::DamagePreventionDisabled { .. } => {}
+        // CantEnterBattlefieldFrom has no acting-player scope (it prohibits an
+        // object zone transition, CR 614.1d), so there is nothing to lower here.
+        GameRestriction::DamagePreventionDisabled { .. }
+        | GameRestriction::CantEnterBattlefieldFrom { .. } => {}
     }
 
     match restriction {
@@ -136,7 +199,11 @@ fn fill_runtime_fields(
                 _ => {}
             }
         }
-        GameRestriction::DamagePreventionDisabled { .. } => {}
+        // CR 611.2a: the parser hardcodes `EndOfTurn` ("this turn") for
+        // CantEnterBattlefieldFrom, so there is no duration to lower — same as
+        // DamagePreventionDisabled.
+        GameRestriction::DamagePreventionDisabled { .. }
+        | GameRestriction::CantEnterBattlefieldFrom { .. } => {}
     }
 }
 
