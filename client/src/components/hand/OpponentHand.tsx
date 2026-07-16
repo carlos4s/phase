@@ -23,18 +23,27 @@ export function OpponentHand({ playerId, showCards = false, layout = "default" }
   const isCompactHeight = useIsCompactHeight();
   const focusedOpponent = useUiStore((s) => s.focusedOpponent);
   const gameState = useGameStore((s) => s.gameState);
-  const players = useGameStore((s) => s.gameState?.players);
+  const authoritativeGameState = useGameStore((s) => s.authoritativeGameState);
+  const gameMode = useGameStore((s) => s.gameMode);
+  // The AI-only debug toggle intentionally shows the local engine's complete
+  // opponent hand. All normal and multiplayer rendering stays on the
+  // viewer-filtered projection.
+  const displayedGameState =
+    showCards && gameMode === "ai"
+      ? authoritativeGameState ?? gameState
+      : gameState;
+  const players = displayedGameState?.players;
   const opponents = useMemo(() => {
-    return getOpponentIds(gameState ?? null, myId);
-  }, [gameState, myId]);
+    return getOpponentIds(displayedGameState ?? null, myId);
+  }, [displayedGameState, myId]);
   const opponentId =
     playerId
     ?? resolveFocusedOpponent(focusedOpponent, opponents)
     ?? (myId === 0 ? 1 : 0);
   const opponent = players?.[opponentId];
-  const objects = useGameStore((s) => s.gameState?.objects);
-  const revealedCards = useGameStore((s) => s.gameState?.revealed_cards);
-  const publicRevealedCards = useGameStore((s) => s.gameState?.public_revealed_cards);
+  const objects = displayedGameState?.objects;
+  const revealedCards = displayedGameState?.revealed_cards;
+  const publicRevealedCards = displayedGameState?.public_revealed_cards;
 
   if (!opponent) return null;
 
@@ -63,7 +72,7 @@ export function OpponentHand({ playerId, showCards = false, layout = "default" }
             || (publicRevealedCards?.includes(id) ?? false)
             // CR 701.20e: Glasses of Urza / Gitaxian Probe "look at target
             // player's hand" surfaces the card's identity only to the looker.
-            || isPrivatelyLookedAtByViewer(gameState ?? null, id, myId);
+            || isPrivatelyLookedAtByViewer(displayedGameState ?? null, id, myId);
           const showFace = showCards || isRevealed;
           // Negate rotation so fan opens toward opponent (top of screen)
           const rotation = -((i - center) * rotationStep);

@@ -62,14 +62,14 @@ export function EngineLostModal() {
       // Snapshot store fields right now — recovery / cleanup paths may
       // null these before the user interacts with the modal, which would
       // leave the diagnostic blank exactly when it matters most.
-      const { gameId, gameMode, gameState } = useGameStore.getState();
+      const { gameId, gameMode, gameState, authoritativeGameState } = useGameStore.getState();
       setSnapshot({
         kind,
         reason: event.reason,
         panic: event.panic ?? null,
         gameId,
         gameMode,
-        gameState,
+        gameState: authoritativeGameState ?? gameState,
       });
     };
     const unsubscribeLost = onEngineLost((event) => {

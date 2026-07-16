@@ -1,10 +1,12 @@
 import { act } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import type { GameEvent, GameState } from "../../adapter/types";
+import type { EngineSnapshot, GameEvent, GameState } from "../../adapter/types";
+import { nextSnapshotSeq } from "../../adapter/types";
 import { buildEngineAdapterMock } from "../../test/factories/engineAdapterFactory";
 import {
   buildGameState,
+  buildLegalActionsResult,
   buildStackEntry,
 } from "../../test/factories/gameStateFactory";
 import { useGameStore } from "../gameStore";
@@ -14,6 +16,7 @@ describe("gameStore", () => {
     act(() => {
       useGameStore.setState({
         gameState: null,
+        authoritativeGameState: null,
         events: [],
         adapter: null,
         waitingFor: null,
@@ -76,6 +79,32 @@ describe("gameStore", () => {
 
     expect(useGameStore.getState().stateHistory).toHaveLength(1);
     expect(useGameStore.getState().stateHistory[0]).toEqual(state1);
+  });
+
+  it("preserves the unredacted state for undo while rendering a filtered snapshot", async () => {
+    const viewerState1 = buildGameState({ turn_number: 1 });
+    const authoritativeState1 = buildGameState({ turn_number: 11 });
+    const viewerState2 = buildGameState({ turn_number: 2 });
+    const authoritativeState2 = buildGameState({ turn_number: 12 });
+    const legalResult = buildLegalActionsResult();
+    const snapshot = (state: GameState, authoritativeState: GameState): EngineSnapshot => ({
+      state,
+      authoritativeState,
+      legalResult,
+      seq: nextSnapshotSeq(),
+    });
+    const adapter = buildEngineAdapterMock(viewerState1);
+    adapter.getSnapshot
+      .mockResolvedValueOnce(snapshot(viewerState1, authoritativeState1))
+      .mockResolvedValueOnce(snapshot(viewerState2, authoritativeState2));
+
+    await act(() => useGameStore.getState().initGame("test-id", adapter));
+    await act(() => useGameStore.getState().dispatch({ type: "PassPriority" }));
+
+    const store = useGameStore.getState();
+    expect(store.gameState).toEqual(viewerState2);
+    expect(store.stateHistory).toEqual([authoritativeState1]);
+    expect(store.authoritativeGameState).toEqual(authoritativeState2);
   });
 
   it("dispatch does not push to stateHistory when the stack is non-empty", async () => {
@@ -249,6 +278,7 @@ describe("gameStore", () => {
 
     const store = useGameStore.getState();
     expect(store.gameState).toBeNull();
+    expect(store.authoritativeGameState).toBeNull();
     expect(store.adapter).toBeNull();
     expect(store.stateHistory).toEqual([]);
     expect(adapter.dispose).toHaveBeenCalled();

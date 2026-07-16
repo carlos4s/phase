@@ -39,7 +39,7 @@ import init, {
   preview_mana_payment_js,
 } from "@wasm/engine";
 
-import type { GameAction } from "./types";
+import type { GameAction, ViewerSnapshot } from "./types";
 import type { BracketDeckRequest } from "../types/bracketEstimate";
 
 // ── Message Protocol ─────────────────────────────────────────────────────
@@ -303,21 +303,34 @@ self.onmessage = async (e: MessageEvent<EngineRequest>) => {
       }
 
       case "getSnapshot": {
-        // Atomicity guarantee: these two reads form ONE synchronous block with
-        // no yield point between them, and the only engine mutation
+        // `get_viewer_snapshot_js` forms the viewer-filtered state/actions pair
+        // in one synchronous engine call. The subsequent reads have no yield
+        // point between them, and the only engine mutation
         // (`submit_action`) is itself a single synchronous call. This handler
         // is `async` and handlers CAN interleave at await points (e.g.
         // submitAction's Debug/CreateCard card-DB fetch), so the absence of an
-        // `await` between the two calls below is exactly what makes the pair
-        // atomic: a snapshot can never observe a half-applied action, nor
-        // straddle two engine versions.
-        const state = get_game_state();
-        const legalResult = get_legal_actions_js();
-        if (state === null || legalResult === null) {
-          error(msg.id, "NOT_INITIALIZED: get_game_state/get_legal_actions_js returned null");
+        // `await` between the reads below is exactly what prevents a snapshot
+        // from observing a half-applied action or straddling engine versions.
+        const viewerSnapshot = get_viewer_snapshot_js(0) as ViewerSnapshot | null;
+        // Preserve the standard ClientGameState wrapper (including derived
+        // display data) around the same viewer-filtered projection.
+        const state = get_filtered_game_state(0);
+        const authoritativeState = get_game_state();
+        if (viewerSnapshot === null || state === null || authoritativeState === null) {
+          error(msg.id, "NOT_INITIALIZED: game-state snapshot getter returned null");
           break;
         }
-        result(msg.id, { state, legalResult });
+        result(msg.id, {
+          state,
+          authoritativeState,
+          legalResult: {
+            actions: viewerSnapshot.actions,
+            autoPassRecommended: viewerSnapshot.autoPassRecommended,
+            spellCosts: viewerSnapshot.spellCosts,
+            legalActionsByObject: viewerSnapshot.legalActionsByObject,
+            stuckDiagnostic: viewerSnapshot.stuckDiagnostic,
+          },
+        });
         break;
       }
 

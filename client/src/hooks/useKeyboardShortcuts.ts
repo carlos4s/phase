@@ -71,7 +71,7 @@ export function useKeyboardShortcuts(): void {
         return;
       }
 
-      const { gameState, waitingFor, dispatch, undo, stateHistory, gameMode } =
+      const { gameState, authoritativeGameState, waitingFor, dispatch, undo, stateHistory, gameMode } =
         useGameStore.getState();
       const uiState = useUiStore.getState();
 
@@ -186,15 +186,17 @@ export function useKeyboardShortcuts(): void {
         case "D":
           if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
             e.preventDefault();
-            if (gameState) {
-              exportGameStateDebugZip(gameState)
+            const debugState = authoritativeGameState ?? gameState;
+            if (debugState) {
+              exportGameStateDebugZip(debugState)
                 .then((filename) => console.log(`[Debug] Game state exported to ${filename}`))
                 .catch((err) => console.error("[Debug] Failed to export:", err));
             }
           } else if (!e.ctrlKey && !e.metaKey) {
             e.preventDefault();
-            if (gameState) {
-              copyGameStateDebugSnapshot(gameState)
+            const debugState = authoritativeGameState ?? gameState;
+            if (debugState) {
+              copyGameStateDebugSnapshot(debugState)
                 .then(() => console.log("[Debug] Game state copied to clipboard"))
                 .catch((err) => console.error("[Debug] Failed to copy:", err));
             }

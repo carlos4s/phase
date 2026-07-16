@@ -307,6 +307,7 @@ export function abilityChoiceLabel(
   object: GameObject,
   objects?: Record<ObjectId, GameObject>,
   webSlingingCosts?: Record<string, ManaCost>,
+  t?: (key: "abilityChoice.turnFaceUp", options: { x: number }) => string,
 ): { label: string; description?: string } {
   // CR 702.190a: Sneak — label identifies which unblocked attacker is
   // returned to pay the Sneak cost. Include the Sneak mana cost from the
@@ -416,6 +417,11 @@ export function abilityChoiceLabel(
       description: costSymbols
         ? `Pay {2} and exile this card. Cast it on a later turn for ${costSymbols}.`
         : "Pay {2} and exile this card. Cast it on a later turn for its foretell cost.",
+    };
+  }
+  if (action.type === "TurnFaceUp") {
+    return {
+      label: t?.("abilityChoice.turnFaceUp", { x: action.data.x }) ?? action.type,
     };
   }
   if (action.type === "PlayLand") {

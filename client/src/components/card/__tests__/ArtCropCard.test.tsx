@@ -21,6 +21,7 @@ function transformedPermanent(): GameObject {
     zone: "Battlefield",
     tapped: false,
     face_down: false,
+    identity_revealed: false,
     flipped: false,
     transformed: true,
     damage_marked: 0,
@@ -117,6 +118,30 @@ describe("ArtCropCard", () => {
         oracleId: undefined,
         faceName: undefined,
       }),
+    );
+  });
+
+  it("renders the real card for an engine-revealed face-down permanent", () => {
+    mockUseCardImage.mockReturnValue({ src: "revealed.png", isLoading: false });
+    const permanent = {
+      ...transformedPermanent(),
+      face_down: true,
+      identity_revealed: true,
+      transformed: false,
+    };
+
+    useGameStore.setState({
+      gameState: {
+        objects: { [permanent.id]: permanent },
+      } as never,
+    });
+
+    render(<ArtCropCard objectId={101} />);
+
+    expect(screen.getByAltText("Kuruk, the Mastodon")).toHaveAttribute("src", "revealed.png");
+    expect(mockUseCardImage).toHaveBeenCalledWith(
+      "Kuruk, the Mastodon",
+      expect.objectContaining({ size: "art_crop" }),
     );
   });
 

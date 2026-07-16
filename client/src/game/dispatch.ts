@@ -190,7 +190,7 @@ function showActionError(action: GameAction, err: unknown): void {
 }
 
 async function processAction(action: GameAction, actor: number): Promise<void> {
-  const { adapter, gameState } = useGameStore.getState();
+  const { adapter, gameState, authoritativeGameState } = useGameStore.getState();
   if (!adapter || !gameState) {
     debugLog("processAction called with no adapter or gameState");
     throw new Error("Game not initialized");
@@ -328,7 +328,13 @@ async function processAction(action: GameAction, actor: number): Promise<void> {
   }
   const newState = snapshotResult.state;
   const { gameId } = useGameStore.getState();
-  if (gameId) void saveAuthoritativeGame(gameId, adapter, newState);
+  if (gameId) {
+    void saveAuthoritativeGame(
+      gameId,
+      adapter,
+      snapshotResult.authoritativeState ?? newState,
+    );
+  }
 
   // 3c. Feed the throughput tracker: count stack entries that left the stack
   //     this action (resolved, countered, or otherwise removed), id-diffed so a
@@ -348,7 +354,10 @@ async function processAction(action: GameAction, actor: number): Promise<void> {
   const turnEvent = events.find((e) => e.type === "TurnStarted");
   if (turnEvent) {
     const prev = useGameStore.getState();
-    const updated = [...prev.turnCheckpoints, gameState].slice(-MAX_UNDO_HISTORY);
+    const updated = [
+      ...prev.turnCheckpoints,
+      prev.authoritativeGameState ?? gameState,
+    ].slice(-MAX_UNDO_HISTORY);
     useGameStore.setState({ turnCheckpoints: updated });
     if (prev.gameId) saveCheckpoints(prev.gameId, updated);
   }
@@ -420,7 +429,7 @@ async function processAction(action: GameAction, actor: number): Promise<void> {
   // THIS older pair is dropped rather than clobbering it.
   const store = useGameStore.getState();
   const stateHistory = shouldSaveHistory
-    ? [...store.stateHistory, gameState].slice(-MAX_UNDO_HISTORY)
+    ? [...store.stateHistory, authoritativeGameState ?? gameState].slice(-MAX_UNDO_HISTORY)
     : undefined;
   store.commitEngineSnapshot(snapshotResult, {
     events,
@@ -712,7 +721,11 @@ export async function restoreGameState(
     },
   });
   if (gameId) {
-    await saveAuthoritativeGame(gameId, adapter, snapshot.state);
+    await saveAuthoritativeGame(
+      gameId,
+      adapter,
+      snapshot.authoritativeState ?? snapshot.state,
+    );
     await saveCheckpoints(gameId, preservedCheckpoints);
   }
 
@@ -837,7 +850,11 @@ export async function dispatchResolveAll(
     const { gameId, adapter } = useGameStore.getState();
     const newState = useGameStore.getState().gameState;
     if (gameId && adapter && newState) {
-      await saveAuthoritativeGame(gameId, adapter, newState);
+      await saveAuthoritativeGame(
+        gameId,
+        adapter,
+        snapshot.authoritativeState ?? newState,
+      );
     }
   } finally {
     batchResolveInProgress = false;

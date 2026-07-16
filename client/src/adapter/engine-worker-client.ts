@@ -245,8 +245,16 @@ export class EngineWorkerClient {
    * Same timeout class as `getState`. The caller (`WasmAdapter.getSnapshot`)
    * stamps the `seq` on arrival.
    */
-  async getSnapshot(): Promise<{ state: GameState; legalResult: LegalActionsResult }> {
-    return this.request<{ state: GameState; legalResult: LegalActionsResult }>(
+  async getSnapshot(): Promise<{
+    state: GameState;
+    authoritativeState: GameState;
+    legalResult: LegalActionsResult;
+  }> {
+    return this.request<{
+      state: GameState;
+      authoritativeState: GameState;
+      legalResult: LegalActionsResult;
+    }>(
       { type: "getSnapshot" },
       ENGINE_REQUEST_TIMEOUT_MS,
     );

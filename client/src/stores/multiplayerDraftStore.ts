@@ -416,6 +416,7 @@ function disposeMatchAdapter(set: SetFn): void {
       useGameStore.setState({
         gameId: null,
         gameState: null,
+        authoritativeGameState: null,
         events: [],
         eventHistory: [],
         logHistory: [],

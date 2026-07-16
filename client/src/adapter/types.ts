@@ -868,8 +868,8 @@ export interface GameObject {
    * when the identity is redacted. Gate any "show the real face-down card"
    * rendering on `!face_down || identity_revealed` — never on `!face_down`
    * alone, which would hide even the controller's own face-down permanents.
-   * Typed optional so test fixtures/mocks can omit it (absent ⇒ falsy ⇒ hide,
-   * the safe default); the backend always serializes it for live game state.
+   * The engine serializes this field for every live game object; optionality
+   * preserves compatibility for fixtures and persisted older snapshots.
    */
   identity_revealed?: boolean;
   flipped: boolean;
@@ -1913,7 +1913,7 @@ export type GameAction =
   | { type: "SaddleMount"; data: { mount_id: ObjectId; creature_ids: ObjectId[] } }
   | { type: "Transform"; data: { object_id: ObjectId } }
   | { type: "PlayFaceDown"; data: { object_id: ObjectId; card_id: CardId } }
-  | { type: "TurnFaceUp"; data: { object_id: ObjectId } }
+  | { type: "TurnFaceUp"; data: { object_id: ObjectId; x: number } }
   | { type: "SubmitSideboard"; data: { main: DeckCardCount[]; sideboard: DeckCardCount[] } }
   | { type: "ChoosePlayDraw"; data: { play_first: boolean } }
   | { type: "ChooseOption"; data: { choice: string } }
@@ -2967,7 +2967,18 @@ export interface BatchResolveResult {
  * the UI then renders affordances the engine rejects, and the game softlocks.
  */
 export interface EngineSnapshot {
+  /**
+   * Viewer-filtered state for rendering. Local adapters use the authenticated
+   * seat's projection so display code cannot accidentally reveal a hidden
+   * face-down card's identity.
+   */
   state: GameState;
+  /**
+   * Local engine's unredacted state, retained solely for undo, checkpoints,
+   * and recovery. Remote adapters omit this because they never restore their
+   * viewer projection into an authoritative engine.
+   */
+  authoritativeState?: GameState;
   legalResult: LegalActionsResult;
   /**
    * Globally monotonic ordering stamp. Larger = derived from a newer engine

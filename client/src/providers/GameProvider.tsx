@@ -1390,6 +1390,7 @@ export function GameProvider({
           useGameStore.setState({
             gameId: null,
             gameState: null,
+            authoritativeGameState: null,
             events: [],
             eventHistory: [],
             logHistory: [],

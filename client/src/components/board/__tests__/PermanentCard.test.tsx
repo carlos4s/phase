@@ -375,6 +375,23 @@ describe("PermanentCard", () => {
     expect(queryAllByLabelText("Test Equipment")).toHaveLength(0);
   });
 
+  it("shows an engine-revealed face-down host in the attachment fan", () => {
+    const gameState = makeState();
+    gameState.objects[1] = {
+      ...gameState.objects[1],
+      face_down: true,
+      identity_revealed: true,
+    };
+    useGameStore.setState({ gameState, waitingFor: gameState.waiting_for });
+    useUiStore.setState({ attachmentFanHostId: 1 });
+
+    render(<AttachmentFan />);
+
+    expect(
+      document.body.querySelector('[aria-label="Test Creature"][data-face-down]'),
+    ).toHaveAttribute("data-face-down", "false");
+  });
+
   it("auto-expands collapsed attachments when one is a valid target", () => {
     // Regression: Moira Brown's "put a quest counter on target nonland
     // permanent you control" offers the host's attached Equipment/Auras as
@@ -1054,6 +1071,26 @@ describe("PermanentCard", () => {
     );
 
     expect(getByLabelText("Face-down card")).toHaveAttribute("data-face-down", "true");
+  });
+
+  it("renders an engine-revealed face-down permanent's real card in full-card mode", () => {
+    const gameState = makeState();
+    gameState.objects[1] = {
+      ...gameState.objects[1],
+      face_down: true,
+      identity_revealed: true,
+    };
+    useGameStore.setState({
+      gameState,
+      waitingFor: gameState.waiting_for,
+      legalActions: [],
+      legalActionsByObject: {},
+      spellCosts: {},
+    });
+
+    renderPermanent();
+
+    expect(screen.getByLabelText("Test Creature")).toHaveAttribute("data-face-down", "false");
   });
 
   it("forwards engine-provided token rules text and subtypes to the card image", () => {

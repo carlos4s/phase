@@ -34,19 +34,20 @@ export const ArtCropCard = memo(function ArtCropCard({ objectId }: ArtCropCardPr
     (s) => obj && s.gameState?.players?.find((p) => p.id === obj.controller)?.commander_color_identity,
   );
 
-  const cardName = obj?.face_down ? t("card.faceDownName") : (obj?.name ?? "");
+  const renderAsFaceDown = obj?.face_down === true && !obj.identity_revealed;
+  const cardName = renderAsFaceDown ? t("card.faceDownName") : (obj?.name ?? "");
   const imageLookup = obj
     ? cardImageLookup(obj)
     : { name: "", faceIndex: 0, oracleId: undefined, faceName: undefined };
   const isToken = obj?.display_source === "Token";
-  const { src: cardSrc, isLoading: cardLoading } = useCardImage(obj?.face_down ? "" : imageLookup.name, {
+  const { src: cardSrc, isLoading: cardLoading } = useCardImage(renderAsFaceDown ? "" : imageLookup.name, {
     size: "art_crop",
     faceIndex: imageLookup.faceIndex,
-    isToken: obj?.face_down ? false : isToken,
-    tokenFilters: !obj?.face_down && isToken && obj ? tokenFiltersForObject(obj) : undefined,
-    tokenImageRef: !obj?.face_down && isToken && obj ? obj.token_image_ref : undefined,
-    oracleId: obj?.face_down ? undefined : imageLookup.oracleId,
-    faceName: obj?.face_down ? undefined : imageLookup.faceName,
+    isToken: renderAsFaceDown ? false : isToken,
+    tokenFilters: !renderAsFaceDown && isToken && obj ? tokenFiltersForObject(obj) : undefined,
+    tokenImageRef: !renderAsFaceDown && isToken && obj ? obj.token_image_ref : undefined,
+    oracleId: renderAsFaceDown ? undefined : imageLookup.oracleId,
+    faceName: renderAsFaceDown ? undefined : imageLookup.faceName,
   });
 
   const { frameGradient, lightText, ptDisplay } = useMemo(() => {
@@ -62,9 +63,9 @@ export const ArtCropCard = memo(function ArtCropCard({ objectId }: ArtCropCardPr
 
   if (!obj) return null;
 
-  const src = obj.face_down ? CARD_BACK_URL : cardSrc;
-  const isLoading = obj.face_down ? false : cardLoading;
-  const hasDfc = !obj.face_down && obj.back_face != null;
+  const src = renderAsFaceDown ? CARD_BACK_URL : cardSrc;
+  const isLoading = renderAsFaceDown ? false : cardLoading;
+  const hasDfc = !renderAsFaceDown && obj.back_face != null;
   // Filter out loyalty counters — shown separately as the loyalty badge
   const counters = Object.entries(obj.counters).filter((entry): entry is [string, number] => entry[1] != null && entry[0] !== "loyalty");
   const devotionValue = obj.devotion ?? null;
@@ -83,7 +84,7 @@ export const ArtCropCard = memo(function ArtCropCard({ objectId }: ArtCropCardPr
     }
   }
 
-  if (!obj.face_down && (isLoading || !src)) {
+  if (!renderAsFaceDown && (isLoading || !src)) {
     return (
       <div className="relative" style={{ width: "var(--art-crop-w)", height: "var(--art-crop-h)" }}>
         <div className="absolute inset-0 rounded-[6px] bg-[#151515] p-[3px] shadow-md">
@@ -93,7 +94,7 @@ export const ArtCropCard = memo(function ArtCropCard({ objectId }: ArtCropCardPr
     );
   }
 
-  const renderedSrc = obj.face_down ? CARD_BACK_URL : (src ?? "");
+  const renderedSrc = renderAsFaceDown ? CARD_BACK_URL : (src ?? "");
   const headerHeight = isCompactHeight
     ? "clamp(8px, calc(var(--art-crop-h) * 0.16), 12px)"
     : "clamp(8px, calc(var(--art-crop-h) * 0.18), 20px)";

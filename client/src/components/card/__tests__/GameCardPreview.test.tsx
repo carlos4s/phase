@@ -129,4 +129,12 @@ describe("GameCardPreview", () => {
 
     expect(container.firstChild).toBeNull();
   });
+
+  it("previews an engine-revealed face-down permanent", () => {
+    inspect(battlefieldObject({ face_down: true, identity_revealed: true }));
+
+    render(<GameCardPreview />);
+
+    expect(screen.getAllByAltText("Pithing Needle").length).toBeGreaterThan(0);
+  });
 });

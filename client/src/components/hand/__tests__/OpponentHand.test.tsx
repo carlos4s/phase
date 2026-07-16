@@ -73,6 +73,27 @@ describe("OpponentHand", () => {
     expect(screen.queryByAltText("Focused Opponent Card")).toBeNull();
   });
 
+  it("uses the local authoritative state for the AI-only show-cards toggle", () => {
+    const authoritativeState = createGameState();
+    const viewerState = {
+      ...authoritativeState,
+      objects: {
+        ...authoritativeState.objects,
+        22: { ...authoritativeState.objects[22], name: "Hidden Card" },
+      },
+    };
+    useGameStore.setState({
+      gameMode: "ai",
+      gameState: viewerState,
+      authoritativeGameState: authoritativeState,
+    });
+
+    render(<OpponentHand playerId={2} showCards />);
+
+    expect(screen.getByAltText("Explicit Opponent Card")).toBeInTheDocument();
+    expect(screen.queryByAltText("Hidden Card")).toBeNull();
+  });
+
   // CR 701.20e (phase-rs/phase#5251): Glasses of Urza / Gitaxian Probe "look at
   // target player's hand" surfaces the looked-at cards' identities only to the
   // looking player (`private_look_player`/`private_look_ids`), distinct from

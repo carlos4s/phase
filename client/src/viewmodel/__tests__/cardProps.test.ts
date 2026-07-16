@@ -128,6 +128,16 @@ describe("toCardProps", () => {
     expect(props.toughness).toBe(4);
   });
 
+  it("uses the engine-revealed identity for an authorized face-down card", () => {
+    const obj = makeGameObject({
+      face_down: true,
+      identity_revealed: true,
+      name: "Hidden Sorcery",
+    });
+
+    expect(toCardProps(obj).name).toBe("Hidden Sorcery");
+  });
+
   it("extracts counters as typed array", () => {
     const obj = makeGameObject({ counters: { P1P1: 2, loyalty: 3 } });
     const props = toCardProps(obj);

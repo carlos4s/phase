@@ -1004,7 +1004,8 @@
       "subtitlePreparedCopy": "Cast the prepared spell?",
       "subtitleActivate": "Activate this ability?",
       "subtitlePlay": "Choose how to play this card",
-      "subtitleChoose": "Choose an ability to activate"
+      "subtitleChoose": "Choose an ability to activate",
+      "turnFaceUp": "Turn face up (X = {{x}})"
     },
     "defiler": {
       "title": "Defiler Cost Reduction",

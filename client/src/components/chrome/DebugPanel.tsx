@@ -62,6 +62,7 @@ export function DebugPanel() {
   const open = useUiStore((s) => s.debugPanelOpen);
   const turnCheckpoints = useGameStore((s) => s.turnCheckpoints);
   const gameState = useGameStore((s) => s.gameState);
+  const authoritativeGameState = useGameStore((s) => s.authoritativeGameState);
   const gameMode = useGameStore((s) => s.gameMode);
   const localPlayerId = usePlayerId();
   const [importText, setImportText] = useState("");
@@ -147,21 +148,23 @@ export function DebugPanel() {
   }, []);
 
   const handleCopyState = useCallback(() => {
-    if (!gameState) return;
-    copyGameStateDebugSnapshot(gameState)
+    const debugState = authoritativeGameState ?? gameState;
+    if (!debugState) return;
+    copyGameStateDebugSnapshot(debugState)
       .then(() => setStatus({ type: "success", message: "Copied to clipboard" }))
       .catch(() => setStatus({ type: "error", message: "Failed to copy" }));
-  }, [gameState]);
+  }, [authoritativeGameState, gameState]);
 
   const handleExportGameState = useCallback(() => {
-    if (!gameState) return;
-    exportGameStateDebugZip(gameState)
+    const debugState = authoritativeGameState ?? gameState;
+    if (!debugState) return;
+    exportGameStateDebugZip(debugState)
       .then((filename) => setStatus({ type: "success", message: `Exported ${filename}` }))
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setStatus({ type: "error", message: "Failed to export game state" });
       });
-  }, [gameState]);
+  }, [authoritativeGameState, gameState]);
 
   // Same destination as the top-left report flag. Close this panel first — it
   // renders at z-[9999], above the report dialog's z-50 overlay, so leaving it

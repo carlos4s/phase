@@ -45,7 +45,7 @@ export interface PTDisplay {
 }
 
 export function publicName(obj: GameObject): string {
-  return obj.face_down ? FACE_DOWN_CARD_NAME : obj.name;
+  return obj.face_down && !obj.identity_revealed ? FACE_DOWN_CARD_NAME : obj.name;
 }
 
 export function toCardProps(obj: GameObject): CardViewProps {

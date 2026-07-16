@@ -312,7 +312,7 @@ function FanCard({
           tokenFilters={isToken ? tokenFiltersForObject(obj) : undefined}
           tokenImageRef={isToken ? obj.token_image_ref : undefined}
           oracleText={isToken ? obj.token_rules_text : undefined}
-          faceDown={obj.face_down}
+          faceDown={obj.face_down && !obj.identity_revealed}
           className="!w-[var(--fan-card-w)] !h-[var(--fan-card-h)]"
         />
       </div>

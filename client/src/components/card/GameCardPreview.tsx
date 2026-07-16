@@ -48,7 +48,8 @@ export function GameCardPreview() {
   // permanents; other viewers see the redacted 2/2. Gate on
   // `!face_down || identity_revealed` — never on `!face_down` alone, which
   // would hide even the controller's own cards.
-  const identityVisible = !inspectedObj?.face_down || !!inspectedObj?.identity_revealed;
+  const identityVisible = inspectedObj != null
+    && (!inspectedObj.face_down || inspectedObj.identity_revealed);
 
   const inspectedCardName = inspectedObj && identityVisible
     ? inspectedFaceIndex === 1 && inspectedObj.back_face

@@ -2857,6 +2857,7 @@ function AbilityChoiceModal() {
           obj,
           objects,
           webSlingingCosts,
+          t,
         );
         // CR 606.1: prefix a loyalty badge for planeswalker ability costs,
         // reading the structured Loyalty cost (never parsing the label string).

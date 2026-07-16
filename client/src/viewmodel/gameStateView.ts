@@ -140,10 +140,7 @@ export function isPrivatelyLookedAtByViewer(
  * Whether the engine has revealed a given library card's identity to `viewerId`.
  *
  * Mirrors the engine's library visibility (`crates/engine/src/game/visibility.rs`)
- * using the explicit reveal sets — NEVER the card name. In single-player the
- * client renders the raw, unredacted state (the `showAiHand` debug toggle depends
- * on it), so `name !== "Hidden Card"` is always true and cannot be used to infer
- * visibility; doing so leaks every opponent library card. This is the same
+ * using the explicit reveal sets — NEVER the card name. This is the same
  * pattern `OpponentHand` uses for opponent hand cards.
  *
  * Deliberately excludes `public_revealed_cards`: the engine does not un-redact
@@ -176,12 +173,8 @@ export function isLibraryCardRevealedToViewer(
  * face-down exile — including a plain `TrackedBySource` link that grants no
  * look-permission (Bomat Courier, Necropotence, Asmodeus) — stays hidden.
  *
- * Like `isLibraryCardRevealedToViewer` above, this exists because single-player
- * renders the raw, unredacted state: `obj.face_down` alone can't distinguish
- * "hidden from this viewer" from "visible to this viewer", and the object's
- * `name`/`printed_ref` carry the real identity regardless of viewer. Used by
- * the exile `ZoneViewer` to keep an opponent's Hideaway-exiled card (or a
- * non-owner's foretold exile) from leaking its name or image.
+ * Used by the exile `ZoneViewer` to keep an opponent's Hideaway-exiled card
+ * (or a non-owner's foretold exile) from leaking its name or image.
  */
 export function isFaceDownExileCardVisibleToViewer(
   gameState: GameState | null,
@@ -202,10 +195,8 @@ export function isFaceDownExileCardVisibleToViewer(
  * Whether `viewerId` may see the identity of `obj` for the card-report picker.
  *
  * Composes the engine-mirroring reveal-set helpers above; NEVER infers
- * visibility from `name !== HIDDEN_CARD_NAME`. In single-player the client
- * renders the raw, unredacted state (the `showAiHand` debug toggle depends on
- * it), so hidden-zone objects carry their real names and a name check would leak
- * every opponent card. Conservative: hides on any doubt, never leaks.
+ * visibility from `name !== HIDDEN_CARD_NAME`. Conservative: hides on any
+ * doubt, never leaks.
  */
 export function isObjectReportableToViewer(
   gameState: GameState | null,

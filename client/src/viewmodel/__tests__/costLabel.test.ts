@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { AdditionalCost, GameAction, GameObject, Keyword } from "../../adapter/types.ts";
 import { buildGameObject } from "../../test/factories/gameObjectFactory.ts";
@@ -87,6 +87,20 @@ describe("abilityChoiceLabel per-variant formatting", () => {
     const result = abilityChoiceLabel(action, object);
     expect(result.label).toBe("Equip");
     expect(result.description).toContain("target creature you control");
+  });
+
+  it("labels each engine-provided turn-face-up X announcement", () => {
+    const action: GameAction = {
+      type: "TurnFaceUp",
+      data: { object_id: 1, x: 2 },
+    };
+
+    const t = vi.fn((_key: string, options?: Record<string, unknown>) => `Turn face up (X = ${options?.x})`);
+
+    expect(abilityChoiceLabel(action, makeObject(), undefined, undefined, t).label).toBe(
+      "Turn face up (X = 2)",
+    );
+    expect(t).toHaveBeenCalledWith("abilityChoice.turnFaceUp", { x: 2 });
   });
 
   it("labels ReturnToHand costs from ability description (Quirion Ranger)", () => {

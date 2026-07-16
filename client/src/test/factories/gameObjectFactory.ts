@@ -123,6 +123,7 @@ export const gameObjectFactory = GameObjectFactory.define(({ sequence }): GameOb
   zone: "Battlefield",
   tapped: false,
   face_down: false,
+  identity_revealed: false,
   flipped: false,
   transformed: false,
   damage_marked: 0,

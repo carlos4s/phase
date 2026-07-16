@@ -43,7 +43,7 @@ import { AdapterError, AdapterErrorCode, type GameState } from "../adapter/types
  * the current mode is not locally recoverable.
  */
 export async function attemptStateRehydrate(): Promise<boolean> {
-  const { adapter, gameState, gameMode, gameId } = useGameStore.getState();
+  const { adapter, gameState, authoritativeGameState, gameMode, gameId } = useGameStore.getState();
 
   if (!adapter) {
     debugLog("engine-recovery: no adapter", "warn");
@@ -60,7 +60,7 @@ export async function attemptStateRehydrate(): Promise<boolean> {
   // Prefer the live store snapshot. Fall back to IDB only if the store
   // has also been cleared (rare — only happens if something has nuked
   // the in-memory state without a full reload).
-  let snapshot: GameState | null = gameState;
+  let snapshot: GameState | null = authoritativeGameState ?? gameState;
   let usedIdbFallback = false;
   if (!snapshot && gameId) {
     try {

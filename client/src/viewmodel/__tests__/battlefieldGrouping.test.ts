@@ -568,4 +568,32 @@ describe("groupByName", () => {
       count: 2,
     });
   });
+
+  it("keeps engine-revealed face-down permanents with different identities separate", () => {
+    const objects = [
+      makeGameObject({
+        id: 54,
+        name: "Known Morph",
+        face_down: true,
+        identity_revealed: true,
+        power: 2,
+        toughness: 2,
+        card_types: { supertypes: [], core_types: ["Creature"], subtypes: [] },
+      }),
+      makeGameObject({
+        id: 55,
+        name: "Known Manifest",
+        face_down: true,
+        identity_revealed: true,
+        power: 2,
+        toughness: 2,
+        card_types: { supertypes: [], core_types: ["Creature"], subtypes: [] },
+      }),
+    ];
+
+    expect(groupByName(objects).map((group) => group.name).sort()).toEqual([
+      "Known Manifest",
+      "Known Morph",
+    ]);
+  });
 });

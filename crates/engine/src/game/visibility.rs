@@ -1405,6 +1405,7 @@ fn reveal_face_down_identity_to_controller(obj: &mut crate::game::game_object::G
 }
 
 fn redact_face_down_identity_from_observer(obj: &mut crate::game::game_object::GameObject) {
+    obj.identity_revealed = false;
     obj.name = HIDDEN_CARD_NAME.to_string();
     obj.base_name = HIDDEN_CARD_NAME.to_string();
     obj.printed_ref = None;
@@ -2077,6 +2078,13 @@ mod tests {
             "opponent must NOT see identity_revealed for a face-down permanent"
         );
         assert_eq!(opponent_obj.name, "Hidden Card");
+
+        // Filtering an already controller-visible projection for an opponent
+        // must not carry the viewer-derived flag across the visibility boundary.
+        let re_filtered = filter_state_for_viewer(&owner_view, PlayerId(1));
+        let re_filtered_obj = re_filtered.objects.get(&card_id).unwrap();
+        assert!(!re_filtered_obj.identity_revealed);
+        assert_eq!(re_filtered_obj.name, "Hidden Card");
     }
 
     #[test]

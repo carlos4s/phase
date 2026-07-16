@@ -1,12 +1,12 @@
 use std::collections::{BTreeMap, HashSet};
 
-use crate::game::casting;
 use crate::game::combat::AttackTarget;
 use crate::game::deck_loading::DeckEntry;
 use crate::game::effects::prepare;
 use crate::game::game_object::RoomDoor;
 use crate::game::keywords;
 use crate::game::mana_sources;
+use crate::game::{casting, casting_costs};
 use crate::types::ability::{ChoiceType, CounterCostSelection, TargetRef};
 use crate::types::actions::{
     CastChoice, GameAction, LearnOption, MulliganChoice, OutsideGameSelection,
@@ -3642,15 +3642,53 @@ pub(crate) fn priority_actions_with_probe(
         }
     }
 
-    // NOTE: GameAction::TurnFaceUp and GameAction::PlayFaceDown are intentionally
-    // NOT emitted here. The runtime handlers (`morph::turn_face_up`,
-    // `morph::play_face_down`) restore/move the card without routing the
-    // morph/disguise/manifest cost through payment, so surfacing either as a
-    // legal action would advertise a zero-cost, rules-wrong cast. They must
-    // stay unsurfaced until a cost-payment authority exists for these special
-    // actions — see `mana.rs` `SpecialAction::TurnFaceUp` (the deferred variant
-    // whose `PaymentContext` gate is currently dead). This is why the UI offers
-    // no turn-face-up / play-face-down action today (issue #4381, action half).
+    // CR 116.2b + CR 702.37e / CR 702.168d / CR 701.40b + CR 702.61b: Turning a
+    // face-down permanent face up is a special action available whenever its
+    // controller has priority, including while split second is active.
+    // `turn_face_up_prepare` is the single authority for controller, face-down,
+    // `CantBeTurnedFaceUp`, and morph/disguise/manifest-cost legality; the
+    // candidate uses the same reduction and restriction-aware payment path as
+    // the runtime handler.
+    for &object_id in &state.battlefield {
+        let Some(obj) = state.objects.get(&object_id) else {
+            continue;
+        };
+        if obj.controller != player || !obj.face_down {
+            continue;
+        }
+        let Ok(cost) = crate::game::morph::turn_face_up_prepare(state, object_id, player) else {
+            continue;
+        };
+        let cost = casting::apply_special_action_cost_reduction(
+            state,
+            player,
+            crate::types::mana::SpecialAction::TurnFaceUp,
+            cost,
+        );
+        // CR 107.3d: X is announced before a special-action cost is paid.
+        // Emit every affordable announcement so the legal-action surface, and
+        // therefore the UI, never substitutes an arbitrary X value.
+        let max_x = casting_costs::cost_has_x(&cost)
+            .then(|| casting_costs::max_x_value(state, player, &cost, None))
+            .unwrap_or(0);
+        for x in 0..=max_x {
+            let mut announced_cost = cost.clone();
+            announced_cost.concretize_x(x);
+            if casting::can_pay_special_action_mana_cost_after_auto_tap(
+                state,
+                player,
+                Some(object_id),
+                &announced_cost,
+                crate::types::mana::SpecialAction::TurnFaceUp,
+            ) {
+                actions.push(candidate(
+                    GameAction::TurnFaceUp { object_id, x },
+                    TacticalClass::Ability,
+                    Some(player),
+                ));
+            }
+        }
+    }
 
     // CR 702.170f + CR 116.2k: Plot the top card of the library as a special
     // action (Fblthp, Lost on the Range). Surfaced as the runtime-granted
@@ -7275,38 +7313,17 @@ mod tests {
         );
     }
 
-    /// Regression guard for issue #4381 (action half): `TurnFaceUp` and
-    /// `PlayFaceDown` MUST NOT be surfaced as legal actions until their runtime
-    /// handlers route the morph/disguise/manifest cost through a payment
-    /// authority. The handlers (`morph::turn_face_up`, `morph::play_face_down`)
-    /// currently restore/move the card for free, so offering either would
-    /// advertise a zero-cost, rules-wrong cast. This locks that contract so a
-    /// future change re-introducing the candidates fails CI. Re-enable both
-    /// (delete this test) only when `mana.rs` `SpecialAction::TurnFaceUp`'s
-    /// `PaymentContext` gate goes live.
+    /// CR 116.2b + CR 702.37e: an affordable turn-face-up special action is
+    /// surfaced through `legal_actions` and then paid by the real action
+    /// pipeline. The candidate assertion fails if candidate generation regresses;
+    /// the post-apply assertions fail if the runtime payment path is bypassed.
     #[test]
-    fn priority_actions_never_surface_zero_cost_face_down_actions() {
+    fn priority_actions_offer_and_apply_affordable_turn_face_up() {
         let mut state = GameState::new_two_player(42);
         let p0 = PlayerId(0);
-        // A morph creature in hand + a face-down morph permanent on the
-        // battlefield, both under p0's control, during p0's main phase.
-        let hand_id = create_object(
-            &mut state,
-            CardId(1),
-            p0,
-            "Secret Beast".to_string(),
-            Zone::Hand,
-        );
-        {
-            let obj = state.objects.get_mut(&hand_id).unwrap();
-            obj.keywords = vec![Keyword::Morph(crate::types::mana::ManaCost::Cost {
-                generic: 3,
-                shards: vec![],
-            })];
-        }
         let face_down_id = create_object(
             &mut state,
-            CardId(2),
+            CardId(1),
             p0,
             "Hidden Beast".to_string(),
             Zone::Battlefield,
@@ -7326,18 +7343,121 @@ mod tests {
         state.phase = Phase::PreCombatMain;
         state.waiting_for = WaitingFor::Priority { player: p0 };
 
-        let actions = crate::ai_support::legal_actions(&state);
         assert!(
-            !actions
+            !crate::ai_support::legal_actions(&state)
                 .iter()
-                .any(|a| matches!(a, GameAction::PlayFaceDown { .. })),
-            "PlayFaceDown must stay unsurfaced until play_face_down charges its cost"
+                .any(|action| matches!(action, GameAction::TurnFaceUp { object_id, .. } if *object_id == face_down_id)),
+            "an unaffordable turn-face-up action must not be offered"
         );
+
+        give_player_mana(&mut state, 0, ManaType::Colorless);
+        give_player_mana(&mut state, 0, ManaType::Colorless);
+        give_player_mana(&mut state, 0, ManaType::Colorless);
+        let action = crate::ai_support::legal_actions(&state)
+            .into_iter()
+            .find(|action| matches!(action, GameAction::TurnFaceUp { object_id, x: 0 } if *object_id == face_down_id))
+            .expect("an affordable face-down morph must offer TurnFaceUp");
+
+        crate::game::engine::apply(&mut state, p0, action)
+            .expect("the surfaced TurnFaceUp action must resolve through payment");
         assert!(
-            !actions
+            !state.objects[&face_down_id].face_down,
+            "the paid special action must turn the permanent face up"
+        );
+        assert_eq!(state.players[0].mana_pool.total(), 0);
+    }
+
+    /// CR 107.3d + CR 702.37e: each affordable X announcement for a morph
+    /// turn-face-up special action is independently legal. The selected action
+    /// reaches the real payment path with its announced X intact.
+    #[test]
+    fn priority_actions_offer_affordable_turn_face_up_x_values() {
+        let mut state = GameState::new_two_player(42);
+        let p0 = PlayerId(0);
+        let face_down_id = create_object(
+            &mut state,
+            CardId(1),
+            p0,
+            "Hidden X Beast".to_string(),
+            Zone::Battlefield,
+        );
+        {
+            let obj = state.objects.get_mut(&face_down_id).unwrap();
+            let mut back_face = crate::game::printed_cards::snapshot_object_face(obj);
+            back_face.keywords = vec![Keyword::Morph(ManaCost::Cost {
+                generic: 0,
+                shards: vec![ManaCostShard::X],
+            })];
+            obj.back_face = Some(back_face);
+            obj.face_down = true;
+        }
+        state.active_player = p0;
+        state.priority_player = p0;
+        state.phase = Phase::PreCombatMain;
+        state.waiting_for = WaitingFor::Priority { player: p0 };
+        give_player_mana(&mut state, 0, ManaType::Colorless);
+        give_player_mana(&mut state, 0, ManaType::Colorless);
+
+        let actions = crate::ai_support::legal_actions(&state);
+        let mut offered_x: Vec<_> = actions
+            .iter()
+            .filter_map(|action| match action {
+                GameAction::TurnFaceUp { object_id, x } if *object_id == face_down_id => Some(*x),
+                _ => None,
+            })
+            .collect();
+        offered_x.sort_unstable();
+        assert_eq!(offered_x, vec![0, 1, 2]);
+
+        let action = actions
+            .into_iter()
+            .find(|action| {
+                matches!(
+                    action,
+                    GameAction::TurnFaceUp { object_id, x: 2 } if *object_id == face_down_id
+                )
+            })
+            .expect("the X=2 turn-face-up action must be offered");
+        crate::game::engine::apply(&mut state, p0, action)
+            .expect("the selected X value must reach the turn-face-up payment path");
+        assert!(!state.objects[&face_down_id].face_down);
+        assert_eq!(state.players[0].mana_pool.total(), 0);
+    }
+
+    /// CR 702.37a + CR 708.4: Playing a morph card face down is a spell cast,
+    /// not a turn-face-up special action. Keep it off the legal-action surface
+    /// until its handler routes the morph cost through the spell-payment path.
+    #[test]
+    fn priority_actions_do_not_surface_unpaid_play_face_down() {
+        let mut state = GameState::new_two_player(42);
+        let p0 = PlayerId(0);
+        let hand_id = create_object(
+            &mut state,
+            CardId(1),
+            p0,
+            "Secret Beast".to_string(),
+            Zone::Hand,
+        );
+        state.objects.get_mut(&hand_id).unwrap().keywords =
+            vec![Keyword::Morph(crate::types::mana::ManaCost::Cost {
+                generic: 3,
+                shards: vec![],
+            })];
+        state.active_player = p0;
+        state.priority_player = p0;
+        state.phase = Phase::PreCombatMain;
+        state.waiting_for = WaitingFor::Priority { player: p0 };
+
+        assert!(state.players[p0.0 as usize].hand.contains(&hand_id));
+        assert!(matches!(
+            state.objects[&hand_id].keywords.as_slice(),
+            [Keyword::Morph(_)]
+        ));
+        assert!(
+            !crate::ai_support::legal_actions(&state)
                 .iter()
-                .any(|a| matches!(a, GameAction::TurnFaceUp { .. })),
-            "TurnFaceUp must stay unsurfaced until turn_face_up charges its cost"
+                .any(|action| matches!(action, GameAction::PlayFaceDown { object_id, .. } if *object_id == hand_id)),
+            "PlayFaceDown must stay unsurfaced until its cast path charges the morph cost"
         );
     }
 }

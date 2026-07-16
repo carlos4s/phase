@@ -141,6 +141,7 @@ export function HelpSheet() {
   const setOpen = useUiStore((s) => s.setHelpSheetOpen);
   const toggleDebugPanel = useUiStore((s) => s.toggleDebugPanel);
   const gameState = useGameStore((s) => s.gameState);
+  const authoritativeGameState = useGameStore((s) => s.authoritativeGameState);
   const waitingFor = useGameStore((s) => s.waitingFor);
   const legalActions = useGameStore((s) => s.legalActions);
   const legalActionsByObject = useGameStore((s) => s.legalActionsByObject);
@@ -229,15 +230,17 @@ export function HelpSheet() {
   })).filter((group) => group.entries.length > 0);
 
   const handleCopyState = () => {
-    if (!gameState) return;
-    copyGameStateDebugSnapshot(gameState)
+    const debugState = authoritativeGameState ?? gameState;
+    if (!debugState) return;
+    copyGameStateDebugSnapshot(debugState)
       .then(() => setStatus(t("help.status.copied")))
       .catch(() => setStatus(t("help.status.copyFailed")));
   };
 
   const handleExportState = () => {
-    if (!gameState) return;
-    exportGameStateDebugZip(gameState)
+    const debugState = authoritativeGameState ?? gameState;
+    if (!debugState) return;
+    exportGameStateDebugZip(debugState)
       .then((filename) => setStatus(t("help.status.exported", { filename })))
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === "AbortError") return;

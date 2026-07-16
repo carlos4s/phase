@@ -164,6 +164,7 @@ export const useReplayStore = create<ReplayStore>()((set, get) => ({
       gameId: null,
       gameMode: null,
       gameState: null,
+      authoritativeGameState: null,
       adapter: null,
       waitingFor: null,
     });

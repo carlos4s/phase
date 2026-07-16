@@ -331,6 +331,7 @@ export class WasmAdapter implements EngineAdapter {
         : await this.fallback!.getSnapshot();
       return {
         state: unwrapClientGameState(raw.state),
+        authoritativeState: unwrapClientGameState(raw.authoritativeState),
         legalResult: raw.legalResult,
         seq: nextSnapshotSeq(),
       };
@@ -688,7 +689,11 @@ interface MainThreadFallback {
   getState(): Promise<GameState>;
   getFilteredState(viewerId: number): Promise<GameState>;
   getLegalActions(): Promise<LegalActionsResult>;
-  getSnapshot(): Promise<{ state: GameState; legalResult: LegalActionsResult }>;
+  getSnapshot(): Promise<{
+    state: GameState;
+    authoritativeState: GameState;
+    legalResult: LegalActionsResult;
+  }>;
   getLegalActionsForViewer(viewerId: number): Promise<LegalActionsResult>;
   getViewerSnapshot(viewerId: number): Promise<ViewerSnapshot>;
   getAiAction(difficulty: string, playerId: number, waitingForType?: WaitingFor["type"]): Promise<GameAction | null>;
@@ -770,18 +775,31 @@ async function createMainThreadFallback(): Promise<MainThreadFallback> {
         return r as LegalActionsResult;
       }),
 
-    // Same atomicity guarantee as the worker's `getSnapshot` case: both WASM
-    // exports are synchronous and run back-to-back inside ONE `enqueue`
+    // `get_viewer_snapshot_js` builds the viewer-filtered state/actions pair
+    // in one engine call. Its companion reads stay synchronous in ONE `enqueue`
     // callback, so no other queued operation (notably `submit_action`) can
     // interleave between them.
     getSnapshot: () =>
       enqueue(() => {
-        const s = wasm.get_game_state();
-        const r = wasm.get_legal_actions_js();
-        if (s === null || r === null) {
-          throw new Error("NOT_INITIALIZED: get_game_state/get_legal_actions_js returned null");
+        const viewerSnapshot = wasm.get_viewer_snapshot_js(0) as ViewerSnapshot | null;
+        // Preserve the standard ClientGameState wrapper (including derived
+        // display data) around the same viewer-filtered projection.
+        const s = wasm.get_filtered_game_state(0);
+        const authoritativeState = wasm.get_game_state();
+        if (viewerSnapshot === null || s === null || authoritativeState === null) {
+          throw new Error("NOT_INITIALIZED: game-state snapshot getter returned null");
         }
-        return { state: s as GameState, legalResult: r as LegalActionsResult };
+        return {
+          state: s as GameState,
+          authoritativeState: authoritativeState as GameState,
+          legalResult: {
+            actions: viewerSnapshot.actions,
+            autoPassRecommended: viewerSnapshot.autoPassRecommended,
+            spellCosts: viewerSnapshot.spellCosts,
+            legalActionsByObject: viewerSnapshot.legalActionsByObject,
+            stuckDiagnostic: viewerSnapshot.stuckDiagnostic,
+          },
+        };
       }),
 
     getLegalActionsForViewer: (viewerId: number) =>

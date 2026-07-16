@@ -77,6 +77,8 @@ interface GameStoreState {
   gameId: string | null;
   gameMode: GameMode | null;
   gameState: GameState | null;
+  /** Local-only unredacted snapshot used exclusively for engine restores. */
+  authoritativeGameState: GameState | null;
   events: GameEvent[];
   eventHistory: GameEvent[];
   logHistory: GameLogEntry[];
@@ -168,6 +170,7 @@ interface GameStoreState {
  */
 type CommitExtraState = Partial<Omit<GameStoreState,
   | "gameState"
+  | "authoritativeGameState"
   | "waitingFor"
   | "legalActions"
   | "autoPassRecommended"
@@ -263,6 +266,7 @@ const initialState: GameStoreState = {
   gameId: null,
   gameMode: null,
   gameState: null,
+  authoritativeGameState: null,
   events: [],
   eventHistory: [],
   logHistory: [],
@@ -309,6 +313,7 @@ export const useGameStore = create<GameStore>()(
           ...(accepted
             ? {
                 gameState: snapshot.state,
+                authoritativeGameState: snapshot.authoritativeState ?? snapshot.state,
                 waitingFor: snapshot.state.waiting_for,
                 ...legalResultState(snapshot.legalResult),
                 lastCommittedSeq: snapshot.seq,
@@ -383,7 +388,7 @@ export const useGameStore = create<GameStore>()(
           startingContest,
         },
       });
-      void saveAuthoritativeGame(gameId, adapter, state);
+      void saveAuthoritativeGame(gameId, adapter, snapshot.authoritativeState ?? state);
     },
 
     resumeGame: async (gameId, adapter, savedState) => {
@@ -437,7 +442,7 @@ export const useGameStore = create<GameStore>()(
 
     dispatch: async (action) => {
       const submittedAction = applySpellPaymentPreference(action);
-      const { adapter, gameState, gameId, gameMode } = get();
+      const { adapter, gameState, authoritativeGameState, gameId, gameMode } = get();
       if (!adapter || !gameState) {
         throw new Error("Game not initialized");
       }
@@ -465,7 +470,7 @@ export const useGameStore = create<GameStore>()(
 
       // Read-then-commit with no `await` between, so no other commit interleaves.
       const stateHistory = shouldSaveHistory
-        ? [...get().stateHistory, gameState].slice(-MAX_UNDO_HISTORY)
+        ? [...get().stateHistory, authoritativeGameState ?? gameState].slice(-MAX_UNDO_HISTORY)
         : undefined;
       get().commitEngineSnapshot(snapshot, {
         events: result.events,
@@ -473,7 +478,13 @@ export const useGameStore = create<GameStore>()(
         stateHistory,
       });
 
-      if (gameId) void saveAuthoritativeGame(gameId, adapter, snapshot.state);
+      if (gameId) {
+        void saveAuthoritativeGame(
+          gameId,
+          adapter,
+          snapshot.authoritativeState ?? snapshot.state,
+        );
+      }
 
       return result.events;
     },
