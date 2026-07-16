@@ -146,10 +146,14 @@ describe("WebSocketAdapter", () => {
         }),
       );
 
+      // The engine pair now travels as one seq-stamped `EngineSnapshot`.
       expect(listener).toHaveBeenCalledWith(
         expect.objectContaining({
           type: "stateChanged",
-          state: mockState,
+          snapshot: expect.objectContaining({
+            state: expect.objectContaining(mockState),
+            seq: expect.any(Number),
+          }),
           events: mockEvents,
           logEntries: mockLogEntries,
         }),
@@ -274,6 +278,27 @@ describe("WebSocketAdapter", () => {
           data: { action: { type: "PassPriority" } },
         }),
       );
+    });
+
+    it("resolves a mana-payment preview only for its matching request", async () => {
+      ws.send.mockClear();
+      const preview = adapter.previewManaPayment({ type: "PassPriority" }, 0);
+      expect(ws.send).toHaveBeenCalledWith(
+        JSON.stringify({
+          type: "PreviewManaPayment",
+          data: { request_id: 1, action: { type: "PassPriority" } },
+        }),
+      );
+
+      ws.dispatchSynthetic(
+        "message",
+        JSON.stringify({
+          type: "ManaPaymentPreview",
+          data: { request_id: 1, source_ids: [12] },
+        }),
+      );
+
+      await expect(preview).resolves.toEqual([12]);
     });
 
     it("rejects submitAction and clears pending state when the socket throws on send", async () => {

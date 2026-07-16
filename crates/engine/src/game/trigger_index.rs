@@ -204,6 +204,7 @@ pub(crate) fn keys_from_trigger_def(def: &TriggerDefinition) -> (Keys, bool) {
         | TriggerMode::YouAttackUnblocked
         | TriggerMode::Blocks
         | TriggerMode::BlockersDeclared
+        | TriggerMode::BlocksOrBecomesBlocked
         | TriggerMode::BecomesBlocked => {
             push(TriggerEventKey::Blocks);
         }
@@ -332,10 +333,9 @@ pub(crate) fn keys_from_trigger_def(def: &TriggerDefinition) -> (Keys, bool) {
         | TriggerMode::CaseSolved => push(TriggerEventKey::DungeonOrClassOrCase),
 
         // --- Planar ---
-        TriggerMode::PlanarDice
-        | TriggerMode::PlaneswalkedFrom
-        | TriggerMode::PlaneswalkedTo
-        | TriggerMode::ChaosEnsues => return (keys, true),
+        TriggerMode::PlanarDice | TriggerMode::Planeswalked { .. } | TriggerMode::ChaosEnsues => {
+            return (keys, true)
+        }
 
         // --- Dice / coin ---
         TriggerMode::RolledDie | TriggerMode::RolledDieOnce | TriggerMode::FlippedCoin => {
@@ -597,6 +597,7 @@ pub(crate) fn keys_from_event(event: &GameEvent, state: &GameState) -> Keys {
         // CR 509.3c: an effect-driven "becomes blocked" is a Blocks-key event so
         // "whenever ~ becomes blocked" triggers are indexed for it.
         GameEvent::AttackerBecameBlockedByEffect { .. } => push(TriggerEventKey::Blocks),
+        GameEvent::AttackerBecameBlockedByFilteredBlocker { .. } => push(TriggerEventKey::Blocks),
         GameEvent::CombatTaxPaid { .. } | GameEvent::CombatTaxDeclined { .. } => {}
         GameEvent::BecomesTarget { .. } => push(TriggerEventKey::BecomesTarget),
         GameEvent::VehicleCrewed { .. }
@@ -633,7 +634,7 @@ pub(crate) fn keys_from_event(event: &GameEvent, state: &GameState) -> Keys {
         GameEvent::RoomEntered { .. } | GameEvent::DungeonCompleted { .. } => {
             push(TriggerEventKey::DungeonOrClassOrCase);
         }
-        // Planechase trigger modes (PlaneswalkedFrom/To, ChaosEnsues) route to the
+        // Planechase trigger modes (Planeswalked { role }, ChaosEnsues) route to the
         // always-checked unclassified bucket in `keys_from_trigger_def`, so these
         // events need no dedicated index key — their matchers are always consulted.
         GameEvent::Planeswalked { .. }
@@ -844,6 +845,9 @@ fn keys_from_effect_kind(kind: EffectKind, push: &mut impl FnMut(TriggerEventKey
         | EffectKind::TakeTheInitiative
         | EffectKind::Planeswalk
         | EffectKind::ChaosEnsues
+        // Redistribute emits LifeChanged handled by that event's own arm; no
+        // EffectResolved-dispatching matcher. No-op here.
+        | EffectKind::RedistributeLifeTotals
         | EffectKind::ReverseTurnOrder
         | EffectKind::OpenAttractions
         | EffectKind::RollToVisitAttractions

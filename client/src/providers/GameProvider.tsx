@@ -2,7 +2,13 @@ import { createContext, useEffect, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 
-import type { FormatConfig, GameAction, MatchConfig, MatchType } from "../adapter/types";
+import {
+  type FormatConfig,
+  type GameAction,
+  type MatchConfig,
+  type MatchType,
+  persistedGameStateView,
+} from "../adapter/types";
 import { AdapterError, AdapterErrorCode } from "../adapter/types";
 import { P2PHostAdapter, P2PGuestAdapter } from "../adapter/p2p-adapter";
 import type { P2PAdapterEvent } from "../adapter/p2p-adapter";
@@ -669,7 +675,7 @@ export function GameProvider({
             }
           }
           if (event.type === "stateChanged") {
-            processRemoteUpdate(event.state, event.events, event.legalResult, event.logEntries);
+            processRemoteUpdate(event.snapshot, event.events, event.logEntries);
           }
           if (event.type === "guestConnected") {
             notifyOpponentJoined(tRef.current);
@@ -847,8 +853,6 @@ export function GameProvider({
             //    their original seat.
             const sessionKey = `phase-${code}`;
             const existing = await loadP2PSession(sessionKey);
-            const reservationToken =
-              window.sessionStorage.getItem(`phase-p2p-reservation:${code}`) ?? undefined;
             signal.throwIfAborted();
             const adapter = new P2PGuestAdapter(
               deckList,
@@ -857,7 +861,7 @@ export function GameProvider({
               conn,
               existing?.playerToken,
               useMultiplayerStore.getState().displayName || undefined,
-              reservationToken,
+              undefined,
               sessionKey,
             );
             p2pAdapter = adapter;
@@ -954,9 +958,9 @@ export function GameProvider({
       const sessionKey = `phase-join-password:${joinCode ?? ""}`;
       let password: string | undefined =
         (joinCode && window.sessionStorage.getItem(sessionKey)) || undefined;
-      const reservationSessionKey = `phase-join-reservation:${joinCode ?? ""}`;
-      const reservationToken: string | undefined =
-        (joinCode && window.sessionStorage.getItem(reservationSessionKey)) || undefined;
+      if (joinCode) {
+        window.sessionStorage.removeItem(`phase-join-reservation:${joinCode}`);
+      }
       if (!password && urlParams.has("password")) {
         password = urlParams.get("password") ?? undefined;
         if (password && joinCode) {
@@ -983,7 +987,7 @@ export function GameProvider({
           deck,
           wsMode === "join" ? joinCode : undefined,
           wsMode === "join" ? password : undefined,
-          wsMode === "join" ? reservationToken : undefined,
+          undefined,
           useMultiplayerStore.getState().displayName || "Player",
         );
 
@@ -1019,11 +1023,12 @@ export function GameProvider({
             if (needAdapter) {
               useGameStore.setState({ adapter: wsAdapter });
             }
-            processRemoteUpdate(event.state, event.events, event.legalResult, event.logEntries);
+            processRemoteUpdate(event.snapshot, event.events, event.logEntries);
             useMultiplayerStore.getState().setConnectionStatus("connected");
+            const wsState = event.snapshot.state;
             if (
-              event.state.match_phase === "Completed"
-              || (!event.state.match_phase && event.state.waiting_for.type === "GameOver")
+              wsState.match_phase === "Completed"
+              || (!wsState.match_phase && wsState.waiting_for.type === "GameOver")
             ) {
               clearActiveGame();
             }
@@ -1155,7 +1160,7 @@ export function GameProvider({
           if (cancelled) return;
           // Derive player count from the restored state — the URL param may be
           // absent on resume (e.g. navigating directly to a saved game URL).
-          const resumedPlayerCount = savedState.players?.length ?? playerCount;
+          const resumedPlayerCount = persistedGameStateView(savedState).players.length;
           controller = createGameLoopController({
             mode: mode === "local" ? "local" : "ai",
             difficulty,

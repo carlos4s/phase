@@ -13,12 +13,12 @@ use crate::types::zones::Zone;
 /// Resolve the set of players whose permanents are eligible for a sacrifice
 /// effect, derived from the target filter's `ControllerRef`.
 ///
-/// CR 701.21a: A player can only sacrifice a permanent they control.
+/// CR 701.17a: A player can only sacrifice a permanent they control.
 ///
 /// - `You` (or no controller clause): only the ability controller sacrifices
 ///   (the historical default).
 /// - `Opponent`: each player other than the ability controller may be asked to
-///   sacrifice. Per CR 701.21a, each affected player can only sacrifice their
+///   sacrifice. Per CR 701.17a, each affected player can only sacrifice their
 ///   own permanent; this resolver handles the single-opponent two-player case
 ///   by routing both filter scope and chooser to that opponent.
 /// - `ScopedPlayer`: an event-context player such as the active player for
@@ -127,7 +127,7 @@ fn trigger_event_scoped_player(state: &GameState, ability: &ResolvedAbility) -> 
     })
 }
 
-/// CR 701.21a: To sacrifice a permanent, its controller moves it to its owner's graveyard.
+/// CR 701.17a: To sacrifice a permanent, its controller moves it to its owner's graveyard.
 pub fn resolve(
     state: &mut GameState,
     ability: &ResolvedAbility,
@@ -143,7 +143,7 @@ pub fn resolve(
     // `QuantityExpr` (Fixed/Ref/DivideRounded/...) means a mandatory count;
     // wrapped in `UpTo` means the player may select 0..=count.
     let default_count = QuantityExpr::Fixed { value: 1 };
-    let (filter, count_expr, up_to, min_count) = match &ability.effect {
+    let (raw_filter, count_expr, up_to, min_count) = match &ability.effect {
         Effect::Sacrifice {
             target,
             count,
@@ -154,6 +154,21 @@ pub fn resolve(
         }
         _ => (&TargetFilter::Any, &default_count, false, 0),
     };
+    // CR 608.2c + CR 510.2: Bind the parser's `TrackedSetId(0)` "most recent set"
+    // sentinel to a concrete filter before deriving the eligible pool. This is
+    // the same filter-level authority every other tracked-set consumer
+    // (`change_zone`, `shuffle`, `token_copy`, …) routes through, and it is the
+    // ONLY one that carries the combat-damage rung: for a "you may sacrifice one
+    // of them" trigger seeded from a `CombatDamageDealtToPlayer` event (e.g.
+    // Descendants' Fury), the eligible creatures live in the event's
+    // `source_amounts`, reachable only via `current_combat_damage_source_filter`.
+    // `matches_target_filter`'s id-level ladder (`resolve_tracked_set_id`) never
+    // reaches that rung, so matching the raw sentinel directly would leave the
+    // pool empty and silently sacrifice nothing. Non-sentinel filters (SelfRef,
+    // Any, controller-scoped) pass through unchanged.
+    let resolved_filter =
+        crate::game::targeting::resolve_tracked_set_sentinel(state, raw_filter.clone());
+    let filter = &resolved_filter;
     // CR 400.7: A self-referential sacrifice ("sacrifice this creature") does
     // nothing if the source has left and re-entered the battlefield (blink/
     // flicker) since this ability fired — the re-entered permanent is a new
@@ -164,6 +179,7 @@ pub fn resolve(
         events.push(GameEvent::EffectResolved {
             kind: EffectKind::from(&ability.effect),
             source_id: ability.source_id,
+            subject: None,
         });
         return Ok(());
     }
@@ -197,7 +213,7 @@ pub fn resolve(
     };
 
     if targeted_objects.is_empty() {
-        // CR 701.21a: Derive the player(s) whose permanents are in scope from
+        // CR 701.17a: Derive the player(s) whose permanents are in scope from
         // the target filter's ControllerRef. Defaults to `[ability.controller]`
         // when no controller clause is present (historical "you sacrifice"
         // default). For `Opponent` / `TargetPlayer`, each affected player is
@@ -253,6 +269,7 @@ pub fn resolve(
             events.push(GameEvent::EffectResolved {
                 kind: EffectKind::from(&ability.effect),
                 source_id: ability.source_id,
+                subject: None,
             });
             return Ok(());
         }
@@ -264,11 +281,12 @@ pub fn resolve(
             events.push(GameEvent::EffectResolved {
                 kind: EffectKind::from(&ability.effect),
                 source_id: ability.source_id,
+                subject: None,
             });
             return Ok(());
         }
 
-        // CR 701.21a + CR 609.3: When the resolved count is at least the
+        // CR 701.17a + CR 609.3: When the resolved count is at least the
         // eligible pool and the sacrifice is mandatory, sacrifice every
         // eligible permanent — the effect does as much as possible. Fast-path
         // this rather than round-tripping through EffectZoneChoice.
@@ -285,7 +303,7 @@ pub fn resolve(
                     Err(_) => {}
                 }
             }
-            // CR 701.21a + CR 603.10a + CR 608.2f: every eligible permanent was
+            // CR 701.17a + CR 603.10a + CR 608.2f: every eligible permanent was
             // sacrificed as part of the same resolution event, so co-departing
             // sacrifice/LTB observers (Blood Artist) observe each other.
             // `departed_subset` drops any permanent that didn't actually leave
@@ -298,11 +316,12 @@ pub fn resolve(
             events.push(GameEvent::EffectResolved {
                 kind: EffectKind::from(&ability.effect),
                 source_id: ability.source_id,
+                subject: None,
             });
             return Ok(());
         }
 
-        // CR 701.21a: "Sacrifice N permanents" — the affected player picks
+        // CR 701.17a: "Sacrifice N permanents" — the affected player picks
         // which `count` permanents out of the eligible pool. Clamped to pool
         // size for safety; the branch above handles the mandatory-all case.
         let choice_count = count.min(eligible.len());
@@ -348,16 +367,29 @@ pub fn resolve(
             continue;
         }
 
-        // CR 701.21a: A player can't sacrifice something that isn't a permanent.
+        // CR 701.17a: A player can't sacrifice something that isn't a permanent.
         if obj.zone != Zone::Battlefield {
             continue;
         }
 
-        // CR 701.21a: Defense-in-depth — a player can only sacrifice permanents
+        // CR 701.17a: Defense-in-depth — a player can only sacrifice permanents
         // they control. The primary fix is that Sacrifice no longer creates
         // target slots (see extract_target_filter_from_effect), but if this
         // path is ever reached, enforce controller ownership.
-        if obj.controller != ability.controller {
+        //
+        // CR 701.17a: "To sacrifice a permanent, its controller moves it..." — for an
+        // explicit anaphoric target (ParentTarget/ParentTargetSlot, e.g. Animate
+        // Dead's "that creature's controller sacrifices it"), the acting player is
+        // the object's OWN current controller, unconditionally, even if control
+        // changed since the ability (e.g. a delayed leaves-battlefield trigger) was
+        // created. The equality check below remains a valid defense-in-depth guard
+        // for every OTHER filter shape reaching this path.
+        if obj.controller != ability.controller
+            && !matches!(
+                filter,
+                TargetFilter::ParentTarget | TargetFilter::ParentTargetSlot { .. }
+            )
+        {
             continue;
         }
 
@@ -387,6 +419,7 @@ pub fn resolve(
     events.push(GameEvent::EffectResolved {
         kind: EffectKind::from(&ability.effect),
         source_id: ability.source_id,
+        subject: None,
     });
 
     Ok(())
@@ -570,7 +603,7 @@ mod tests {
     /// OTHER creature, the mandatory sacrifice auto-resolves onto it and the
     /// source survives.
     ///
-    /// CR 701.21a: sacrifice moves the chosen permanent to its owner's
+    /// CR 701.17a: sacrifice moves the chosen permanent to its owner's
     /// graveyard. `FilterProp::Another` is evaluated via
     /// `FilterContext::from_ability` (source excluded). The paired negative
     /// (source survives) is made non-vacuous by asserting the OTHER creature was
@@ -821,7 +854,7 @@ mod tests {
         assert!(state.cost_payment_failed_flag);
     }
 
-    // CR 701.21a: When the target filter scopes sacrifice to opponents
+    // CR 701.17a: When the target filter scopes sacrifice to opponents
     // (ControllerRef::Opponent) or a target player (ControllerRef::TargetPlayer),
     // the affected player — not the ability controller — both provides the
     // eligible permanent pool and makes the choice.
@@ -1082,7 +1115,7 @@ mod tests {
         }
     }
 
-    /// CR 701.21a: Even if the targeted path is reached (defense-in-depth),
+    /// CR 701.17a: Even if the targeted path is reached (defense-in-depth),
     /// sacrifice must skip permanents not controlled by the ability controller.
     #[test]
     fn targeted_path_skips_opponent_permanents() {
@@ -1498,7 +1531,7 @@ mod tests {
     /// planeswalker with the greatest mana value among creatures and
     /// planeswalkers they control."
     ///
-    /// CR 202.3 + CR 608.2h + CR 701.21a: each opponent's eligible pool must
+    /// CR 202.3 + CR 608.2h + CR 701.17a: each opponent's eligible pool must
     /// be restricted to *that opponent's* permanents tied for the greatest
     /// mana value among their own creatures/planeswalkers — never a global
     /// battlefield maximum.

@@ -339,6 +339,7 @@ pub(super) fn finish_declare_attackers(
         });
         state.combat = None;
         super::layers::prune_end_of_combat_effects(state);
+        super::layers::prune_controller_end_combat_step_effects(state, state.active_player);
         turns::advance_phase(state, events);
         Ok(turns::auto_advance(state, events))
     } else {
@@ -860,6 +861,7 @@ pub(super) fn handle_empty_attackers(
     });
     state.combat = None;
     super::layers::prune_end_of_combat_effects(state);
+    super::layers::prune_controller_end_combat_step_effects(state, state.active_player);
     turns::advance_phase(state, events);
     Ok(turns::auto_advance(state, events))
 }
@@ -881,13 +883,16 @@ fn next_blocker_or_finish_declaration(
 ) -> Result<WaitingFor, EngineError> {
     if let Some(player) = super::combat::next_defending_player_to_declare_blockers(state) {
         let valid_block_targets = super::combat::get_valid_block_targets_for_player(state, player);
-        let valid_blocker_ids: Vec<_> = valid_block_targets.keys().copied().collect();
+        let valid_blocker_ids = super::combat::ordered_valid_blocker_ids(&valid_block_targets);
         let block_requirements = super::combat::block_requirements_for_player(state, player);
+        let blocker_constraints =
+            super::combat::blocker_constraints_for_player(state, player, &valid_block_targets);
         return Ok(WaitingFor::DeclareBlockers {
             player,
             valid_blocker_ids,
             valid_block_targets,
             block_requirements,
+            blocker_constraints,
         });
     }
 

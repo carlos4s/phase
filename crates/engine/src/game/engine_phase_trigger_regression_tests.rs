@@ -1270,6 +1270,7 @@ fn attack_trigger_resolves_before_combat_damage_and_only_once() {
         player: PlayerId(0),
         valid_attacker_ids: vec![ajani, linden],
         valid_attack_targets: vec![AttackTarget::Player(PlayerId(1))],
+        attacker_constraints: Default::default(),
     };
 
     let declare_result = apply_as_current(
@@ -1462,6 +1463,7 @@ fn lifelink_replacement_does_not_double_fire_life_gain_triggers() {
         player: PlayerId(0),
         valid_attacker_ids: vec![bat],
         valid_attack_targets: vec![AttackTarget::Player(PlayerId(1))],
+        attacker_constraints: Default::default(),
     };
 
     apply_as_current(
@@ -2479,6 +2481,7 @@ fn effect_zone_choice_handler_resolves_sacrifice_and_continuation() {
             source_id,
             PlayerId(0),
         )),
+        &state,
     ));
 
     let result = apply_as_current(
@@ -3174,6 +3177,7 @@ fn copy_target_choice_resolves_become_copy() {
             .execute(crate::types::ability::AbilityDefinition::new(
                 crate::types::ability::AbilityKind::Spell,
                 crate::types::ability::Effect::BecomeCopy {
+                    recipient: TargetFilter::SelfRef,
                     target: TargetFilter::Any,
                     duration: None,
                     mana_value_limit: Some(
@@ -3275,6 +3279,7 @@ fn copy_target_choice_applies_copied_enter_with_counters_replacement_before_sba(
             .execute(crate::types::ability::AbilityDefinition::new(
                 crate::types::ability::AbilityKind::Spell,
                 Effect::BecomeCopy {
+                    recipient: TargetFilter::SelfRef,
                     target: TargetFilter::Typed(crate::types::ability::TypedFilter::new(
                         crate::types::ability::TypeFilter::Creature,
                     )),
@@ -3382,6 +3387,7 @@ fn copy_target_choice_fires_granted_etb_trigger_against_deferred_entry_event() {
             .execute(AbilityDefinition::new(
                 AbilityKind::Spell,
                 Effect::BecomeCopy {
+                    recipient: TargetFilter::SelfRef,
                     target: TargetFilter::Typed(crate::types::ability::TypedFilter::new(
                         crate::types::ability::TypeFilter::Creature,
                     )),
@@ -3565,6 +3571,7 @@ fn copy_target_choice_surfaces_interactive_trigger_prompt_for_deferred_entry() {
             .execute(AbilityDefinition::new(
                 AbilityKind::Spell,
                 Effect::BecomeCopy {
+                    recipient: TargetFilter::SelfRef,
                     target: TargetFilter::Typed(TypedFilter::creature()),
                     duration: None,
                     mana_value_limit: None,
@@ -3779,6 +3786,7 @@ fn superior_spider_man_full_copy_flow_copies_graveyard_card_and_exiles_it() {
         let become_copy = crate::types::ability::AbilityDefinition::new(
             crate::types::ability::AbilityKind::Spell,
             Effect::BecomeCopy {
+                recipient: TargetFilter::SelfRef,
                 target: TargetFilter::Typed(
                     crate::types::ability::TypedFilter::new(
                         crate::types::ability::TypeFilter::Creature,
@@ -3969,6 +3977,7 @@ fn reflexive_when_you_do_fires_after_become_copy_replacement() {
         let become_copy = crate::types::ability::AbilityDefinition::new(
             crate::types::ability::AbilityKind::Spell,
             Effect::BecomeCopy {
+                recipient: TargetFilter::SelfRef,
                 target: TargetFilter::Typed(
                     crate::types::ability::TypedFilter::new(
                         crate::types::ability::TypeFilter::Creature,
@@ -4113,6 +4122,7 @@ fn declare_blockers_grants_ap_priority_when_no_legal_blockers() {
         player: PlayerId(0),
         valid_attacker_ids: vec![attacker],
         valid_attack_targets: vec![AttackTarget::Player(PlayerId(1))],
+        attacker_constraints: Default::default(),
     };
 
     apply_as_current(

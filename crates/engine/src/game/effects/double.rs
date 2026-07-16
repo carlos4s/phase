@@ -118,6 +118,7 @@ fn resolve_double_counters(
     events.push(GameEvent::EffectResolved {
         kind: EffectKind::Double,
         source_id: ability.source_id,
+        subject: None,
     });
 
     Ok(())
@@ -168,6 +169,7 @@ fn resolve_double_life(
     events.push(GameEvent::EffectResolved {
         kind: EffectKind::Double,
         source_id: ability.source_id,
+        subject: None,
     });
 
     Ok(())
@@ -246,6 +248,7 @@ fn resolve_double_mana(
     events.push(GameEvent::EffectResolved {
         kind: EffectKind::Double,
         source_id: ability.source_id,
+        subject: None,
     });
 
     Ok(())
@@ -340,8 +343,10 @@ mod tests {
             target_constraints: Vec::new(),
             target_choice_timing: crate::types::ability::TargetChoiceTiming::Stack,
             description: None,
+            selected_mode_labels: Vec::new(),
             repeat_for: None,
             min_x_value: 0,
+            announced_x: None,
             cant_be_copied: false,
             copy_count_status: crate::types::ability::CopyCountStatus::Pending,
             forward_result: false,
@@ -354,7 +359,7 @@ mod tests {
             sub_link: crate::types::ability::SubAbilityLink::ContinuationStep,
             modal: None,
             mode_abilities: vec![],
-            dig_found_nothing_for_parent_target: false,
+            parent_target_missing_reason: None,
         }
     }
 

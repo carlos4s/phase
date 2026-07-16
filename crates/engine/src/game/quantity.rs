@@ -350,6 +350,7 @@ fn quantity_ref_uses_unspent_mana(qty: &QuantityRef) -> bool {
         | QuantityRef::GraveyardSize { .. }
         | QuantityRef::LifeAboveStarting
         | QuantityRef::StartingLifeTotal
+        | QuantityRef::TriggeringDiscoverValue
         | QuantityRef::ObjectCount { .. }
         | QuantityRef::ObjectCountDistinct { .. }
         | QuantityRef::ObjectCountBySharedQuality { .. }
@@ -383,7 +384,7 @@ fn quantity_ref_uses_unspent_mana(qty: &QuantityRef) -> bool {
         | QuantityRef::FilteredTrackedSetSize { .. }
         | QuantityRef::TrackedSetAggregate { .. }
         | QuantityRef::ExiledFromHandThisResolution
-        | QuantityRef::PreviousEffectAmount
+        | QuantityRef::PreviousEffectAmount { .. }
         | QuantityRef::LifeLostThisTurn { .. }
         | QuantityRef::PartySize { .. }
         | QuantityRef::Speed { .. }
@@ -486,7 +487,7 @@ pub(crate) fn continuous_modification_dynamic_quantity(
         | ContinuousModification::AddAllBasicLandTypes
         | ContinuousModification::AddAllLandTypes
         | ContinuousModification::AddChosenSubtype { .. }
-        | ContinuousModification::AddChosenColor
+        | ContinuousModification::AddChosenColor { .. }
         | ContinuousModification::RemoveChosenKeyword
         | ContinuousModification::AddChosenKeyword
         | ContinuousModification::SetColor { .. }
@@ -569,11 +570,13 @@ pub(crate) fn static_condition_uses_unspent_mana(condition: &StaticCondition) ->
         | StaticCondition::SourceIsHarnessed
         | StaticCondition::SourceAttachedToCreature
         | StaticCondition::SourceMatchesFilter { .. }
+        | StaticCondition::TopOfLibraryMatches { .. }
         | StaticCondition::RecipientMatchesFilter { .. }
         | StaticCondition::RecipientAttackingOwnerTarget { .. }
         | StaticCondition::SourceIsPaired
         | StaticCondition::SourceInZone { .. }
         | StaticCondition::EnchantedIsFaceDown
+        | StaticCondition::SourceIsFaceUp
         | StaticCondition::AdditionalCostPaid
         | StaticCondition::CastingAsVariant { .. }
         | StaticCondition::None => false,
@@ -627,6 +630,7 @@ fn quantity_ref_uses_object_count(qty: &QuantityRef) -> bool {
         | QuantityRef::GraveyardSize { .. }
         | QuantityRef::LifeAboveStarting
         | QuantityRef::StartingLifeTotal
+        | QuantityRef::TriggeringDiscoverValue
         | QuantityRef::PlayerCount { .. }
         | QuantityRef::CountersOn { .. }
         | QuantityRef::PlayerCounter { .. }
@@ -650,7 +654,7 @@ fn quantity_ref_uses_object_count(qty: &QuantityRef) -> bool {
         | QuantityRef::FilteredTrackedSetSize { .. }
         | QuantityRef::TrackedSetAggregate { .. }
         | QuantityRef::ExiledFromHandThisResolution
-        | QuantityRef::PreviousEffectAmount
+        | QuantityRef::PreviousEffectAmount { .. }
         | QuantityRef::LifeLostThisTurn { .. }
         | QuantityRef::Speed { .. }
         | QuantityRef::EventContextAmount
@@ -821,6 +825,7 @@ fn entered_object_perturbs_quantity_ref(
         | QuantityRef::GraveyardSize { .. }
         | QuantityRef::LifeAboveStarting
         | QuantityRef::StartingLifeTotal
+        | QuantityRef::TriggeringDiscoverValue
         | QuantityRef::PlayerCount { .. }
         | QuantityRef::CountersOn { .. }
         | QuantityRef::PlayerCounter { .. }
@@ -844,7 +849,7 @@ fn entered_object_perturbs_quantity_ref(
         | QuantityRef::FilteredTrackedSetSize { .. }
         | QuantityRef::TrackedSetAggregate { .. }
         | QuantityRef::ExiledFromHandThisResolution
-        | QuantityRef::PreviousEffectAmount
+        | QuantityRef::PreviousEffectAmount { .. }
         | QuantityRef::LifeLostThisTurn { .. }
         | QuantityRef::Speed { .. }
         | QuantityRef::EventContextAmount
@@ -1100,6 +1105,70 @@ fn with_detection_trigger_event<R>(
 /// dual-path).
 pub fn detection_trigger_event() -> Option<crate::types::events::GameEvent> {
     DETECTION_TRIGGER_EVENT.with(|slot| slot.borrow().clone())
+}
+
+// CR 603.12: A reflexive triggered ability's own "that many" (an
+// `EventContextAmount`) is resolution-local to the ability that CREATED it —
+// never the enclosing trigger whose event/context is still live on
+// `GameState` while that enclosing ability's resolution is paused mid-flight
+// (e.g. a `PendingContinuation` resume restores the enclosing trigger's event
+// before the reflexive's own target slots are built). This suppresses every
+// enclosing-trigger tier of the cascade: the batched match count,
+// `current_trigger_event`, and its detection-time fallback
+// `detection_trigger_event()`, for the duration of
+// `try_begin_reflexive_target_selection`'s entire body — covering target-slot
+// construction (`build_target_slots`) and subject-count freezing
+// (`freeze_reflexive_event_count`) in one shot, regardless of which of the
+// ~7 `resolve_quantity*` entry points either path happens to use, because the
+// gate lives in `resolve_ref`'s `EventContextAmount` arm — the single shared
+// consumption point all of them funnel into.
+std::thread_local! {
+    static SUPPRESS_ENCLOSING_TRIGGER_EVENT_AMOUNT: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+/// CR 603.12: Run `f` with the enclosing trigger's own event context
+/// suppressed from the `EventContextAmount` cascade. Mirrors
+/// `with_detection_trigger_event`'s save/restore-previous-value discipline
+/// (not a hard reset to `false`) so nested reflexive-in-reflexive
+/// construction, if it ever occurs, composes correctly.
+pub(crate) fn with_reflexive_resolution_scope<R>(f: impl FnOnce() -> R) -> R {
+    let prev = SUPPRESS_ENCLOSING_TRIGGER_EVENT_AMOUNT.with(|c| c.replace(true));
+    let result = f();
+    SUPPRESS_ENCLOSING_TRIGGER_EVENT_AMOUNT.with(|c| c.set(prev));
+    result
+}
+
+fn enclosing_trigger_event_amount_suppressed() -> bool {
+    SUPPRESS_ENCLOSING_TRIGGER_EVENT_AMOUNT.with(|c| c.get())
+}
+
+/// CR 603.12 + CR 603.2c: The enclosing trigger's filtered subject count.
+/// Suppressed inside `with_reflexive_resolution_scope` so a reflexive trigger
+/// cannot inherit its enclosing trigger's batched-event count.
+fn enclosing_trigger_match_count(state: &GameState) -> Option<i32> {
+    if enclosing_trigger_event_amount_suppressed() {
+        return None;
+    }
+    state.current_trigger_match_count.map(u32_to_i32_saturating)
+}
+
+/// CR 603.12 + CR 603.2c/603.4: The enclosing trigger's scalar event amount.
+/// Suppressed inside `with_reflexive_resolution_scope` so a reflexive trigger
+/// falls through to the action that created it.
+fn enclosing_trigger_event_amount(state: &GameState) -> Option<i32> {
+    if enclosing_trigger_event_amount_suppressed() {
+        return None;
+    }
+    state
+        .current_trigger_event
+        .as_ref()
+        .and_then(crate::game::targeting::extract_amount_from_event)
+        .or_else(|| {
+            detection_trigger_event()
+                .as_ref()
+                .and_then(crate::game::targeting::extract_amount_from_event)
+        })
 }
 
 /// CR 603.2 + CR 109.4: Resolve the player identified by the current
@@ -1663,6 +1732,10 @@ fn resolve_ref(
         }),
         // CR 103.4: The format's starting life total.
         QuantityRef::StartingLifeTotal => state.format_config.starting_life,
+        // CR 701.57a: the mana-value limit of the discover that fired the current
+        // "whenever you discover" trigger (Curator of Sun's Creation, "the same
+        // value"). 0 outside a discover-trigger context.
+        QuantityRef::TriggeringDiscoverValue => state.last_discover_value.unwrap_or(0),
         // CR 118.4 + CR 119.3: Life lost this turn, scoped via PlayerScope (Π-3).
         QuantityRef::LifeLostThisTurn { player } => {
             resolve_per_player_scalar(state, player, controller, ctx, targets, ability, |p| {
@@ -2364,10 +2437,24 @@ fn resolve_ref(
             }
             count
         }
-        // CR 609.3: Numeric result from the preceding effect in a sub_ability chain.
+        // CR 608.2c: Numeric result from the preceding effect in a sub_ability chain.
         // The resolver stamps this from the parent effect's semantic event class.
-        QuantityRef::PreviousEffectAmount => state.last_effect_amount.unwrap_or(0),
-        // CR 609.3: "for each [thing] this way" — read the most recent tracked set size.
+        //
+        // CR 120.6 / CR 120.10: `channel` picks WHICH tally the preceding effect
+        // left behind. Both are stamped by the damage effects and cleared at
+        // depth-0, so the two channels are read from the same resolution scope —
+        // this arm only chooses between them. Mirrors the condition peer
+        // `AbilityCondition::PreviousEffectAmount`, which already reads both.
+        QuantityRef::PreviousEffectAmount { channel } => match channel {
+            // CR 120.6: the total amount dealt/lost/removed.
+            DamageChannel::Total => state.last_effect_amount.unwrap_or(0),
+            // CR 120.10: only the damage dealt BEYOND lethal — "the amount of
+            // excess damage dealt to that creature this way" (Goblin
+            // Negotiation, Hell to Pay, Lacerate Flesh), "that excess damage"
+            // (Contest of Claws). 0 when the preceding effect dealt no excess.
+            DamageChannel::Excess => state.last_effect_excess_amount.unwrap_or(0),
+        },
+        // CR 608.2c: "for each [thing] this way" — read the most recent tracked set size.
         QuantityRef::TrackedSetSize => state
             .tracked_object_sets
             .iter()
@@ -2410,7 +2497,7 @@ fn resolve_ref(
                 .count();
             usize_to_i32_saturating(count)
         }
-        // CR 608.2c + CR 609.3 + CR 107.3e + CR 202.3: Reduce a numeric property
+        // CR 608.2c + CR 107.3e + CR 202.3: Reduce a numeric property
         // over the most recent chain tracked set. Mirrors `FilteredTrackedSetSize`'s set
         // selection (highest id = the set the preceding chain effect published)
         // but aggregates a per-member value instead of counting. The members are
@@ -2434,14 +2521,23 @@ fn resolve_ref(
                     .map(|(_, ids)| ids.clone())
                     .unwrap_or_default(),
                 // CR 603.2c + CR 603.10a: the current triggering event batch
-                // ("those creatures" on a batched dies trigger). The subjects are
+                // ("those creatures" on a batched dies trigger; "them" / "their
+                // total power" on a batched attack trigger). The subjects are
                 // read from `state.current_trigger_events`; each died creature's
                 // power comes from its last-known info (LKI), i.e. death-time
                 // power, via `aggregate_property_over`'s live-then-LKI extract.
+                //
+                // CR 508.1: `extract_sources_from_event` is the SET-valued
+                // extractor. The singleton `extract_source_from_event` collapses
+                // a multi-attacker `AttackersDeclared` to `None`, which reduced
+                // this aggregate over an EMPTY set — 0 attackers' worth of power
+                // on every board with 2+ attackers (Aloy, Shriekwood Devourer,
+                // Witch-king, Sky Scourge). Dies batches are unchanged: they
+                // arrive as one event per creature and are still collected here.
                 TrackedAnaphorSource::TriggeringBatch => state
                     .current_trigger_events
                     .iter()
-                    .filter_map(crate::game::targeting::extract_source_from_event)
+                    .flat_map(crate::game::targeting::extract_sources_from_event)
                     .collect(),
             };
             // Per-object aggregation delegated to the shared
@@ -2478,31 +2574,25 @@ fn resolve_ref(
         //      many"; "dealt excess damage this way, add that much {R}").
         //   6. `0` — undefined.
         QuantityRef::EventContextAmount => state
-            .current_trigger_match_count
-            .map(u32_to_i32_saturating)
+            // CR 614.1a: Moonlit-scoped "that many" copy count — highest priority,
+            // un-shadowable. `Some` only while a `CopyTokenOf` substitution
+            // continuation resolves (Moonlit Meditation); `None` otherwise, so it
+            // falls straight through to the existing trigger/effect cascade.
+            .post_replacement_token_substitution_count
+            .or_else(|| enclosing_trigger_match_count(state))
             // CR 706.4: Die results recorded earlier in THIS resolution
             // outrank the triggering event's own amount, so "roll one or more
             // dice. <effect> equal to the result(s)" consumes the roll total,
             // not the combat damage / life change that triggered it.
             .or(state.die_result_this_resolution)
-            .or_else(|| {
-                state
-                    .current_trigger_event
-                    .as_ref()
-                    .and_then(crate::game::targeting::extract_amount_from_event)
-            })
-            // CR 603.4: An intervening-`if` condition is checked at trigger
-            // *detection* (when `current_trigger_event` is still `None`) and
-            // re-checked at resolution. `EventContextAmount` must resolve at
-            // both times, so fall back to the detection-time event the same way
-            // `object_id_for_scope`'s `EventSource` arm does — otherwise the
-            // damage==toughness gate (Taii Wakeen) reads 0 at detection and
-            // never triggers.
-            .or_else(|| {
-                detection_trigger_event()
-                    .as_ref()
-                    .and_then(crate::game::targeting::extract_amount_from_event)
-            })
+            // CR 603.2c: The triggering event's own scalar amount (damage,
+            // life change, cards drawn, counters, die results), plus the CR
+            // 603.4 detection-time fallback for intervening-`if` re-checks
+            // where `current_trigger_event` is still `None`. Both tiers are
+            // suppressed inside `with_reflexive_resolution_scope` (CR 603.12) so
+            // a reflexive ability's "that many" never reads the enclosing
+            // trigger's event while that trigger's resolution is paused.
+            .or_else(|| enclosing_trigger_event_amount(state))
             .or_else(|| {
                 ctx.scoped_player.and_then(|player| {
                     (!state.last_effect_counts_by_player.is_empty()).then(|| {
@@ -4474,6 +4564,11 @@ fn resolve_single_player_scope(
         }
         // Aggregate scopes have no single-player reading.
         PlayerScope::Opponent { .. } | PlayerScope::AllPlayers { .. } => None,
+        PlayerScope::AnyTurn => {
+            unreachable!(
+                "PlayerScope::AnyTurn is duration-timing-only; never reached via QuantityRef"
+            )
+        }
     }
 }
 
@@ -4568,6 +4663,11 @@ where
                 state.players.iter().filter(|p| Some(p.id) != excluded_id),
                 *aggregate,
                 &mut extract,
+            )
+        }
+        PlayerScope::AnyTurn => {
+            unreachable!(
+                "PlayerScope::AnyTurn is duration-timing-only; never reached via QuantityRef"
             )
         }
     }
@@ -4796,13 +4896,14 @@ pub(crate) fn opponent_dealt_damage_matches(
     controller: PlayerId,
     kind: crate::types::ability::DamageKindFilter,
     source: &Option<Box<TargetFilter>>,
+    min_sources: u32,
     ability_source_id: ObjectId,
 ) -> bool {
     if player == controller {
         return false;
     }
     let ctx = FilterContext::from_source_with_controller(ability_source_id, controller);
-    state.damage_dealt_this_turn.iter().any(|r| {
+    let record_matches = |r: &crate::types::game_state::DamageRecord| {
         damage_record_matches_kind(r, kind)
             && matches!(r.target, TargetRef::Player(pid) if pid == player)
             && match source {
@@ -4812,7 +4913,28 @@ pub(crate) fn opponent_dealt_damage_matches(
                 // no separate short-circuit is needed here.
                 Some(f) => matches_target_filter_on_damage_record_source(state, r, f, &ctx),
             }
-    })
+    };
+    // CR 120.9: the fast, allocation-free `≥1` path for the common `min_sources
+    // == 1` case (every existing card). Only "N or more <source>" clauses
+    // (min_sources > 1, Admiral Beckett Brass) need to count DISTINCT sources.
+    if min_sources <= 1 {
+        return state.damage_dealt_this_turn.iter().any(record_matches);
+    }
+    // CR 120.9 + CR 608.2i: count DISTINCT damaging sources by `source_id` (a
+    // single Pirate dealing combat damage across two combat steps is ONE source,
+    // not two), then require at least `min_sources` of them.
+    let mut distinct: std::collections::HashSet<ObjectId> = std::collections::HashSet::new();
+    for r in state
+        .damage_dealt_this_turn
+        .iter()
+        .filter(|r| record_matches(r))
+    {
+        distinct.insert(r.source_id);
+        if distinct.len() as u32 >= min_sources {
+            return true;
+        }
+    }
+    false
 }
 
 /// Count players matching a PlayerFilter relative to the controller.
@@ -4873,11 +4995,19 @@ pub(crate) fn resolve_player_count(
                         // CR 120.2a/120.2b: Each opponent who was dealt damage of
                         // the given kind this turn, optionally restricted to a
                         // matching source.
-                        PlayerFilter::OpponentDealtDamage { kind, source } => {
-                            opponent_dealt_damage_matches(
-                                state, p.id, controller, *kind, source, source_id,
-                            )
-                        }
+                        PlayerFilter::OpponentDealtDamage {
+                            kind,
+                            source,
+                            min_sources,
+                        } => opponent_dealt_damage_matches(
+                            state,
+                            p.id,
+                            controller,
+                            *kind,
+                            source,
+                            *min_sources,
+                            source_id,
+                        ),
                         // CR 508.6: opponent the subject attacked within scope.
                         PlayerFilter::OpponentAttacked { subject, scope } => {
                             p.id != controller
@@ -5360,6 +5490,7 @@ mod tests {
             counters: HashMap::new(),
             tapped: false,
             is_suspected: false,
+            attachments: Vec::new(),
         };
 
         state.attacker_declarations_this_turn = vec![
@@ -8673,6 +8804,8 @@ mod tests {
                 filter: PlayerFilter::OpponentDealtDamage {
                     kind: DamageKindFilter::CombatOnly,
                     source: None,
+
+                    min_sources: 1,
                 },
             },
         };
@@ -8719,7 +8852,11 @@ mod tests {
                 &state,
                 &QuantityExpr::Ref {
                     qty: QuantityRef::PlayerCount {
-                        filter: PlayerFilter::OpponentDealtDamage { kind, source: None },
+                        filter: PlayerFilter::OpponentDealtDamage {
+                            kind,
+                            source: None,
+                            min_sources: 1,
+                        },
                     },
                 },
                 PlayerId(0),
@@ -8757,7 +8894,8 @@ mod tests {
             legacy,
             PlayerFilter::OpponentDealtDamage {
                 kind: DamageKindFilter::CombatOnly,
-                source: None
+                source: None,
+                min_sources: 1,
             }
         );
 
@@ -8768,7 +8906,8 @@ mod tests {
             any,
             PlayerFilter::OpponentDealtDamage {
                 kind: DamageKindFilter::Any,
-                source: None
+                source: None,
+                min_sources: 1,
             }
         );
         let reser = serde_json::to_string(&any).unwrap();
@@ -8787,6 +8926,8 @@ mod tests {
                 filter: PlayerFilter::OpponentDealtDamage {
                     kind: DamageKindFilter::CombatOnly,
                     source: None,
+
+                    min_sources: 1,
                 },
             },
         };
@@ -8833,6 +8974,8 @@ mod tests {
                 filter: PlayerFilter::OpponentDealtDamage {
                     kind: DamageKindFilter::CombatOnly,
                     source: Some(Box::new(dragon_filter)),
+
+                    min_sources: 1,
                 },
             },
         };
@@ -8874,6 +9017,8 @@ mod tests {
                         filter: PlayerFilter::OpponentDealtDamage {
                             kind: DamageKindFilter::CombatOnly,
                             source: Some(Box::new(source)),
+
+                            min_sources: 1,
                         },
                     },
                 },
@@ -11134,6 +11279,85 @@ mod tests {
         assert_eq!(resolve_quantity(&state, &expr, PlayerId(0), ObjectId(1)), 6);
     }
 
+    /// CR 603.12: A reflexive triggered ability's own "that many" is
+    /// resolution-local — it must NOT read the enclosing trigger's own event
+    /// amount while that enclosing trigger's resolution is paused mid-flight
+    /// (Swashbuckler Extraordinaire: "Whenever you attack, you may sacrifice
+    /// one or more Treasures. When you do, up to that many target creatures
+    /// gain double strike"). This is the exact hostile fixture the bug
+    /// exercises: BOTH an enclosing-trigger event amount (1 attacker) and a
+    /// resolution-local `last_effect_count` (2 Treasures sacrificed) are
+    /// simultaneously live. Outside `with_reflexive_resolution_scope` the
+    /// enclosing event wins (1); inside it is suppressed and the cascade falls
+    /// through to `last_effect_count` (2) — the actual sacrifice count that
+    /// bounds "up to that many target creatures".
+    #[test]
+    fn event_context_amount_suppressed_inside_reflexive_scope_falls_through_to_last_effect_count() {
+        let mut state = GameState::new_two_player(42);
+        // Enclosing trigger's own event: "Whenever you attack" with one
+        // attacker declared. `extract_amount_from_event` yields 1.
+        state.current_trigger_event = Some(crate::types::events::GameEvent::AttackersDeclared {
+            attacker_ids: vec![ObjectId(1)],
+            defending_player: PlayerId(1),
+            attacks: vec![],
+        });
+        // Resolution-local subject count: two Treasures sacrificed for the
+        // "may sacrifice one or more" cost, recorded by the reflexive's
+        // `EffectZoneChoice` handler.
+        state.last_effect_count = Some(2);
+        let expr = QuantityExpr::Ref {
+            qty: QuantityRef::EventContextAmount,
+        };
+
+        // Outside the reflexive scope: the enclosing trigger's event amount
+        // (1 attacker) is read first and wins.
+        assert_eq!(
+            resolve_quantity(&state, &expr, PlayerId(0), ObjectId(1)),
+            1,
+            "outside reflexive scope the enclosing trigger event amount wins"
+        );
+
+        // Inside the reflexive scope: the enclosing-event tiers are suppressed,
+        // so the cascade falls through to the resolution-local sacrifice count.
+        let inner = with_reflexive_resolution_scope(|| {
+            resolve_quantity(&state, &expr, PlayerId(0), ObjectId(1))
+        });
+        assert_eq!(
+            inner, 2,
+            "inside reflexive scope the enclosing event is suppressed and \
+             last_effect_count (the sacrifice count) is read instead"
+        );
+    }
+
+    /// CR 603.2c + CR 603.12: A reflexive ability created while a batched
+    /// enclosing trigger is resolving must not inherit that outer trigger's
+    /// subject count. Its "that many" instead refers to the action that caused
+    /// the reflexive trigger, represented here by `last_effect_count`.
+    #[test]
+    fn event_context_amount_suppressed_inside_reflexive_scope_ignores_enclosing_match_count() {
+        let mut state = GameState::new_two_player(42);
+        state.current_trigger_match_count = Some(1);
+        state.last_effect_count = Some(2);
+        let expr = QuantityExpr::Ref {
+            qty: QuantityRef::EventContextAmount,
+        };
+
+        assert_eq!(
+            resolve_quantity(&state, &expr, PlayerId(0), ObjectId(1)),
+            1,
+            "outside reflexive scope the enclosing batched trigger count wins"
+        );
+
+        let inner = with_reflexive_resolution_scope(|| {
+            resolve_quantity(&state, &expr, PlayerId(0), ObjectId(1))
+        });
+        assert_eq!(
+            inner, 2,
+            "inside reflexive scope the enclosing batched trigger count must not \
+             shadow the count from the reflexive action"
+        );
+    }
+
     /// CR 603.2c + CR 706.2: The batched-trigger match-count still outranks a
     /// die result — the die slot is inserted BELOW match-count in the cascade,
     /// so a "one or more <FILTER>" batched trigger keeps its filtered-subject
@@ -11206,6 +11430,7 @@ mod tests {
                 counters: HashMap::new(),
                 tapped: false,
                 is_suspected: false,
+                attachments: Vec::new(),
             },
         );
         state.current_trigger_event =
@@ -11269,6 +11494,7 @@ mod tests {
                 counters: HashMap::new(),
                 tapped: false,
                 is_suspected: false,
+                attachments: Vec::new(),
             },
         });
         let power = resolve_quantity_with_targets(
@@ -11417,6 +11643,7 @@ mod tests {
                 counters: HashMap::new(),
                 tapped: false,
                 is_suspected: false,
+                attachments: Vec::new(),
             },
         });
         let resolved = resolve_quantity_with_targets(
@@ -11496,6 +11723,7 @@ mod tests {
                 counters: HashMap::new(),
                 tapped: false,
                 is_suspected: false,
+                attachments: Vec::new(),
             },
         });
         assert!(
@@ -11574,6 +11802,7 @@ mod tests {
                 counters: HashMap::new(),
                 tapped: false,
                 is_suspected: false,
+                attachments: Vec::new(),
             },
         });
         assert!(
@@ -11638,6 +11867,7 @@ mod tests {
                 counters: HashMap::new(),
                 tapped: false,
                 is_suspected: false,
+                attachments: Vec::new(),
             },
         };
         // Both fields set, with DIFFERENT mana values so the winning path is
@@ -11699,6 +11929,7 @@ mod tests {
                 counters: HashMap::new(),
                 tapped: false,
                 is_suspected: false,
+                attachments: Vec::new(),
             },
         });
         let expr = QuantityExpr::Ref {
@@ -11753,6 +11984,7 @@ mod tests {
                 counters: HashMap::new(),
                 tapped: false,
                 is_suspected: false,
+                attachments: Vec::new(),
             },
         };
         ability.set_effect_context_object_recursive(snapshot("Effect Context", 7));
@@ -11818,6 +12050,7 @@ mod tests {
                 counters: HashMap::new(),
                 tapped: false,
                 is_suspected: false,
+                attachments: Vec::new(),
             },
         };
         ability.set_effect_context_object_recursive(snapshot("Effect Context", 5));
@@ -11860,6 +12093,7 @@ mod tests {
                 counters: HashMap::new(),
                 tapped: false,
                 is_suspected: false,
+                attachments: Vec::new(),
             },
         );
         assert!(!state.lki_cache.is_empty());
@@ -12333,6 +12567,22 @@ mod tests {
     }
 
     #[test]
+    fn triggering_discover_value_reads_last_discover_scalar() {
+        // CR 701.57a: "discover again for the same value" (Curator of Sun's
+        // Creation) reads `GameState::last_discover_value`, set when the prior
+        // discover resolved.
+        let mut state = GameState::new_two_player(42);
+        let qty = QuantityExpr::Ref {
+            qty: QuantityRef::TriggeringDiscoverValue,
+        };
+        // Unset → 0 (fail-safe outside a discover-trigger context).
+        assert_eq!(resolve_quantity(&state, &qty, PlayerId(0), ObjectId(0)), 0);
+        // Set by a resolved `discover 5` → 5.
+        state.last_discover_value = Some(5);
+        assert_eq!(resolve_quantity(&state, &qty, PlayerId(0), ObjectId(0)), 5);
+    }
+
+    #[test]
     fn controlled_by_each_player_min_zero_when_a_player_has_none() {
         // A player controlling no matching objects drives Min to 0.
         let mut state = GameState::new_two_player(42);
@@ -12481,6 +12731,7 @@ mod tests {
                     chosen_attributes: vec![],
                     tapped: false,
                     is_suspected: false,
+                    attachments: Vec::new(),
                 },
             );
             state.exile_links.push(ExileLink {

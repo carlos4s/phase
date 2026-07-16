@@ -127,6 +127,7 @@ pub fn resolve(
                     events.push(GameEvent::EffectResolved {
                         kind: EffectKind::Vote,
                         source_id: ability.source_id,
+                        subject: None,
                     });
                     return Ok(());
                 }
@@ -164,7 +165,7 @@ pub fn resolve(
         .into_iter()
         .filter(|pid| match scope {
             VoterScope::AllPlayers => true,
-            VoterScope::EachOpponent => *pid != controller,
+            VoterScope::EachOpponent | VoterScope::AnOpponent => *pid != controller,
             // CR 101.4: `ControllerLabels` cycles the SUBJECT (labeled player)
             // through every non-eliminated player in APNAP order from the
             // controller. The ACTOR is always the controller; that gets pinned
@@ -179,6 +180,7 @@ pub fn resolve(
         events.push(GameEvent::EffectResolved {
             kind: EffectKind::Vote,
             source_id: ability.source_id,
+            subject: None,
         });
         return Ok(());
     }
@@ -208,7 +210,9 @@ pub fn resolve(
     // iteration without recomputation.
     let actor = match scope {
         VoterScope::ControllerLabels => VoteActor::Delegated(controller),
-        VoterScope::AllPlayers | VoterScope::EachOpponent => VoteActor::SubjectActs,
+        VoterScope::AllPlayers | VoterScope::EachOpponent | VoterScope::AnOpponent => {
+            VoteActor::SubjectActs
+        }
     };
 
     state.waiting_for = WaitingFor::VoteChoice {
@@ -239,7 +243,7 @@ pub fn resolve(
     // `resolve_tally`, then drains this continuation to run any post-Vote
     // chained effects. Mirrors clash::stash_sub.
     if let Some(sub) = ability.sub_ability.as_ref() {
-        state.pending_continuation = Some(PendingContinuation::new(sub.clone()));
+        state.pending_continuation = Some(PendingContinuation::new(sub.clone(), state));
     }
 
     Ok(())
@@ -370,8 +374,10 @@ pub fn resolve_tally(
                 target_constraints: Vec::new(),
                 target_choice_timing: per_choice_effect[idx].target_choice_timing,
                 description: per_choice_effect[idx].description.clone(),
+                selected_mode_labels: Vec::new(),
                 repeat_for: None,
                 min_x_value: per_choice_effect[idx].min_x_value,
+                announced_x: per_choice_effect[idx].announced_x.clone(),
                 cant_be_copied: per_choice_effect[idx].cant_be_copied,
                 copy_count_status: crate::types::ability::CopyCountStatus::Pending,
                 forward_result: per_choice_effect[idx].forward_result,
@@ -392,7 +398,7 @@ pub fn resolve_tally(
                 sub_link: crate::types::ability::SubAbilityLink::ContinuationStep,
                 modal: None,
                 mode_abilities: vec![],
-                dig_found_nothing_for_parent_target: false,
+                parent_target_missing_reason: None,
             };
             resolve_ability_chain(state, &chain, events, 1)?;
         } else if per_choice_effect[idx]
@@ -431,8 +437,10 @@ pub fn resolve_tally(
                 target_constraints: Vec::new(),
                 target_choice_timing: per_choice_effect[idx].target_choice_timing,
                 description: per_choice_effect[idx].description.clone(),
+                selected_mode_labels: Vec::new(),
                 repeat_for: None,
                 min_x_value: per_choice_effect[idx].min_x_value,
+                announced_x: per_choice_effect[idx].announced_x.clone(),
                 cant_be_copied: per_choice_effect[idx].cant_be_copied,
                 copy_count_status: crate::types::ability::CopyCountStatus::Pending,
                 forward_result: per_choice_effect[idx].forward_result,
@@ -453,7 +461,7 @@ pub fn resolve_tally(
                 sub_link: crate::types::ability::SubAbilityLink::ContinuationStep,
                 modal: None,
                 mode_abilities: vec![],
-                dig_found_nothing_for_parent_target: false,
+                parent_target_missing_reason: None,
             };
             resolve_ability_chain(state, &chain, events, 1)?;
         } else {
@@ -499,6 +507,7 @@ pub fn resolve_tally(
     events.push(GameEvent::EffectResolved {
         kind: EffectKind::Vote,
         source_id,
+        subject: None,
     });
     Ok(())
 }
@@ -622,6 +631,7 @@ fn resolve_top_votes_tally(
     events.push(GameEvent::EffectResolved {
         kind: EffectKind::Vote,
         source_id,
+        subject: None,
     });
     Ok(())
 }
@@ -659,8 +669,10 @@ fn resolved_from_def(
         target_constraints: Vec::new(),
         target_choice_timing: def.target_choice_timing,
         description: def.description.clone(),
+        selected_mode_labels: Vec::new(),
         repeat_for: None,
         min_x_value: def.min_x_value,
+        announced_x: def.announced_x.clone(),
         cant_be_copied: def.cant_be_copied,
         copy_count_status: crate::types::ability::CopyCountStatus::Pending,
         forward_result: def.forward_result,
@@ -687,7 +699,7 @@ fn resolved_from_def(
         // abilities through (None for vote sub-effects).
         modal: def.modal.clone(),
         mode_abilities: def.mode_abilities.clone(),
-        dig_found_nothing_for_parent_target: false,
+        parent_target_missing_reason: None,
     }
 }
 
@@ -829,6 +841,7 @@ pub(crate) fn drain_pending_vote_ballot_iteration(
     events.push(GameEvent::EffectResolved {
         kind: EffectKind::Vote,
         source_id,
+        subject: None,
     });
 }
 
@@ -881,8 +894,10 @@ mod tests {
             target_constraints: Vec::new(),
             target_choice_timing: crate::types::ability::TargetChoiceTiming::Stack,
             description: None,
+            selected_mode_labels: Vec::new(),
             repeat_for: None,
             min_x_value: 0,
+            announced_x: None,
             cant_be_copied: false,
             copy_count_status: crate::types::ability::CopyCountStatus::Pending,
             forward_result: false,
@@ -903,7 +918,7 @@ mod tests {
             sub_link: crate::types::ability::SubAbilityLink::ContinuationStep,
             modal: None,
             mode_abilities: vec![],
-            dig_found_nothing_for_parent_target: false,
+            parent_target_missing_reason: None,
         };
 
         let mut events = Vec::new();
@@ -983,8 +998,10 @@ mod tests {
             target_constraints: Vec::new(),
             target_choice_timing: crate::types::ability::TargetChoiceTiming::Stack,
             description: None,
+            selected_mode_labels: Vec::new(),
             repeat_for: None,
             min_x_value: 0,
+            announced_x: None,
             cant_be_copied: false,
             copy_count_status: crate::types::ability::CopyCountStatus::Pending,
             forward_result: false,
@@ -1005,7 +1022,7 @@ mod tests {
             sub_link: crate::types::ability::SubAbilityLink::ContinuationStep,
             modal: None,
             mode_abilities: vec![],
-            dig_found_nothing_for_parent_target: false,
+            parent_target_missing_reason: None,
         }
     }
 
@@ -1316,8 +1333,10 @@ mod tests {
             target_constraints: Vec::new(),
             target_choice_timing: crate::types::ability::TargetChoiceTiming::Stack,
             description: None,
+            selected_mode_labels: Vec::new(),
             repeat_for: None,
             min_x_value: 0,
+            announced_x: None,
             cant_be_copied: false,
             copy_count_status: crate::types::ability::CopyCountStatus::Pending,
             forward_result: false,
@@ -1338,7 +1357,7 @@ mod tests {
             sub_link: crate::types::ability::SubAbilityLink::ContinuationStep,
             modal: None,
             mode_abilities: vec![],
-            dig_found_nothing_for_parent_target: false,
+            parent_target_missing_reason: None,
         };
 
         // Resolution parks on VoteChoice with controller as first subject.
@@ -1475,8 +1494,10 @@ mod tests {
             target_constraints: Vec::new(),
             target_choice_timing: crate::types::ability::TargetChoiceTiming::Stack,
             description: None,
+            selected_mode_labels: Vec::new(),
             repeat_for: None,
             min_x_value: 0,
+            announced_x: None,
             cant_be_copied: false,
             copy_count_status: crate::types::ability::CopyCountStatus::Pending,
             forward_result: false,
@@ -1497,7 +1518,7 @@ mod tests {
             sub_link: crate::types::ability::SubAbilityLink::ContinuationStep,
             modal: None,
             mode_abilities: vec![],
-            dig_found_nothing_for_parent_target: false,
+            parent_target_missing_reason: None,
         };
         let mut events = Vec::new();
         resolve(&mut state, &ability, &mut events).expect("vote initiates");

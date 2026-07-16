@@ -18,7 +18,6 @@ use crate::types::phase::Phase;
 use crate::types::player::PlayerId;
 use crate::types::proposed_event::ProposedEvent;
 use crate::types::statics::{HandSizeModification, StaticMode, StaticModeKind};
-use crate::types::zones::Zone;
 
 use super::combat;
 use super::combat_damage;
@@ -26,7 +25,6 @@ use super::day_night;
 use super::functioning_abilities::static_kind_present;
 use super::priority;
 use super::turn_control;
-use super::zones;
 
 const PHASE_ORDER: [Phase; 12] = [
     Phase::Untap,
@@ -207,6 +205,7 @@ pub fn end_combat_phase_to_postcombat(state: &mut GameState, events: &mut Vec<Ga
     // effects, replacement definitions, and pending damage replacements alike,
     // matching the normal end-of-combat prune.
     super::layers::prune_end_of_combat_effects(state);
+    super::layers::prune_controller_end_combat_step_effects(state, state.active_player);
     for obj in state.objects.iter_mut().map(|(_, v)| v) {
         obj.replacement_definitions
             .retain(|r| !matches!(r.expiry, Some(RestrictionExpiry::EndOfCombat)));
@@ -842,6 +841,14 @@ pub fn start_next_turn(state: &mut GameState, events: &mut Vec<GameEvent>) {
     state.activated_abilities_this_turn.clear();
     // CR 602.5b: "Activate only once each turn" crew restriction resets each turn.
     state.crew_activated_this_turn.clear();
+    // Belt-and-suspenders: these transient replacement-continuation seeds are
+    // normally nulled by the full-drain clear (effects/mod.rs) on the next
+    // action, but EventContextAmount reads
+    // post_replacement_token_substitution_count at highest priority
+    // (quantity.rs) — guarantee a clean slate each turn so no stale copy-count
+    // can shadow a later EventContextAmount read.
+    state.post_replacement_token_substitution_count = None;
+    state.post_replacement_token_choice_applied = None;
     // CR 606.3: The "loyalty ability once per turn" limit is a property of the
     // permanent ("no player has previously activated a loyalty ability of that
     // permanent that turn"), not its controller. It resets at the start of every
@@ -867,6 +874,9 @@ pub fn start_next_turn(state: &mut GameState, events: &mut Vec<GameEvent>) {
     state.graveyard_cast_permissions_used_per_type.clear();
     // CR 601.2b: Reset per-turn CastFromHandFree once-per-turn tracking (Zaffai).
     state.hand_cast_free_permissions_used.clear();
+    // CR 118.9 + CR 601.2b + CR 400.7: Reset per-turn once-per-turn
+    // CastWithAlternativeCost grant tracking (As Foretold).
+    state.alt_cost_grant_permissions_used.clear();
     // CR 601.2a: Reset per-turn PlayFromExile source usage (Evelyn-style permissions).
     state.exile_play_permissions_used.clear();
     // CR 601.2a + CR 113.6b: Reset per-turn ExileCastPermission once-per-turn
@@ -938,6 +948,10 @@ pub fn start_next_turn(state: &mut GameState, events: &mut Vec<GameEvent>) {
     // CR 701.26 + CR 603.4: reset per-object tap counts so "first time it became
     // tapped this turn" intervening-ifs start fresh each turn.
     state.object_tap_count_this_turn.clear();
+    // CR 122.1 + CR 603.4: reset per-object counter-placement occurrence counts so
+    // "first time counters have been put on it this turn" intervening-ifs start
+    // fresh each turn (mirrors the tap sibling).
+    state.object_counter_placement_count_this_turn.clear();
     state.damage_dealt_this_turn.clear();
     // CR 702.173a + CR 514: Clear the Freerunning eligibility ledger at
     // cleanup. CR 702.173a's "was dealt combat damage this turn" predicate
@@ -1256,23 +1270,35 @@ pub fn execute_untap_with_choices(
         match replacement::replace_event(state, proposed, events) {
             ReplacementResult::Execute(event) => {
                 if let ProposedEvent::Untap { object_id, .. } = event {
-                    if let Some(obj) = state.objects.get_mut(&object_id) {
-                        // CR 122.1d: If a permanent with a stun counter would become untapped,
-                        // instead remove a stun counter from it.
-                        if let Some(entry) = obj.counters.get_mut(&CounterType::Stun) {
-                            *entry -= 1;
-                            if *entry == 0 {
-                                obj.counters.remove(&CounterType::Stun);
+                    let has_stun = state
+                        .objects
+                        .get(&object_id)
+                        .is_some_and(|o| o.counters.contains_key(&CounterType::Stun));
+                    if has_stun {
+                        // CR 122.1d + CR 101.2: Skip removal when blocked by
+                        // CountersCantBeRemoved (Fear of Sleep Paralysis).
+                        if !super::effects::counters::counter_removal_blocked(
+                            state,
+                            object_id,
+                            &CounterType::Stun,
+                        ) {
+                            if let Some(obj) = state.objects.get_mut(&object_id) {
+                                if let Some(entry) = obj.counters.get_mut(&CounterType::Stun) {
+                                    *entry -= 1;
+                                    if *entry == 0 {
+                                        obj.counters.remove(&CounterType::Stun);
+                                    }
+                                }
                             }
                             events.push(GameEvent::CounterRemoved {
                                 object_id,
                                 counter_type: CounterType::Stun,
                                 count: 1,
                             });
-                        } else {
-                            obj.tapped = false;
-                            events.push(GameEvent::PermanentUntapped { object_id });
                         }
+                    } else if let Some(obj) = state.objects.get_mut(&object_id) {
+                        obj.tapped = false;
+                        events.push(GameEvent::PermanentUntapped { object_id });
                     }
                 }
             }
@@ -1568,23 +1594,35 @@ fn execute_seedborn_statics(state: &mut GameState, events: &mut Vec<GameEvent>, 
             match replacement::replace_event(state, proposed, events) {
                 ReplacementResult::Execute(event) => {
                     if let ProposedEvent::Untap { object_id, .. } = event {
-                        if let Some(obj) = state.objects.get_mut(&object_id) {
-                            // CR 122.1d: Stun-counter removal takes precedence
-                            // over the untap, matching the main untap pass.
-                            if let Some(entry) = obj.counters.get_mut(&CounterType::Stun) {
-                                *entry -= 1;
-                                if *entry == 0 {
-                                    obj.counters.remove(&CounterType::Stun);
+                        let has_stun = state
+                            .objects
+                            .get(&object_id)
+                            .is_some_and(|o| o.counters.contains_key(&CounterType::Stun));
+                        if has_stun {
+                            // CR 122.1d + CR 101.2: Same gate as the main
+                            // untap pass — skip removal when blocked.
+                            if !super::effects::counters::counter_removal_blocked(
+                                state,
+                                object_id,
+                                &CounterType::Stun,
+                            ) {
+                                if let Some(obj) = state.objects.get_mut(&object_id) {
+                                    if let Some(entry) = obj.counters.get_mut(&CounterType::Stun) {
+                                        *entry -= 1;
+                                        if *entry == 0 {
+                                            obj.counters.remove(&CounterType::Stun);
+                                        }
+                                    }
                                 }
                                 events.push(GameEvent::CounterRemoved {
                                     object_id,
                                     counter_type: CounterType::Stun,
                                     count: 1,
                                 });
-                            } else {
-                                obj.tapped = false;
-                                events.push(GameEvent::PermanentUntapped { object_id });
                             }
+                        } else if let Some(obj) = state.objects.get_mut(&object_id) {
+                            obj.tapped = false;
+                            events.push(GameEvent::PermanentUntapped { object_id });
                         }
                     }
                 }
@@ -1652,81 +1690,15 @@ fn execute_draw_for(
     active: PlayerId,
     events: &mut Vec<GameEvent>,
 ) -> Option<WaitingFor> {
-    // CR 121.1 + CR 614.1a + CR 614.6 + CR 704.3: Route through the
-    // single-authority `draw_through_replacement` helper so post-replacement
-    // continuations (Jace WinTheGame, Abundance reveal-until) drain in the
-    // same step as the draw — never leaking into the next priority pass.
+    // CR 121.1 + CR 121.6b + CR 704.3: Route the mandatory draw-step draw
+    // through `start_draw_sequence`, the single draw authority, so replacement
+    // continuations drain in the same step and a paused individual draw resumes
+    // before priority.
     //
-    // The closure applies draw-step-specific bookkeeping (sets
-    // `has_drawn_this_turn` per CR 504.1) and intentionally mirrors the
-    // pre-existing inline behavior of this function — it does NOT call
-    // `record_first_draw_and_enqueue_miracle` (the hook used by
-    // `apply_draw_after_replacement` for spell-resolution draws).
-    //
-    // CR 702.94a (pre-existing gap): the natural draw-step draw therefore
-    // does not enqueue a `MiracleOffer`. Whether the draw-step draw SHOULD
-    // trigger miracle ("the first card you've drawn this turn") is a
-    // separate rules question outside this fix's scope. Do not silently
-    // "fix" by adding the miracle hook here without first verifying the
-    // CR 702.94a reading against draw-step vs spell-resolution draws.
-    let result = crate::game::effects::draw::draw_through_replacement(
-        state,
-        active,
-        1,
-        events,
-        |state, event, events| {
-            let ProposedEvent::Draw {
-                player_id, count, ..
-            } = event
-            else {
-                return;
-            };
-            let allowed = crate::game::effects::draw::allowed_draw_count(state, player_id, count);
-
-            // CR 121.1 + CR 613.11: route card selection through the single
-            // `select_cards_to_draw` authority so a `DrawFromBottom` static is
-            // honored on the turn-based draw step too.
-            let cards_to_draw = crate::game::effects::draw::select_cards_to_draw(
-                state,
-                player_id,
-                allowed as usize,
-            );
-
-            // CR 704.5b: Attempting to draw from an empty library causes a game loss.
-            if allowed > 0 && cards_to_draw.len() < allowed as usize {
-                if let Some(p) = state.players.iter_mut().find(|p| p.id == player_id) {
-                    p.drew_from_empty_library = true;
-                }
-            }
-
-            for obj_id in cards_to_draw {
-                zones::move_to_zone(state, obj_id, Zone::Hand, events);
-                // CR 121.1 + CR 504.1: Increment counters BEFORE emitting so
-                // `nth_in_step` (1-indexed) reflects this draw — the draw
-                // step's mandatory draw is `nth_in_step == 1` and is the
-                // anchor for `ExceptFirstDrawInDrawStep` exception clauses.
-                let (nth_in_turn, nth_in_step) =
-                    if let Some(p) = state.players.iter_mut().find(|p| p.id == player_id) {
-                        p.has_drawn_this_turn = true;
-                        p.cards_drawn_this_turn = p.cards_drawn_this_turn.saturating_add(1);
-                        p.cards_drawn_this_step = p.cards_drawn_this_step.saturating_add(1);
-                        (p.cards_drawn_this_turn, p.cards_drawn_this_step)
-                    } else {
-                        (1, 1)
-                    };
-                // CR 121.1: Emit CardDrawn so "whenever a player draws" triggers fire.
-                events.push(GameEvent::CardDrawn {
-                    player_id,
-                    object_id: obj_id,
-                    nth_in_turn,
-                    nth_in_step,
-                });
-                crate::game::effects::drawn_this_turn_choice::record_drawn_card(
-                    state, player_id, obj_id,
-                );
-            }
-        },
-    );
+    // CR 702.94a: A miracle card drawn as this player's first card of the turn
+    // now correctly queues its reveal offer. The prior draw-step-only suppression
+    // was a rules gap: Miracle does not limit the source of that first draw.
+    let result = crate::game::effects::draw::start_draw_sequence(state, active, 1, events);
 
     if matches!(result, ReplacementResult::NeedsChoice(_)) {
         return Some(state.waiting_for.clone());
@@ -2449,10 +2421,15 @@ pub fn auto_advance(state: &mut GameState, events: &mut Vec<GameEvent>) -> Waiti
                 // CR 508.1: Active player declares attackers as a turn-based action.
                 let valid_attacker_ids = super::combat::get_valid_attacker_ids(state);
                 let valid_attack_targets = super::combat::get_valid_attack_targets(state);
+                let attacker_constraints = super::combat::attacker_constraints_for_active_player(
+                    state,
+                    &valid_attacker_ids,
+                );
                 return WaitingFor::DeclareAttackers {
                     player: state.active_player,
                     valid_attacker_ids,
                     valid_attack_targets,
+                    attacker_constraints,
                 };
             }
             Phase::DeclareBlockers => {
@@ -2472,14 +2449,21 @@ pub fn auto_advance(state: &mut GameState, events: &mut Vec<GameEvent>) -> Waiti
                         .unwrap_or_else(|| super::players::next_player(state, state.active_player));
                     let valid_block_targets =
                         super::combat::get_valid_block_targets_for_player(state, defending);
-                    let valid_blocker_ids: Vec<_> = valid_block_targets.keys().copied().collect();
+                    let valid_blocker_ids =
+                        super::combat::ordered_valid_blocker_ids(&valid_block_targets);
                     let block_requirements =
                         super::combat::block_requirements_for_player(state, defending);
+                    let blocker_constraints = super::combat::blocker_constraints_for_player(
+                        state,
+                        defending,
+                        &valid_block_targets,
+                    );
                     return WaitingFor::DeclareBlockers {
                         player: defending,
                         valid_blocker_ids,
                         valid_block_targets,
                         block_requirements,
+                        blocker_constraints,
                     };
                 } else {
                     // CR 508.8: Declare blockers and combat damage steps are skipped if no attackers.
@@ -2553,6 +2537,7 @@ pub fn auto_advance(state: &mut GameState, events: &mut Vec<GameEvent>) -> Waiti
                 state.current_combat_attacker_restriction = None;
                 state.current_combat_attacker_restriction_source = None;
                 super::layers::prune_end_of_combat_effects(state);
+                super::layers::prune_controller_end_combat_step_effects(state, state.active_player);
                 for obj in state.objects.iter_mut().map(|(_, v)| v) {
                     obj.replacement_definitions
                         .retain(|r| !matches!(r.expiry, Some(RestrictionExpiry::EndOfCombat)));
@@ -2617,6 +2602,7 @@ mod tests {
     use crate::types::card_type::Supertype;
     use crate::types::identifiers::{CardId, ObjectId};
     use crate::types::player::PlayerId;
+    use crate::types::zones::Zone;
     use std::sync::Arc;
 
     fn setup() -> GameState {
@@ -4450,6 +4436,86 @@ mod tests {
         );
     }
 
+    /// CR 502.3 + CR 701.26b: Frozen in Ice (issue #5801) — "Enchanted
+    /// creature loses all abilities and can't become untapped." must drive
+    /// the production untap step exactly like Blossombind's bare untap
+    /// prohibition: the loses-all-abilities clause is a same-turn drawback,
+    /// not an exception to the untap lock, since the aura's own text (not a
+    /// granted ability) is what installs the replacement. Parses the real
+    /// compound line, pulls the Untap-prevention replacement out of the
+    /// cross-layer split, and installs it on the attached Aura — mirroring
+    /// `execute_untap_honors_blossombind_cant_become_untapped`. Reverting
+    /// `try_split_and_cant_become_untapped` (or its dispatch wiring) makes the
+    /// untap-step `replace_event` return `Execute`, the creature untaps, and
+    /// this assertion fails.
+    #[test]
+    fn execute_untap_honors_frozen_in_ice_cant_become_untapped() {
+        use crate::game::effects::attach::attach_to;
+        use crate::types::card_type::CoreType;
+        use crate::types::replacements::ReplacementEvent;
+
+        let mut state = setup();
+        state.active_player = PlayerId(0);
+
+        let host = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Locked Bear".to_string(),
+            Zone::Battlefield,
+        );
+        {
+            let obj = state.objects.get_mut(&host).unwrap();
+            obj.card_types.core_types.push(CoreType::Creature);
+            obj.base_card_types = obj.card_types.clone();
+            obj.tapped = true;
+        }
+
+        let aura = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(0),
+            "Frozen in Ice".to_string(),
+            Zone::Battlefield,
+        );
+        {
+            let parsed = crate::parser::parse_oracle_text(
+                "Enchant creature\nWhen this Aura enters, tap enchanted creature.\nEnchanted creature loses all abilities and can't become untapped.",
+                "Frozen in Ice",
+                &[],
+                &["Enchantment".to_string()],
+                &["Aura".to_string()],
+            );
+            assert!(
+                parsed
+                    .replacements
+                    .iter()
+                    .any(|def| def.event == ReplacementEvent::Untap),
+                "Frozen in Ice's untap prohibition must parse to an Untap-prevention replacement"
+            );
+            let obj = state.objects.get_mut(&aura).unwrap();
+            obj.card_types.core_types.push(CoreType::Enchantment);
+            obj.card_types.subtypes.push("Aura".to_string());
+            obj.base_card_types = obj.card_types.clone();
+            obj.replacement_definitions = parsed.replacements.into();
+        }
+        attach_to(&mut state, aura, host);
+
+        let mut events = Vec::new();
+        execute_untap(&mut state, &mut events);
+
+        assert!(
+            state.objects[&host].tapped,
+            "Frozen in Ice's enchanted creature must stay tapped at the untap step"
+        );
+        assert!(
+            !events.iter().any(|event| {
+                matches!(event, GameEvent::PermanentUntapped { object_id } if *object_id == host)
+            }),
+            "skipped untap must not emit PermanentUntapped"
+        );
+    }
+
     #[test]
     fn execute_untap_honors_attached_subject_cant_untap_from_parser() {
         use crate::game::effects::attach::attach_to;
@@ -4538,6 +4604,29 @@ mod tests {
         let obj = state.objects.get_mut(&source_id).unwrap();
         obj.static_definitions.push(def.clone());
         Arc::make_mut(&mut obj.base_static_definitions).push(def);
+    }
+
+    /// CR 502.3 + CR 611.3a: Install a real-parsed Winter-Orb-shaped conditional
+    /// max-untap cap on `source_id`, with the given tapped state. Sourced from the
+    /// real parser output on Winter Orb's verbatim Oracle text so the test drives
+    /// the actual dispatch fix (not a hand-built `StaticDefinition`).
+    fn install_conditional_max_untap_static(
+        state: &mut GameState,
+        source_id: ObjectId,
+        tapped: bool,
+    ) {
+        use crate::types::card_type::CoreType;
+        let defs = crate::parser::oracle_static::parse_static_line_multi(
+            "As long as this artifact is untapped, players can't untap more than one land during their untap steps.",
+        );
+        let obj = state.objects.get_mut(&source_id).unwrap();
+        obj.card_types.core_types.push(CoreType::Artifact);
+        obj.base_card_types = obj.card_types.clone();
+        obj.tapped = tapped;
+        for def in &defs {
+            obj.static_definitions.push(def.clone());
+        }
+        Arc::make_mut(&mut obj.base_static_definitions).extend(defs);
     }
 
     fn create_tapped_creature(state: &mut GameState, card_id: u64, name: &str) -> ObjectId {
@@ -4643,6 +4732,120 @@ mod tests {
 
         assert!(prompt.is_none(), "no cap means nothing to prompt");
         assert_eq!(scans, 0, "bail short-circuits before any whole-board scan");
+    }
+
+    /// CR 502.3 + CR 611.3a: Winter Orb's cap is gated on the artifact's OWN
+    /// tapped state. Drives the fix through the real `active_static_definitions`
+    /// condition gate (not just `parse_static_line`) — while Winter Orb is
+    /// TAPPED the cap must be inactive (both lands untap); while UNTAPPED the cap
+    /// of one land must force the bounded subset-selection prompt over two tapped
+    /// lands. Discriminating: before this fix Winter Orb parsed to a no-op
+    /// Continuous, so `max_untap_restrictions` would never contain this cap at all,
+    /// regardless of tapped state.
+    #[test]
+    fn winter_orb_max_untap_cap_gated_by_own_tapped_state() {
+        let mut state = setup();
+        state.active_player = PlayerId(0);
+
+        let winter_orb = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Winter Orb".to_string(),
+            Zone::Battlefield,
+        );
+        install_conditional_max_untap_static(&mut state, winter_orb, true);
+
+        let land_a = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(0),
+            "Land A".to_string(),
+            Zone::Battlefield,
+        );
+        let land_b = create_object(
+            &mut state,
+            CardId(3),
+            PlayerId(0),
+            "Land B".to_string(),
+            Zone::Battlefield,
+        );
+        for land in [land_a, land_b] {
+            let obj = state.objects.get_mut(&land).unwrap();
+            obj.card_types
+                .core_types
+                .push(crate::types::card_type::CoreType::Land);
+            obj.base_card_types = obj.card_types.clone();
+            obj.tapped = true;
+        }
+
+        crate::game::layers::evaluate_layers(&mut state);
+        assert!(
+            max_untap_restrictions(&state).is_empty(),
+            "cap must be inactive while Winter Orb is tapped"
+        );
+        assert!(
+            max_untap_subset_prompt(&state, PlayerId(0), &HashSet::new()).is_none(),
+            "no cap => no subset prompt while tapped"
+        );
+
+        state.objects.get_mut(&winter_orb).unwrap().tapped = false;
+        crate::game::layers::evaluate_layers(&mut state);
+        let restrictions = max_untap_restrictions(&state);
+        assert_eq!(
+            restrictions.len(),
+            1,
+            "cap must be active while Winter Orb is untapped"
+        );
+        assert_eq!(
+            restrictions[0].1, 1,
+            "Winter Orb caps untapping at one land"
+        );
+
+        let (mut group, max) = max_untap_subset_prompt(&state, PlayerId(0), &HashSet::new())
+            .expect("two tapped lands exceed the cap of one while Winter Orb is untapped");
+        assert_eq!(max, 1);
+        group.sort_by_key(|id| id.0);
+        let mut expected = vec![land_a, land_b];
+        expected.sort_by_key(|id| id.0);
+        assert_eq!(
+            group, expected,
+            "both tapped lands are offered for the bounded selection"
+        );
+    }
+
+    /// CR 502.3 + CR 611.3a: Multi-authority proof — the tapped-state gate binds
+    /// to EACH Winter Orb's own source_id, not a shared flag. One tapped, one
+    /// untapped: only the untapped one's cap contributes to `max_untap_restrictions`.
+    #[test]
+    fn two_winter_orbs_gate_independently_on_own_tapped_state() {
+        let mut state = setup();
+        state.active_player = PlayerId(0);
+
+        let tapped_orb = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Winter Orb A".to_string(),
+            Zone::Battlefield,
+        );
+        install_conditional_max_untap_static(&mut state, tapped_orb, true);
+        let untapped_orb = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(0),
+            "Winter Orb B".to_string(),
+            Zone::Battlefield,
+        );
+        install_conditional_max_untap_static(&mut state, untapped_orb, false);
+
+        crate::game::layers::evaluate_layers(&mut state);
+        let restrictions = max_untap_restrictions(&state);
+        assert_eq!(
+            restrictions.len(),
+            1,
+            "only the untapped Winter Orb's cap must be active, got {restrictions:?}"
+        );
     }
 
     /// CR 502.3: With a Smoke-class cap of one creature and two tapped
@@ -5210,6 +5413,87 @@ mod tests {
         assert!(!state.objects[&mine_a].tapped);
         assert!(!state.objects[&mine_b].tapped);
         assert!(!state.objects[&seedborn].tapped);
+    }
+
+    /// CR 502.3 + CR 611.3a + CR 604.1: Quest for Renewal — the untap-during-
+    /// each-other-player's-untap-step static is gated by a live counter-threshold
+    /// condition ("as long as there are four or more quest counters on this
+    /// enchantment"). The runtime already honors `def.condition` via
+    /// `active_static_definitions`/`evaluate_condition`; this proves the parsed
+    /// `HasCounters` condition drives the Seedborn untap pass. PAIRED, non-
+    /// vacuous: 2 counters keeps creatures tapped (negative), 4 counters untaps
+    /// them (positive reach guard).
+    #[test]
+    fn quest_for_renewal_counter_gated_seedborn_untap() {
+        use crate::types::ability::{
+            ControllerRef, StaticCondition, StaticDefinition, TargetFilter, TypedFilter,
+        };
+        use crate::types::counter::{CounterMatch, CounterType};
+
+        let mut state = setup();
+        state.active_player = PlayerId(1); // Opponent's untap step.
+
+        let quest = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Quest for Renewal".to_string(),
+            Zone::Battlefield,
+        );
+        // Install the Seedborn untap static gated on the quest-counter threshold,
+        // exactly as the parser lowers Quest for Renewal's static line.
+        let def = StaticDefinition::new(StaticMode::UntapsDuringEachOtherPlayersUntapStep)
+            .affected(TargetFilter::Typed(
+                TypedFilter::permanent().controller(ControllerRef::You),
+            ))
+            .condition(StaticCondition::HasCounters {
+                counters: CounterMatch::OfType(CounterType::Generic("quest".to_string())),
+                minimum: 4,
+                maximum: None,
+            });
+        {
+            let obj = state.objects.get_mut(&quest).unwrap();
+            obj.static_definitions.push(def.clone());
+            Arc::make_mut(&mut obj.base_static_definitions).push(def);
+        }
+
+        let mine = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(0),
+            "Bear".to_string(),
+            Zone::Battlefield,
+        );
+        mark_as_creature(&mut state, mine);
+        state.objects.get_mut(&mine).unwrap().tapped = true;
+
+        // Negative: only 2 quest counters — condition fails, creature stays tapped.
+        state
+            .objects
+            .get_mut(&quest)
+            .unwrap()
+            .counters
+            .insert(CounterType::Generic("quest".to_string()), 2);
+        let mut events = Vec::new();
+        execute_untap(&mut state, &mut events);
+        assert!(
+            state.objects[&mine].tapped,
+            "below threshold (2 < 4): the untap static must not fire"
+        );
+
+        // Positive reach guard: 4 quest counters — condition holds, creature untaps.
+        state
+            .objects
+            .get_mut(&quest)
+            .unwrap()
+            .counters
+            .insert(CounterType::Generic("quest".to_string()), 4);
+        let mut events = Vec::new();
+        execute_untap(&mut state, &mut events);
+        assert!(
+            !state.objects[&mine].tapped,
+            "at threshold (4 >= 4): the untap static must untap the controller's creature"
+        );
     }
 
     #[test]
@@ -6962,7 +7246,7 @@ mod tests {
 
         let mut state = GameState::new_two_player(42);
         state.active_player = PlayerId(1);
-        let source = zones::create_object(
+        let source = crate::game::zones::create_object(
             &mut state,
             CardId(1),
             PlayerId(0),
@@ -7979,6 +8263,284 @@ mod tests {
             begin_phase_applied_count >= 1,
             "at least one BeginPhase skip must have fired, got {}",
             begin_phase_applied_count
+        );
+    }
+
+    /// CR 122.1d + CR 101.2: Fear of Sleep Paralysis — stun counters can't be
+    /// removed from permanents your opponents control. When the opponent's
+    /// creature would untap and has a stun counter, the counter stays and the
+    /// creature remains tapped.
+    #[test]
+    fn execute_untap_honors_counters_cant_be_removed_static() {
+        use crate::types::ability::{ControllerRef, StaticDefinition, TargetFilter, TypedFilter};
+        use crate::types::counter::CounterType;
+        use crate::types::statics::StaticMode;
+        use crate::types::zones::Zone;
+
+        let mut state = setup();
+        // Player 1 is the active player (their untap step).
+        state.active_player = PlayerId(1);
+
+        // Player 0 controls Fear of Sleep Paralysis (the source of the static).
+        let source = create_object(
+            &mut state,
+            CardId(10),
+            PlayerId(0),
+            "Fear of Sleep Paralysis".to_string(),
+            Zone::Battlefield,
+        );
+        {
+            let def = StaticDefinition::new(StaticMode::CountersCantBeRemoved {
+                counter_type: CounterType::Stun,
+            })
+            .affected(TargetFilter::Typed(
+                TypedFilter::permanent().controller(ControllerRef::Opponent),
+            ));
+            let obj = state.objects.get_mut(&source).unwrap();
+            obj.card_types
+                .core_types
+                .push(crate::types::card_type::CoreType::Enchantment);
+            obj.static_definitions.push(def);
+        }
+
+        // Player 1 controls a creature with a stun counter, tapped.
+        let stunned = create_object(
+            &mut state,
+            CardId(11),
+            PlayerId(1),
+            "Stunned Bear".to_string(),
+            Zone::Battlefield,
+        );
+        {
+            let obj = state.objects.get_mut(&stunned).unwrap();
+            obj.card_types
+                .core_types
+                .push(crate::types::card_type::CoreType::Creature);
+            obj.tapped = true;
+            obj.counters.insert(CounterType::Stun, 1);
+        }
+
+        let mut events = Vec::new();
+        execute_untap(&mut state, &mut events);
+
+        // The creature must stay tapped — the stun counter blocks the untap.
+        assert!(
+            state.objects[&stunned].tapped,
+            "creature with blocked stun counter must stay tapped"
+        );
+        // The stun counter must NOT have been removed.
+        assert_eq!(
+            state.objects[&stunned].counters.get(&CounterType::Stun),
+            Some(&1),
+            "stun counter must remain when removal is blocked"
+        );
+        // No CounterRemoved event should have been emitted.
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                GameEvent::CounterRemoved { object_id, .. } if *object_id == stunned
+            )),
+            "no CounterRemoved event when removal is blocked"
+        );
+    }
+
+    /// Inverse test: without Fear of Sleep Paralysis, a stunned creature's stun
+    /// counter IS removed at the untap step (CR 122.1d baseline).
+    #[test]
+    fn execute_untap_removes_stun_counter_without_prohibition() {
+        use crate::types::counter::CounterType;
+        use crate::types::zones::Zone;
+
+        let mut state = setup();
+        state.active_player = PlayerId(1);
+
+        let stunned = create_object(
+            &mut state,
+            CardId(11),
+            PlayerId(1),
+            "Stunned Bear".to_string(),
+            Zone::Battlefield,
+        );
+        {
+            let obj = state.objects.get_mut(&stunned).unwrap();
+            obj.tapped = true;
+            obj.counters.insert(CounterType::Stun, 1);
+        }
+
+        let mut events = Vec::new();
+        execute_untap(&mut state, &mut events);
+
+        // The creature stays tapped (stun counter was removed instead of untapping).
+        assert!(
+            state.objects[&stunned].tapped,
+            "creature stays tapped when stun counter is removed (CR 122.1d)"
+        );
+        // The stun counter must have been removed.
+        assert!(
+            !state.objects[&stunned]
+                .counters
+                .contains_key(&CounterType::Stun),
+            "stun counter must be removed at untap step (CR 122.1d baseline)"
+        );
+        // A CounterRemoved event must have been emitted.
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                GameEvent::CounterRemoved { object_id, counter_type, .. }
+                    if *object_id == stunned && *counter_type == CounterType::Stun
+            )),
+            "CounterRemoved event must fire for baseline stun removal"
+        );
+    }
+
+    /// CR 122.1d + CR 101.2: The Seedborn Muse untap path honors
+    /// `CountersCantBeRemoved` — a stunned opponent permanent protected by the
+    /// prohibition keeps its stun counter even during the Seedborn pass.
+    #[test]
+    fn execute_seedborn_statics_honors_counters_cant_be_removed() {
+        use crate::types::ability::{ControllerRef, StaticDefinition, TargetFilter, TypedFilter};
+        use crate::types::counter::CounterType;
+        use crate::types::statics::StaticMode;
+        use crate::types::zones::Zone;
+
+        let mut state = setup();
+        // Player 0 is the active player (their untap step).
+        state.active_player = PlayerId(0);
+
+        // Player 1 controls Seedborn Muse — untaps their stuff during P0's step.
+        let seedborn = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(1),
+            "Seedborn Muse".to_string(),
+            Zone::Battlefield,
+        );
+        install_seedborn_static(&mut state, seedborn);
+        mark_as_creature(&mut state, seedborn);
+
+        // Player 1 also controls a stunned creature.
+        let stunned = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(1),
+            "Stunned Bear".to_string(),
+            Zone::Battlefield,
+        );
+        mark_as_creature(&mut state, stunned);
+        state.objects.get_mut(&stunned).unwrap().tapped = true;
+        state
+            .objects
+            .get_mut(&stunned)
+            .unwrap()
+            .counters
+            .insert(CounterType::Stun, 1);
+
+        // Player 0 controls the prohibition (Fear of Sleep Paralysis).
+        // Its filter is "permanents your opponents control" — Player 1's
+        // permanents are opponents of Player 0.
+        let prohib = create_object(
+            &mut state,
+            CardId(3),
+            PlayerId(0),
+            "Fear of Sleep Paralysis".to_string(),
+            Zone::Battlefield,
+        );
+        state
+            .objects
+            .get_mut(&prohib)
+            .unwrap()
+            .card_types
+            .core_types
+            .push(crate::types::card_type::CoreType::Enchantment);
+        let def = StaticDefinition::new(StaticMode::CountersCantBeRemoved {
+            counter_type: CounterType::Stun,
+        })
+        .affected(TargetFilter::Typed(
+            TypedFilter::permanent().controller(ControllerRef::Opponent),
+        ));
+        state
+            .objects
+            .get_mut(&prohib)
+            .unwrap()
+            .static_definitions
+            .push(def);
+
+        let mut events = Vec::new();
+        execute_untap(&mut state, &mut events);
+
+        // The stun counter must remain — the Seedborn pass is blocked.
+        assert_eq!(
+            state.objects[&stunned]
+                .counters
+                .get(&CounterType::Stun)
+                .copied(),
+            Some(1),
+            "Seedborn pass must not remove stun counter when blocked by CountersCantBeRemoved"
+        );
+        // The creature must remain tapped (stun counter prevents untap).
+        assert!(
+            state.objects[&stunned].tapped,
+            "stunned creature must stay tapped during Seedborn pass when counter removal is blocked"
+        );
+    }
+
+    /// Inverse: without the prohibition, the Seedborn Muse pass removes the
+    /// stun counter normally per CR 122.1d.
+    #[test]
+    fn execute_seedborn_statics_removes_stun_counter_without_prohibition() {
+        use crate::types::counter::CounterType;
+        use crate::types::zones::Zone;
+
+        let mut state = setup();
+        // Player 0 is the active player (their untap step).
+        state.active_player = PlayerId(0);
+
+        // Player 1 controls Seedborn Muse.
+        let seedborn = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(1),
+            "Seedborn Muse".to_string(),
+            Zone::Battlefield,
+        );
+        install_seedborn_static(&mut state, seedborn);
+        mark_as_creature(&mut state, seedborn);
+
+        // Player 1 also controls a stunned creature.
+        let stunned = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(1),
+            "Stunned Bear".to_string(),
+            Zone::Battlefield,
+        );
+        mark_as_creature(&mut state, stunned);
+        state.objects.get_mut(&stunned).unwrap().tapped = true;
+        state
+            .objects
+            .get_mut(&stunned)
+            .unwrap()
+            .counters
+            .insert(CounterType::Stun, 1);
+
+        let mut events = Vec::new();
+        execute_untap(&mut state, &mut events);
+
+        // Without prohibition, the stun counter is removed per CR 122.1d.
+        assert!(
+            !state.objects[&stunned]
+                .counters
+                .contains_key(&CounterType::Stun),
+            "stun counter must be removed during Seedborn pass (CR 122.1d baseline)"
+        );
+        // A CounterRemoved event must have been emitted.
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                GameEvent::CounterRemoved { object_id, counter_type, .. }
+                    if *object_id == stunned && *counter_type == CounterType::Stun
+            )),
+            "CounterRemoved event must fire for Seedborn baseline stun removal"
         );
     }
 }

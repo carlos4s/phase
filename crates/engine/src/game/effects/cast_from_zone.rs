@@ -9,6 +9,23 @@ use crate::types::identifiers::ObjectId;
 use crate::types::mana::ManaCost;
 use crate::types::zones::Zone;
 
+/// CR 400.1/400.2: Recursively extract a filter's own `controller` axis,
+/// looking through the composed forms (`Not`/`And`/`Or`) a real card's target
+/// filter may be built from rather than only matching a bare `Typed`. `And`/
+/// `Or` return the first branch that carries a controller axis — composed
+/// filters in this codebase don't mix two different explicit player axes on
+/// the same object filter, so first-found is unambiguous.
+fn extract_controller_ref(filter: &TargetFilter) -> Option<&crate::types::ability::ControllerRef> {
+    match filter {
+        TargetFilter::Typed(tf) => tf.controller.as_ref(),
+        TargetFilter::Not { filter } => extract_controller_ref(filter),
+        TargetFilter::And { filters } | TargetFilter::Or { filters } => {
+            filters.iter().find_map(extract_controller_ref)
+        }
+        _ => None,
+    }
+}
+
 /// CR 115.1 + CR 601.2c: "You may cast a spell ... from your hand without paying
 /// its mana cost" (Electrodominance, Baral's Expertise) has no "target" word —
 /// the spell is chosen at resolution from the granting player's hand via
@@ -21,7 +38,30 @@ fn open_private_zone_cast_selection(
     events: &mut Vec<GameEvent>,
 ) -> Result<(), EffectError> {
     let ctx = crate::game::filter::FilterContext::from_ability(ability);
-    let Some(player) = state.players.iter().find(|p| p.id == ability.controller) else {
+    // CR 400.1/400.2 + CR 109.4: A hand-scoped cast filter's own `controller`
+    // axis names WHOSE hand is the candidate pool. Buster-Sword-class filters
+    // ("cast a spell from your hand") carry no controller (or `You`) and keep
+    // scanning the caster's own hand. Silent-Blade Oni's "cast a spell from
+    // among those cards" (bound to the damaged player's hand via
+    // `ControllerRef::TriggeringPlayer`, issue #5240) needs a DIFFERENT
+    // player's hand as the pool — `ability.controller` alone can't express
+    // that, so resolve the filter's own controller axis through the single
+    // `ControllerRef` authority instead of hardcoding the caster. Recurses
+    // through `Not`/`And`/`Or` (extract_controller_ref) so a composed filter
+    // (e.g. a future card combining a type restriction with a player axis via
+    // `And`) isn't silently treated as caster-scoped.
+    let hand_owner = extract_controller_ref(target_filter)
+        .and_then(|cref| {
+            crate::game::filter::controller_ref_player(
+                state,
+                ability.source_id,
+                Some(ability.controller),
+                Some(ability),
+                cref,
+            )
+        })
+        .unwrap_or(ability.controller);
+    let Some(player) = state.players.iter().find(|p| p.id == hand_owner) else {
         return Err(EffectError::PlayerNotFound);
     };
     let cards_iter = match source_zone {
@@ -37,6 +77,7 @@ fn open_private_zone_cast_selection(
         events.push(GameEvent::EffectResolved {
             kind: EffectKind::CastFromZone,
             source_id: ability.source_id,
+            subject: None,
         });
         return Ok(());
     }
@@ -214,6 +255,7 @@ pub fn resolve(
         events.push(GameEvent::EffectResolved {
             kind: EffectKind::CastFromZone,
             source_id: ability.source_id,
+            subject: None,
         });
         return Ok(());
     }
@@ -324,6 +366,7 @@ pub fn resolve(
         events.push(GameEvent::EffectResolved {
             kind: EffectKind::CastFromZone,
             source_id: ability.source_id,
+            subject: None,
         });
         state.waiting_for = WaitingFor::CastOffer {
             player: ability.controller,
@@ -361,6 +404,7 @@ pub fn resolve(
     events.push(GameEvent::EffectResolved {
         kind: EffectKind::CastFromZone,
         source_id: ability.source_id,
+        subject: None,
     });
 
     Ok(())
@@ -424,6 +468,7 @@ pub(crate) fn complete_hand_pick_cast_from_zone(
                     events.push(GameEvent::EffectResolved {
                         kind: EffectKind::CastFromZone,
                         source_id: ability.source_id,
+                        subject: None,
                     });
                     return Ok(false);
                 };
@@ -490,6 +535,7 @@ fn cast_stack_spell_copy_during_resolution(
     events.push(GameEvent::EffectResolved {
         kind: EffectKind::CastFromZone,
         source_id: ability.source_id,
+        subject: None,
     });
 
     let Some(obj) = state.objects.get(&copy_id).cloned() else {
@@ -558,6 +604,7 @@ fn cast_single_target_during_resolution(
     events.push(GameEvent::EffectResolved {
         kind: EffectKind::CastFromZone,
         source_id: ability.source_id,
+        subject: None,
     });
     // CR 702.62a's "if you don't, it remains exiled" disposition is `RemainExiled`
     // (only reached if a future free-cast adds an MV gate; these carry none).
@@ -1332,12 +1379,33 @@ mod tests {
         );
         ability.set_source_incarnation_recursive(Some(captured_incarnation));
 
+        // CR 400.7j: mirror `resolve_top` — during resolution the resolving entry is
+        // stashed in `state.resolving_stack_entry`, and the self-move re-latch reads
+        // it to record that the resolving ability moved its OWN source. Without this
+        // (as in production) the relatch cannot fire.
+        state.resolving_stack_entry = Some(crate::types::game_state::StackEntry {
+            id: siege_id,
+            source_id: siege_id,
+            controller: PlayerId(0),
+            kind: crate::types::game_state::StackEntryKind::ActivatedAbility {
+                source_id: siege_id,
+                ability: ability.clone(),
+            },
+        });
+
         let mut events = Vec::new();
         zones::move_to_zone(&mut state, siege_id, Zone::Exile, &mut events);
-        assert_eq!(
-            state.objects[&siege_id].incarnation, captured_incarnation,
-            "the engine's self-reference epoch guard is bumped on battlefield entry, so the \
-             Siege defeat zone exit must not make its same-resolution self-cast stale"
+        // CR 400.7: under all-zone incarnation semantics the BF→Exile self-move now
+        // bumps the epoch (it no longer stays stable). CR 400.7j: the re-latch record
+        // captures the from→to incarnation so the same-resolution self-cast still
+        // finds the moved source instead of going stale.
+        assert!(
+            state.objects[&siege_id].incarnation > captured_incarnation,
+            "CR 400.7: the BF→Exile self-move bumps the Siege's incarnation"
+        );
+        assert!(
+            ability.source_is_current(&state),
+            "CR 400.7j: the re-latch keeps the self-cast source current after the move"
         );
         events.clear();
 

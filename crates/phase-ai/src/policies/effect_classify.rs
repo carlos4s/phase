@@ -279,7 +279,7 @@ pub(crate) fn effect_polarity(effect: &Effect) -> EffectPolarity {
         | Effect::ExchangeLifeWithStat { .. }
         | Effect::ExileFromTopUntil { .. }
         | Effect::ExileHaunting { .. }
-        | Effect::ExileResolvingSpellInsteadOfGraveyard
+        | Effect::ExileResolvingSpellInsteadOfGraveyard { .. }
         | Effect::ExileTop { .. }
         | Effect::Exploit { .. }
         | Effect::ExploreAll { .. }
@@ -288,7 +288,7 @@ pub(crate) fn effect_polarity(effect: &Effect) -> EffectPolarity {
         | Effect::FlipCoinUntilLose { .. }
         | Effect::Forage
         | Effect::ForceAttack { .. }
-        | Effect::ForEachCategoryExile { .. }
+        | Effect::ForEachCategory { .. }
         | Effect::FreeCastFromZones { .. }
         | Effect::GainActivatedAbilitiesOfTarget { .. }
         | Effect::GainControlAll { .. }
@@ -331,6 +331,7 @@ pub(crate) fn effect_polarity(effect: &Effect) -> EffectPolarity {
         | Effect::ReassembleContraption { .. }
         | Effect::ReassembleContraptionOnSprocket { .. }
         | Effect::ReduceNextSpellCost { .. }
+        | Effect::RedistributeLifeTotals
         | Effect::RegisterBending { .. }
         | Effect::RememberCard { .. }
         | Effect::RemoveFromCombat { .. }

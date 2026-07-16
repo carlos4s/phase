@@ -56,7 +56,13 @@ pub fn validated_candidate_actions_with_probe(
     probe: Option<&crate::game::casting::PriorityCastProbe>,
 ) -> Vec<CandidateAction> {
     let pipeline = FilterPipeline::default_pipeline();
-    pipeline.apply_with_probe(state, candidate_actions_with_probe(state, probe), probe)
+    let mut actions =
+        pipeline.apply_with_probe(state, candidate_actions_with_probe(state, probe), probe);
+    // Issue #4878: candidate enumeration must not depend on HashSet/HashMap
+    // iteration order leaking into AI tie-breaking downstream. Ordered via the
+    // allocation-free `GameAction::cmp_stable` total order (not `Debug` strings).
+    actions.sort_by(|a, b| a.action.cmp_stable(&b.action));
+    actions
 }
 
 /// CR 702.51a / 702.66a / 702.126a: During `ManaPayment`, every structurally
@@ -68,7 +74,6 @@ pub(crate) fn structurally_valid_tap_for_convoke_payment(
 ) -> bool {
     use crate::types::game_state::ConvokeMode;
     use crate::types::mana::ManaType;
-    use crate::types::zones::Zone;
 
     let (
         WaitingFor::ManaPayment {
@@ -89,9 +94,7 @@ pub(crate) fn structurally_valid_tap_for_convoke_payment(
     };
 
     match mode {
-        ConvokeMode::Delve => {
-            obj.zone == Zone::Graveyard && obj.owner == *player && *mana_type == ManaType::Colorless
-        }
+        ConvokeMode::Delve => obj.is_delve_eligible(*player) && *mana_type == ManaType::Colorless,
         ConvokeMode::Convoke => {
             if !obj.is_convoke_eligible(*player) {
                 return false;
@@ -145,7 +148,7 @@ fn cheap_reject_candidate(state: &GameState, action: &GameAction) -> bool {
         | (WaitingFor::Priority { .. }, GameAction::PlayLand { object_id, .. })
         | (WaitingFor::Priority { .. }, GameAction::UnlockRoomDoor { object_id, .. })
         | (WaitingFor::Priority { .. }, GameAction::Transform { object_id })
-        | (WaitingFor::Priority { .. }, GameAction::TurnFaceUp { object_id })
+        | (WaitingFor::Priority { .. }, GameAction::TurnFaceUp { object_id, .. })
         | (WaitingFor::Priority { .. }, GameAction::PlayFaceDown { object_id, .. })
         | (WaitingFor::Priority { .. }, GameAction::TapLandForMana { object_id })
         | (WaitingFor::Priority { .. }, GameAction::UntapLandForMana { object_id })
@@ -753,7 +756,8 @@ fn activate_ability_is_meaningful_priority(
     state.objects.get(&source_id).is_some_and(|obj| {
         obj.abilities.get(ability_index).is_some_and(|ability| {
             !mana_abilities::is_mana_ability(ability)
-                || mana_sources::mana_ability_penalty(ability).is_meaningful_priority_activation()
+                || mana_sources::object_mana_ability_penalty(state, source_id, ability)
+                    .is_meaningful_priority_activation()
         })
     })
 }
@@ -1028,6 +1032,42 @@ fn mana_actions_include_meaningful_sacrifice(
 pub fn has_meaningful_priority_action(state: &GameState, actions: &[GameAction]) -> bool {
     flat_actions_have_meaningful_priority(state, actions)
         || has_activatable_sacrifice_for_mana(state)
+}
+
+/// PR-7 Phase 4c (LOW-2): CR 732.2b/c + CR 104.4b — an AI opponent polled on an
+/// OPTIONAL loop shortcut. The offer is raised only for optional loops the polled
+/// player CAN break (a Path A optional drain, `WaitingFor::LoopShortcut`); the win
+/// is a loss condition for every polled opponent (single-faller: see
+/// `interactive_loop_bridge`'s Path A gate, CR 104.2a). SELF-PRESERVATION: if this
+/// player has a meaningful priority action (a way to break the loop), name
+/// `Shorten{0}` — the engine realizes Shorten as a real `WaitingFor::Priority`
+/// window (`game::engine::apply_action`'s `RespondToShortcut(Shorten)` arm) where
+/// it can act — rather than Accept its own loss. No meaningful action ⇒ Accept
+/// (nothing to do). Single authority for all 3 `RespondToShortcut` emission sites
+/// (engine `candidates.rs` + phase-ai `projection.rs`/`search.rs`) so the
+/// self-preservation heuristic can't drift between them. Reuses the exact
+/// `no_living_player_has_meaningful_priority_action` probe recipe
+/// (`game::engine`), scoped to the single polled player.
+pub fn smart_shortcut_response(
+    state: &GameState,
+    polled_player: PlayerId,
+) -> crate::analysis::loop_check::ShortcutResponse {
+    let mut probe_state = state.clone();
+    probe_state.auto_pass.clear();
+    probe_state.priority_player = polled_player;
+    probe_state.waiting_for = WaitingFor::Priority {
+        player: polled_player,
+    };
+    layers::flush_layers(&mut probe_state);
+    let probe = casting::PriorityCastProbe::from_flushed_state(probe_state, polled_player);
+    let actions = flat_priority_actions_with_probe(probe.state(), Some(&probe));
+    if has_meaningful_priority_action(probe.state(), &actions) {
+        // CR 732.2b: name an earlier stopping point — take my window instead of losing.
+        crate::analysis::loop_check::ShortcutResponse::Shorten { at_iteration: 0 }
+    } else {
+        // CR 732.2c: nothing to do — agree to take the shortcut.
+        crate::analysis::loop_check::ShortcutResponse::Accept
+    }
 }
 
 fn auto_passes_initial_priority_by_default(state: &GameState) -> bool {
@@ -2179,6 +2219,7 @@ mod tests {
             player: PlayerId(1),
             valid_attacker_ids: Vec::new(),
             valid_attack_targets: Vec::new(),
+            attacker_constraints: Default::default(),
         };
         // Acting player gets the full result (matches `legal_actions_full`).
         let acting = legal_actions_for_viewer(&state, PlayerId(1));
@@ -3040,6 +3081,7 @@ mod tests {
             Arc::make_mut(&mut obj.abilities).push(AbilityDefinition::new(
                 AbilityKind::Activated,
                 Effect::BecomeCopy {
+                    recipient: TargetFilter::SelfRef,
                     target: TargetFilter::Any,
                     duration: Some(crate::types::ability::Duration::UntilEndOfTurn),
                     mana_value_limit: None,
@@ -4488,6 +4530,7 @@ mod tests {
                 ),
                 attack_defended: None,
                 source_controller: None,
+                bypass_beneficiary: None,
             };
             obj.static_definitions = vec![def].into();
         }
@@ -4797,6 +4840,7 @@ mod tests {
             target_slots: vec![crate::types::game_state::TargetSelectionSlot {
                 legal_targets: vec![target.clone()],
                 optional: false,
+                chooser: None,
             }],
             mode_labels: Vec::new(),
             selection: crate::types::game_state::TargetSelectionProgress {
@@ -4847,6 +4891,7 @@ mod tests {
             target_slots: vec![crate::types::game_state::TargetSelectionSlot {
                 legal_targets: targets.clone(),
                 optional: true,
+                chooser: None,
             }],
             mode_labels: Vec::new(),
             selection: crate::types::game_state::TargetSelectionProgress {
@@ -4949,6 +4994,7 @@ mod tests {
             target_slots: vec![crate::types::game_state::TargetSelectionSlot {
                 legal_targets: vec![target],
                 optional: true,
+                chooser: None,
             }],
             mode_labels: Vec::new(),
             selection: crate::types::game_state::TargetSelectionProgress {
@@ -5058,6 +5104,66 @@ mod tests {
             clones < 5,
             "delve validation should not clone state per graveyard card (got {clones} clones)"
         );
+    }
+
+    /// Issue #4878: `validated_candidate_actions` must return candidates in the
+    /// canonical `GameAction::cmp_stable` order, independent of the upstream
+    /// enumeration order (which walks `state.objects`, an `im::HashMap`, in
+    /// hash order — not sorted for this id set). Reverting the
+    /// `sort_by(cmp_stable)` guard returns the candidates in that hash order,
+    /// which differs from the canonical order below, flipping this assertion.
+    #[test]
+    fn validated_candidates_are_cmp_stable_sorted() {
+        let mut state = setup_priority();
+        // CR 305.2 + CR 505: land drop available in the precombat main phase so
+        // each land in hand survives the simulation filter as a `PlayLand`.
+        state.phase = Phase::PreCombatMain;
+        state.lands_played_this_turn = 0;
+        for _ in 0..10 {
+            let id = create_object(
+                &mut state,
+                CardId(1),
+                PlayerId(0),
+                "Forest".to_string(),
+                Zone::Hand,
+            );
+            state
+                .objects
+                .get_mut(&id)
+                .unwrap()
+                .card_types
+                .core_types
+                .push(CoreType::Land);
+        }
+
+        let actions: Vec<GameAction> = validated_candidate_actions(&state)
+            .iter()
+            .map(|c| c.action.clone())
+            .collect();
+
+        // Reach guard: the scenario must actually offer several distinct actions
+        // (multiple `PlayLand` + `PassPriority`), otherwise a single-element list
+        // would be trivially "sorted" and the assertion vacuous.
+        assert!(
+            actions.len() >= 3,
+            "expected several candidate actions to canonicalize, got {}",
+            actions.len()
+        );
+
+        // Canonical order: identical to an independent `cmp_stable` sort.
+        let mut expected = actions.clone();
+        expected.sort_by(|a, b| a.cmp_stable(b));
+        assert_eq!(
+            actions, expected,
+            "validated_candidate_actions must emit cmp_stable-canonical order"
+        );
+
+        // Determinism: a second call over the same state yields the same order.
+        let again: Vec<GameAction> = validated_candidate_actions(&state)
+            .iter()
+            .map(|c| c.action.clone())
+            .collect();
+        assert_eq!(actions, again, "candidate order must be deterministic");
     }
 
     /// CR 117.3d: a matching priority yield for the top-of-stack trigger makes

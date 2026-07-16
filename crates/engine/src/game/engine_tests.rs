@@ -1434,6 +1434,7 @@ fn broadside_bombardiers_boast_activates_after_attacking_and_requires_sacrifice(
         player: PlayerId(0),
         valid_attacker_ids: vec![bombardiers],
         valid_attack_targets: vec![AttackTarget::Player(PlayerId(1))],
+        attacker_constraints: Default::default(),
     };
     apply_as_current(
         &mut state,
@@ -1698,8 +1699,14 @@ fn turn_face_up_restricted_mana_funds_special_action() {
         ManaRestriction::OnlyForSpecialAction(SpecialAction::TurnFaceUp),
     );
 
-    let result = apply_as_current(&mut state, GameAction::TurnFaceUp { object_id: morph })
-        .expect("turn-face-up-restricted mana must fund the morph turn-up special action");
+    let result = apply_as_current(
+        &mut state,
+        GameAction::TurnFaceUp {
+            object_id: morph,
+            x: 0,
+        },
+    )
+    .expect("turn-face-up-restricted mana must fund the morph turn-up special action");
 
     assert!(
         !state.objects[&morph].face_down,
@@ -1738,7 +1745,13 @@ fn turn_face_up_empty_pool_cannot_pay_and_stays_face_down() {
     let mut state = setup_game_at_main_phase();
     let morph = setup_face_down_morph(&mut state, PlayerId(0));
 
-    let result = apply_as_current(&mut state, GameAction::TurnFaceUp { object_id: morph });
+    let result = apply_as_current(
+        &mut state,
+        GameAction::TurnFaceUp {
+            object_id: morph,
+            x: 0,
+        },
+    );
     assert!(
         result.is_err(),
         "with no mana the {{3}} morph turn-up cost must be unpayable: {result:?}"
@@ -1771,7 +1784,13 @@ fn turn_face_up_rejects_unlock_door_restricted_mana() {
         ManaRestriction::OnlyForSpecialAction(SpecialAction::UnlockDoor),
     );
 
-    let result = apply_as_current(&mut state, GameAction::TurnFaceUp { object_id: morph });
+    let result = apply_as_current(
+        &mut state,
+        GameAction::TurnFaceUp {
+            object_id: morph,
+            x: 0,
+        },
+    );
     assert!(
         result.is_err(),
         "door-unlock-restricted mana must not pay a turn-face-up: {result:?}"
@@ -2248,6 +2267,194 @@ fn set_priority_yield_accepted_from_non_priority_actor() {
     );
 }
 
+// --- GameAction::SetMayTriggerAutoChoice (CR 603.5) ---
+
+/// Builds a `MayTriggerAutoChoiceKey` for `player` scoped to `source` with a
+/// printed-trigger origin (index 0), matching the shape the resolution pipeline
+/// latches for an optional ("may") triggered ability.
+fn may_trigger_key(
+    player: PlayerId,
+    source: ObjectId,
+) -> crate::types::game_state::MayTriggerAutoChoiceKey {
+    crate::types::game_state::MayTriggerAutoChoiceKey {
+        player,
+        source_id: source,
+        origin: crate::types::game_state::MayTriggerOrigin::Printed { trigger_index: 0 },
+    }
+}
+
+/// CR 603.5: `SetMayTriggerAutoChoice { Remove }` dispatched through the real
+/// `apply()` pipeline revokes the acting player's own stored auto-choice. The
+/// action is exempt from the priority-holder gate (a preference mutation), so a
+/// non-priority actor may still edit their own preferences.
+#[test]
+fn set_may_trigger_auto_choice_remove_revokes_actor_choice() {
+    use crate::types::actions::MayTriggerAutoChoiceOp;
+    use crate::types::game_state::AutoMayChoice;
+
+    let mut state = setup_game_at_main_phase();
+    let source = ObjectId(500);
+    let key = may_trigger_key(PlayerId(0), source);
+    state.set_may_trigger_auto_choice(key, AutoMayChoice::Accept);
+    assert_eq!(state.may_trigger_auto_choices.len(), 1);
+
+    apply(
+        &mut state,
+        PlayerId(0),
+        GameAction::SetMayTriggerAutoChoice {
+            op: MayTriggerAutoChoiceOp::Remove { key },
+        },
+    )
+    .expect("SetMayTriggerAutoChoice is legal in any state");
+
+    assert!(
+        state.may_trigger_auto_choices.is_empty(),
+        "Remove revokes the actor's stored auto-choice"
+    );
+}
+
+/// CR 603.5: `SetMayTriggerAutoChoice { ClearAll }` is actor-scoped — a player
+/// may only clear THEIR OWN stored auto-choices, never another player's. Drives
+/// the real `apply()` pipeline; reverting the actor-scoping in the handler (e.g.
+/// clearing by a client-supplied player) would drop P1's record and fail the
+/// surviving-record assertion.
+#[test]
+fn set_may_trigger_auto_choice_clear_all_is_actor_scoped() {
+    use crate::types::actions::MayTriggerAutoChoiceOp;
+    use crate::types::game_state::AutoMayChoice;
+
+    let mut state = setup_game_at_main_phase();
+    let p0_key = may_trigger_key(PlayerId(0), ObjectId(500));
+    let p0_key2 = may_trigger_key(PlayerId(0), ObjectId(501));
+    let p1_key = may_trigger_key(PlayerId(1), ObjectId(600));
+    state.set_may_trigger_auto_choice(p0_key, AutoMayChoice::Accept);
+    state.set_may_trigger_auto_choice(p0_key2, AutoMayChoice::Decline);
+    state.set_may_trigger_auto_choice(p1_key, AutoMayChoice::Accept);
+    assert_eq!(state.may_trigger_auto_choices.len(), 3);
+
+    apply(
+        &mut state,
+        PlayerId(0),
+        GameAction::SetMayTriggerAutoChoice {
+            op: MayTriggerAutoChoiceOp::ClearAll,
+        },
+    )
+    .expect("SetMayTriggerAutoChoice is legal in any state");
+
+    assert_eq!(
+        state.may_trigger_auto_choices.len(),
+        1,
+        "ClearAll drops only the acting player's auto-choices"
+    );
+    assert_eq!(
+        state.may_trigger_auto_choices[0].key.player,
+        PlayerId(1),
+        "another player's auto-choice survives an actor's ClearAll"
+    );
+}
+
+/// CR 603.5: actor scoping on `Remove` — the handler binds the removal to the
+/// acting player, ignoring the payload's key player. A malicious P1 cannot
+/// revoke P0's stored auto-choice by naming P0's key. Reverting the
+/// `player: actor` override would let P1 delete P0's record and fail the
+/// survives assertion. A reach-guard proves the auth gate is otherwise live.
+#[test]
+fn set_may_trigger_auto_choice_remove_cannot_target_another_player() {
+    use crate::types::actions::MayTriggerAutoChoiceOp;
+    use crate::types::game_state::AutoMayChoice;
+
+    let mut state = setup_game_at_main_phase();
+    let source = ObjectId(500);
+    let p0_key = may_trigger_key(PlayerId(0), source);
+    state.set_may_trigger_auto_choice(p0_key, AutoMayChoice::Accept);
+
+    // Reach-guard: a non-exempt action from P1 in P0's priority window errors,
+    // proving the auth gate is live (so the exemption below is what lets P1 act).
+    let unauthorized = apply(&mut state, PlayerId(1), GameAction::PassPriority);
+    assert!(
+        matches!(unauthorized, Err(EngineError::WrongPlayer)),
+        "a non-priority player cannot pass priority (proves the auth gate is live)"
+    );
+
+    // P1 names P0's exact key, but the handler rebinds removal to the actor (P1),
+    // so nothing P0 owns is touched.
+    apply(
+        &mut state,
+        PlayerId(1),
+        GameAction::SetMayTriggerAutoChoice {
+            op: MayTriggerAutoChoiceOp::Remove { key: p0_key },
+        },
+    )
+    .expect("SetMayTriggerAutoChoice is exempt from the priority-holder gate");
+
+    assert_eq!(
+        state.may_trigger_auto_choice(&p0_key),
+        Some(AutoMayChoice::Accept),
+        "P0's stored auto-choice survives P1's attempt to remove it"
+    );
+}
+
+// --- GameAction::SetTriggerOrderTemplate (CR 603.3b) ---
+
+/// Build a persistent (`AllCopies`-keyed) ordering template for `owner` naming one card.
+fn persistent_order_template(
+    owner: PlayerId,
+    card_id: u64,
+) -> crate::analysis::decision_template::DecisionTemplate {
+    use crate::analysis::decision_template::{
+        DecisionGroupKey, DecisionKind, DecisionTemplate, PinnedDecision, ReplayMode,
+    };
+    use crate::types::game_state::YieldTarget;
+    let src = YieldTarget::AllCopies {
+        card_id: crate::types::identifiers::CardId(card_id),
+        trigger_description: None,
+    };
+    DecisionTemplate {
+        owner,
+        decisions: vec![PinnedDecision::Order {
+            source: src.clone(),
+            pos: 0,
+        }],
+        replay: ReplayMode::Static,
+        key: DecisionGroupKey::from_sources(&[src], DecisionKind::TriggerOrdering),
+    }
+}
+
+/// T5 (CR 603.3b): `SetTriggerOrderTemplate { ClearAll }` is actor-scoped — a player
+/// clears only THEIR OWN saved ordering templates, never another player's. Drives the
+/// real `apply()` pipeline; reverting the actor scoping (clearing by a client-supplied
+/// player) would drop P1's template and fail the surviving-template assertion.
+#[test]
+fn set_trigger_order_template_clear_all_is_actor_scoped() {
+    use crate::types::actions::TriggerOrderTemplateOp;
+
+    let mut state = setup_game_at_main_phase();
+    state.set_trigger_order_template(persistent_order_template(PlayerId(0), 100));
+    state.set_trigger_order_template(persistent_order_template(PlayerId(0), 101));
+    state.set_trigger_order_template(persistent_order_template(PlayerId(1), 200));
+    assert_eq!(state.decision_templates.len(), 3);
+
+    apply(
+        &mut state,
+        PlayerId(0),
+        GameAction::SetTriggerOrderTemplate {
+            op: TriggerOrderTemplateOp::ClearAll,
+        },
+    )
+    .expect("SetTriggerOrderTemplate is legal in any state");
+
+    assert_eq!(
+        state.decision_templates.len(),
+        1,
+        "ClearAll drops only the acting player's (P0's two) persistent templates — P1's op took effect on nobody else"
+    );
+    assert_eq!(
+        state.decision_templates[0].owner,
+        PlayerId(1),
+        "another player's saved template survives an actor's ClearAll"
+    );
+}
+
 /// CR 117.3d: an `UntilEndOfTurn` auto-pass session normally ends (Finish) when
 /// an opponent-controlled trigger tops the stack, so the player can respond.
 /// A matching yield keeps the session auto-passing (Pass) through that trigger;
@@ -2382,6 +2589,7 @@ fn concede_owner_of_waiting_for_advances_state() {
         player: PlayerId(1),
         valid_attacker_ids: vec![],
         valid_attack_targets: vec![],
+        attacker_constraints: Default::default(),
     };
 
     let result = apply_as_current(
@@ -5724,6 +5932,7 @@ fn setup_tempest_hawk_attack(library_hawk_ids: &[u64]) -> (GameState, ObjectId, 
         player: PlayerId(0),
         valid_attacker_ids: vec![attacker],
         valid_attack_targets: vec![AttackTarget::Player(PlayerId(1))],
+        attacker_constraints: Default::default(),
     };
 
     apply_as_current(
@@ -6552,6 +6761,7 @@ fn test_mana_ability_during_mana_payment_stays_in_mana_payment() {
         declared_mana_additions: Vec::new(),
         activation_cost: None,
         activation_ability_index: None,
+        pending_loyalty_activation_player: None,
         target_constraints: vec![],
         casting_variant: crate::types::game_state::CastingVariant::Normal,
         cast_timing_permission: None,
@@ -6569,11 +6779,14 @@ fn test_mana_ability_during_mana_payment_stays_in_mana_payment() {
         declared_kickers_to_pay: Vec::new(),
         declined_kickers: Vec::new(),
         convoked_creatures: Vec::new(),
+        deferred_sacrificed_permanents: Vec::new(),
         pinned_pool_units: Vec::new(),
         cancel_restore_prepared_source: None,
         payment_mode: crate::types::game_state::CastPaymentMode::Auto,
         assist_state: AssistState::NotOffered,
         activation_residual: crate::types::game_state::ActivationResidual::None,
+        activation_target_selection: crate::types::game_state::ActivationTargetSelection::Pending,
+        alt_cost_grant_source: None,
     }));
     state.waiting_for = WaitingFor::ManaPayment {
         player: PlayerId(0),
@@ -6941,6 +7154,7 @@ fn taps_for_mana_multiplier_fires_once_on_color_choice_mana_payment_resume() {
         declared_mana_additions: Vec::new(),
         activation_cost: None,
         activation_ability_index: None,
+        pending_loyalty_activation_player: None,
         target_constraints: vec![],
         casting_variant: crate::types::game_state::CastingVariant::Normal,
         cast_timing_permission: None,
@@ -6958,11 +7172,14 @@ fn taps_for_mana_multiplier_fires_once_on_color_choice_mana_payment_resume() {
         declared_kickers_to_pay: Vec::new(),
         declined_kickers: Vec::new(),
         convoked_creatures: Vec::new(),
+        deferred_sacrificed_permanents: Vec::new(),
         pinned_pool_units: Vec::new(),
         cancel_restore_prepared_source: None,
         payment_mode: crate::types::game_state::CastPaymentMode::Auto,
         assist_state: AssistState::NotOffered,
         activation_residual: crate::types::game_state::ActivationResidual::None,
+        activation_target_selection: crate::types::game_state::ActivationTargetSelection::Pending,
+        alt_cost_grant_source: None,
     }));
     state.waiting_for = WaitingFor::ManaPayment {
         player: PlayerId(0),
@@ -8230,6 +8447,7 @@ fn learn_rummage_stashes_draw_continuation() {
             source,
             PlayerId(0),
         )),
+        &state,
     ));
 
     let learn_ability = ResolvedAbility::new(Effect::Learn, vec![], source, PlayerId(0));
@@ -8952,6 +9170,7 @@ fn grant_graveyard_creature_cast_and_bury(
                 play_mode: crate::types::ability::CardPlayMode::Cast,
                 graveyard_destination_replacement: None,
                 extra_cost: None,
+                enters_with_counter: None,
             })
             .affected(TargetFilter::Typed(
                 TypedFilter::creature().controller(ControllerRef::You),

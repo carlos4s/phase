@@ -114,6 +114,7 @@ fn categorize(event: &GameEvent) -> LogCategory {
         GameEvent::AttackersDeclared { .. }
         | GameEvent::BlockersDeclared { .. }
         | GameEvent::AttackerBecameBlockedByEffect { .. }
+        | GameEvent::AttackerBecameBlockedByFilteredBlocker { .. }
         | GameEvent::CreatureExerted { .. }
         | GameEvent::CreatureEnlisted { .. }
         | GameEvent::CombatDamageDealtToPlayer { .. } => LogCategory::Combat,
@@ -605,6 +606,16 @@ fn format_segments(event: &GameEvent, state: &GameState) -> Vec<LogSegment> {
             vec![card_seg(state, *attacker), text(" becomes blocked")]
         }
 
+        // CR 509.3d: a disambiguated single blocker/attacker pair from a
+        // per-blocker filtered blocks-or-becomes-blocked firing.
+        GameEvent::AttackerBecameBlockedByFilteredBlocker { attacker, blocker } => {
+            vec![
+                card_seg(state, *blocker),
+                text(" blocks "),
+                card_seg(state, *attacker),
+            ]
+        }
+
         GameEvent::CombatDamageDealtToPlayer {
             player_id,
             source_amounts,
@@ -838,7 +849,9 @@ fn format_segments(event: &GameEvent, state: &GameState) -> Vec<LogSegment> {
             player_seg(state, *new_controller),
         ],
 
-        GameEvent::EffectResolved { kind, source_id } => vec![
+        GameEvent::EffectResolved {
+            kind, source_id, ..
+        } => vec![
             card_seg(state, *source_id),
             text(": "),
             text(&format!("{kind:?}")),
@@ -1405,6 +1418,7 @@ mod tests {
                 counters: HashMap::new(),
                 tapped: false,
                 is_suspected: false,
+                attachments: Vec::new(),
             },
         );
         assert_eq!(resolve_object_name(&state, ObjectId(42)), "Grizzly Bears");
