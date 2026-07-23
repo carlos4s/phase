@@ -975,13 +975,13 @@ export async function dispatchResolveAll(
       }
     }
 
-    const { gameId, adapter } = useGameStore.getState();
+    const { gameId, adapter, authoritativeGameState } = useGameStore.getState();
     const newState = useGameStore.getState().gameState;
     if (gameId && adapter && newState) {
       await saveAuthoritativeGame(
         gameId,
         adapter,
-        snapshot.authoritativeState ?? newState,
+        authoritativeGameState ?? newState,
       );
     }
   } finally {

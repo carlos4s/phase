@@ -3832,9 +3832,11 @@ pub(crate) fn priority_actions_with_probe(
         // CR 107.3d: X is announced before a special-action cost is paid.
         // Emit every affordable announcement so the legal-action surface, and
         // therefore the UI, never substitutes an arbitrary X value.
-        let max_x = casting_costs::cost_has_x(&cost)
-            .then(|| casting_costs::max_x_value(state, player, &cost, None))
-            .unwrap_or(0);
+        let max_x = if casting_costs::cost_has_x(&cost) {
+            casting_costs::max_x_value(state, player, &cost, None)
+        } else {
+            0
+        };
         for x in 0..=max_x {
             let mut announced_cost = cost.clone();
             announced_cost.concretize_x(x);
