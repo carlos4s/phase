@@ -2,7 +2,7 @@ use crate::types::ability::{
     ControllerRef, FilterProp, ResolvedAbility, TargetFilter, TargetRef, TypeFilter, TypedFilter,
 };
 use crate::types::events::GameEvent;
-use crate::types::game_state::{GameState, StackEntry, StackEntryKind};
+use crate::types::game_state::{GameState, StackEntry, StackEntryKind, TriggerSourceContext};
 use crate::types::identifiers::{ObjectId, TrackedSetId};
 use crate::types::keywords::{HexproofFilter, Keyword};
 use crate::types::player::PlayerId;
@@ -327,7 +327,7 @@ fn find_legal_targets_with_context(
                     }
                 }
                 Zone::Stack => {
-                    for entry in &state.stack {
+                    for entry in targetable_stack_spell_entries(state) {
                         let obj_id = entry.id;
                         if stack_entry_matches_filter_with_context(
                             state,
@@ -714,11 +714,16 @@ pub fn resolved_targets(
         target_filter,
         TargetFilter::SelfRef | TargetFilter::GrantingObject
     ) {
-        // CR 400.7: The self-reference resolves to the source only while it is
-        // still the same object. A source that left and re-entered the
-        // battlefield (blink/flicker) since the ability was created is a new
-        // object (higher incarnation), so the self-reference finds nothing.
-        return if ability.source_is_current(state) {
+        // CR 400.7: A self-reference resolves to the exact source, except that
+        // a departure trigger may follow its own immediate recorded event
+        // successor ("it" in the graveyard). A later same-id return remains a
+        // new object and finds nothing.
+        let source_is_current = match target_filter {
+            TargetFilter::SelfRef => ability.self_ref_is_current(state),
+            TargetFilter::GrantingObject => ability.source_is_current(state),
+            _ => unreachable!("self-reference branch only handles SelfRef or GrantingObject"),
+        };
+        return if source_is_current {
             vec![TargetRef::Object(ability.source_id)]
         } else {
             Vec::new()
@@ -845,7 +850,20 @@ pub(crate) fn parent_chain_targets_from_root(
     state: &GameState,
     ability: &ResolvedAbility,
 ) -> Vec<TargetRef> {
-    let root = state
+    super::ability_utils::flatten_targets_in_chain(resolving_root_ability(state, ability))
+}
+
+/// CR 608.2c: The root `ResolvedAbility` of the currently-resolving stack
+/// entry that `ability` belongs to (falling back to `ability` itself when no
+/// matching entry is found — e.g. hand-built test abilities resolved outside
+/// the stack). Single authority for the root-entry lookup shared by
+/// [`parent_chain_targets_from_root`] and the delayed-trigger creation
+/// snapshot (`effects::delayed_trigger`).
+pub(crate) fn resolving_root_ability<'a>(
+    state: &'a GameState,
+    ability: &'a ResolvedAbility,
+) -> &'a ResolvedAbility {
+    state
         .resolving_stack_entry
         .as_ref()
         .filter(|entry| entry.id == ability.source_id || entry.source_id == ability.source_id)
@@ -856,8 +874,7 @@ pub(crate) fn parent_chain_targets_from_root(
                 .find(|entry| entry.id == ability.source_id || entry.source_id == ability.source_id)
         })
         .and_then(|entry| entry.ability())
-        .unwrap_or(ability);
-    super::ability_utils::flatten_targets_in_chain(root)
+        .unwrap_or(ability)
 }
 
 /// CR 608.2c: Resolve a single earlier target slot by its declared `index` from
@@ -945,12 +962,18 @@ pub(crate) fn resolved_object_ids_for_filter(
     filter: &TargetFilter,
 ) -> Vec<ObjectId> {
     match filter {
-        // CR 400.7: self-reference resolves only while the source is the same
-        // object; a blinked-and-returned source (higher incarnation) finds nothing.
+        // CR 400.7: self-reference resolves only to the exact source or its own
+        // immediate recorded event successor; a blinked-and-returned source
+        // (higher incarnation) finds nothing.
         // CR 201.5a: an un-concretized `GrantingObject` degrades to the source
         // (host) — fail-safe; it is normally rewritten to `SpecificObject` at
         // grant-clone time.
-        TargetFilter::SelfRef | TargetFilter::GrantingObject => ability
+        TargetFilter::SelfRef => ability
+            .self_ref_is_current(state)
+            .then_some(ability.source_id)
+            .into_iter()
+            .collect(),
+        TargetFilter::GrantingObject => ability
             .source_is_current(state)
             .then_some(ability.source_id)
             .into_iter()
@@ -1176,6 +1199,15 @@ pub(crate) fn resolve_event_context_target_for_event_or_state(
             let controller = state.objects.get(&source_obj_id)?.controller;
             Some(TargetRef::Player(controller))
         }
+        // CR 615.5 + CR 120.1: "Comeuppance deals that much damage to that
+        // creature" — the reflection target is the prevented event's damage
+        // source object itself (the creature that would have dealt the damage).
+        // Returns the source as an object ref; `None` outside the
+        // post-replacement window. Sibling of `PostReplacementSourceController`
+        // (which projects the same source to its controller player).
+        TargetFilter::PostReplacementDamageSource => {
+            state.post_replacement_event_source().map(TargetRef::Object)
+        }
         TargetFilter::PostReplacementDamageTarget => state.post_replacement_event_target().cloned(),
         // CR 108.3 + CR 400.3 + CR 615.5: Owner of the prevented event's damage
         // recipient ("that creature's owner shuffles it into their library").
@@ -1199,7 +1231,9 @@ pub(crate) fn resolve_event_context_target_for_event_or_state(
 /// CR 603.2c + CR 608.2c: For batched attack triggers, "those creatures"
 /// anaphorically refers to every attacker that satisfied the trigger subject
 /// in the contextual `AttackersDeclared` event (Champions from Beyond Full Party).
-fn parent_target_refs_from_attack_trigger_context(state: &GameState) -> Option<Vec<TargetRef>> {
+pub(crate) fn parent_target_refs_from_attack_trigger_context(
+    state: &GameState,
+) -> Option<Vec<TargetRef>> {
     let events: Vec<&GameEvent> = if state.current_trigger_events.is_empty() {
         state.current_trigger_event.iter().collect()
     } else {
@@ -1667,6 +1701,26 @@ pub(crate) fn stack_entry_matches_filter(
     )
 }
 
+/// Matches a stack entry from a triggered source without rebinding source-relative
+/// filters to a later object at the same storage id.
+pub(crate) fn stack_entry_matches_filter_for_trigger_source(
+    state: &GameState,
+    entry: &StackEntry,
+    filter: &TargetFilter,
+    source_context: &TriggerSourceContext,
+) -> bool {
+    let source_id = source_context.identity.reference.object_id;
+    let target_ctx = super::filter::FilterContext::from_trigger_source(source_context);
+    stack_entry_matches_filter_with_context(
+        state,
+        entry,
+        filter,
+        source_context.source_read(state).controller(),
+        source_id,
+        &target_ctx,
+    )
+}
+
 fn stack_entry_matches_filter_with_context(
     state: &GameState,
     entry: &StackEntry,
@@ -1842,7 +1896,7 @@ fn add_stack_spells(
     // enumeration and threaded into every `can_target` below.
     let source_ignores_hexproof =
         crate::game::static_abilities::player_ignores_hexproof(state, source_controller);
-    for entry in &state.stack {
+    for entry in targetable_stack_spell_entries(state) {
         // CR 601.2c: A spell choosing stack targets during its own cast cannot
         // select itself — targeting the counterspell removes only the counter
         // from the stack and leaves the intended opponent spell to resolve
@@ -1868,6 +1922,22 @@ fn add_stack_spells(
             targets.push(TargetRef::Object(entry.id));
         }
     }
+}
+
+/// CR 608.2g: expose a parked resolving spell only while its object is still
+/// on the stack, without duplicating entries that are already live there.
+fn targetable_stack_spell_entries(state: &GameState) -> impl Iterator<Item = &StackEntry> {
+    state
+        .stack
+        .iter()
+        .chain(state.resolving_stack_entry.iter().filter(move |entry| {
+            matches!(entry.kind, StackEntryKind::Spell { .. })
+                && state
+                    .objects
+                    .get(&entry.id)
+                    .is_some_and(|obj| obj.zone == Zone::Stack)
+                && !state.stack.iter().any(|live| live.id == entry.id)
+        }))
 }
 
 fn stack_spell_entry_matches_filter(
@@ -2531,7 +2601,7 @@ mod tests {
         // `Dispatching`, not `Ready`: production reads this filter from inside a
         // running continuation, whose own work has already been taken out of the
         // drain but whose prevented-event context is still readable (CR 615.5).
-        state.post_replacement_drains.install(
+        state.install_post_replacement_drain(
             PostReplacementDrain {
                 status: DrainStatus::Dispatching,
                 source: None,
@@ -2577,7 +2647,7 @@ mod tests {
         let (mut state, _c0, c1) = setup_with_creatures();
         state.objects.get_mut(&c1).unwrap().controller = PlayerId(0);
         // `Dispatching` for the same reason as the sibling test above.
-        state.post_replacement_drains.install(
+        state.install_post_replacement_drain(
             PostReplacementDrain {
                 status: DrainStatus::Dispatching,
                 source: None,

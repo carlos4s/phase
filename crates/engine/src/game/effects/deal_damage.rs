@@ -128,6 +128,16 @@ fn resolve_effect_recipients(
     if matches!(target_filter, TargetFilter::SelfRef) {
         return vec![TargetRef::Object(ability.source_id)];
     }
+    // CR 615.5 + CR 120.1: the prevented event's damage source object (Comeuppance
+    // reflecting to "that creature"). An OBJECT context ref — resolved here (not
+    // via `player_context_target`, which only projects players) before the
+    // `ability.targets` fallback, since the reflection rider carries no targets.
+    if matches!(target_filter, TargetFilter::PostReplacementDamageSource) {
+        return state
+            .post_replacement_event_source()
+            .map(|id| vec![TargetRef::Object(id)])
+            .unwrap_or_default();
+    }
     if let Some(target) = player_context_target(state, ability, target_filter) {
         return vec![target];
     }
@@ -700,6 +710,15 @@ pub(crate) fn apply_damage_after_replacement(
                 .map(|object| object.controller)
                 .unwrap_or(ctx.controller),
         };
+        // CR 400.7: Snapshot the target's incarnation at damage time so
+        // subsequent zone-change look-backs do not match a new incarnation.
+        let target_incarnation = match t {
+            TargetRef::Object(object_id) => state
+                .objects
+                .get(object_id)
+                .map(|object| object.incarnation),
+            TargetRef::Player(_) => None,
+        };
         // CR 608.2i + CR 608.2h: Snapshot the damage source's characteristics at
         // damage time so look-back source-filter queries ("opponents who were
         // dealt combat damage by ~ or a Dragon this turn") evaluate against the
@@ -711,6 +730,7 @@ pub(crate) fn apply_damage_after_replacement(
             source_controller: ctx.controller,
             target: t.clone(),
             target_controller,
+            target_incarnation,
             // CR 120.4a: the permanent was dealt only the lethal portion; the
             // excess is recorded against the controller by the redirect below.
             amount: primary_amount,
@@ -2823,8 +2843,7 @@ mod tests {
             WaitingFor::ReplacementChoice { .. }
         ));
         let cont = state
-            .pending_continuation
-            .as_ref()
+            .active_ability_continuation()
             .expect("remaining source must be stashed while first source waits");
         assert_eq!(
             cont.parent_kind,
@@ -2864,7 +2883,7 @@ mod tests {
         );
         assert!(matches!(state.waiting_for, WaitingFor::Priority { .. }));
         assert!(
-            state.pending_continuation.is_none(),
+            state.active_ability_continuation().is_none(),
             "continuation must be consumed after replacement resume"
         );
         assert!(
@@ -3102,8 +3121,7 @@ mod tests {
             "first source's post-replacement damage applies before lifelink pauses"
         );
         let cont = state
-            .pending_continuation
-            .as_ref()
+            .active_ability_continuation()
             .expect("remaining post-replacement survivor must be stashed");
         match &cont.chain.effect {
             Effect::ApplyPostReplacementDamage {
@@ -3224,8 +3242,7 @@ mod tests {
             "first source's damage applies before lifelink gain pauses"
         );
         let cont = state
-            .pending_continuation
-            .as_ref()
+            .active_ability_continuation()
             .expect("remaining post-replacement source must be stashed");
         assert_eq!(
             cont.parent_kind,
@@ -3275,7 +3292,7 @@ mod tests {
         );
         assert!(matches!(state.waiting_for, WaitingFor::Priority { .. }));
         assert!(
-            state.pending_continuation.is_none(),
+            state.active_ability_continuation().is_none(),
             "continuation must be consumed after post-replacement survivor resumes"
         );
         assert!(
@@ -3566,6 +3583,10 @@ mod tests {
         assert_eq!(
             state.damage_dealt_this_turn[0].target_controller,
             PlayerId(1)
+        );
+        assert_eq!(
+            state.damage_dealt_this_turn[0].target_incarnation,
+            Some(state.objects[&target].incarnation)
         );
     }
 
@@ -5746,8 +5767,7 @@ mod tests {
             WaitingFor::ReplacementChoice { .. }
         ));
         let cont = state
-            .pending_continuation
-            .as_ref()
+            .active_ability_continuation()
             .expect("expected pending_continuation for remaining batch targets");
 
         // Every remaining creature must be encoded as its own chain node.
@@ -5860,8 +5880,7 @@ mod tests {
             WaitingFor::ReplacementChoice { .. }
         ));
         let cont = state
-            .pending_continuation
-            .as_ref()
+            .active_ability_continuation()
             .expect("expected pending_continuation for remaining batch targets");
         let summary = collect_chain_summary(&cont.chain);
         assert_eq!(
@@ -5902,8 +5921,7 @@ mod tests {
             WaitingFor::ReplacementChoice { .. }
         ));
         let cont = state
-            .pending_continuation
-            .as_ref()
+            .active_ability_continuation()
             .expect("expected pending_continuation for remaining-player damage");
 
         let summary = collect_chain_summary(&cont.chain);
@@ -5965,8 +5983,7 @@ mod tests {
             WaitingFor::ReplacementChoice { .. }
         ));
         let cont = state
-            .pending_continuation
-            .as_ref()
+            .active_ability_continuation()
             .expect("expected pending_continuation for remaining multi-target damage");
         let summary = collect_chain_summary(&cont.chain);
         assert_eq!(summary.len(), 1, "one remaining target; got {summary:?}");
@@ -6044,8 +6061,7 @@ mod tests {
 
         assert_eq!(
             state
-                .pending_continuation
-                .as_ref()
+                .active_ability_continuation()
                 .and_then(|c| c.parent_kind),
             Some(EffectKind::DamageAll),
             "the stashed continuation must carry EffectKind::DamageAll so the drain re-emits the parent event",
@@ -6077,7 +6093,7 @@ mod tests {
             result.events,
         );
         assert!(
-            state.pending_continuation.is_none(),
+            state.active_ability_continuation().is_none(),
             "continuation must be consumed after drain"
         );
     }
@@ -6121,8 +6137,7 @@ mod tests {
 
         assert_eq!(
             state
-                .pending_continuation
-                .as_ref()
+                .active_ability_continuation()
                 .and_then(|c| c.parent_kind),
             Some(EffectKind::DamageEachPlayer),
             "the stashed continuation must carry EffectKind::DamageEachPlayer",
@@ -6153,7 +6168,7 @@ mod tests {
             result.events,
         );
         assert!(
-            state.pending_continuation.is_none(),
+            state.active_ability_continuation().is_none(),
             "continuation must be consumed after drain"
         );
     }

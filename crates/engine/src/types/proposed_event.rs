@@ -11,6 +11,7 @@ use super::ability::{
 };
 use super::card::{PrintedCardRef, TokenImageRef};
 use super::card_type::{CoreType, Supertype};
+use super::events::EventObjectSnapshot;
 use super::identifiers::{ObjectId, ObjectIncarnationRef};
 use super::keywords::Keyword;
 use super::mana::{ManaColor, ManaType, UnitDecision};
@@ -41,6 +42,23 @@ pub struct BoundSearchFoundDisposition {
     /// resumed choice consumes this snapshot without rebinding to a new object
     /// that later reused the same id.
     pub source: ObjectIncarnationRef,
+    /// CR 611.2b + CR 609.4b: A permission rider bound at replacement
+    /// selection time and installed only after the found card actually reaches
+    /// exile. It contains no found-object identity; delivery supplies that
+    /// independently.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<BoundSearchFoundGrant>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BoundSearchFoundGrant {
+    /// CR 400.7: exact incarnation of the replacement source whose effect
+    /// created the permission.
+    pub source: ObjectIncarnationRef,
+    pub controller: PlayerId,
+    pub grantee: PlayerId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mana_spend_permission: Option<super::ability::ManaSpendPermission>,
 }
 
 /// CR 616.1: Candidate data frozen when a SearchFound ordering
@@ -336,6 +354,24 @@ pub struct CopyTokenSpec {
     pub controller: PlayerId,
 }
 
+/// CR 701.31 + CR 901.9c + CR 701.31c: Which rules path is proposing a
+/// planeswalk event. Scoped replacements (Fixed Point in Time) match only
+/// [`PlanarDie`]; generic "if you would planeswalk" replacements (Susan Foreman)
+/// match every cause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum PlaneswalkCause {
+    /// CR 901.8 / CR 901.9c: Planeswalker symbol on the planar die.
+    PlanarDie,
+    /// CR 701.31: Planeswalk from a spell or ability instruction (including
+    /// chained "then planeswalk" riders).
+    Instruction,
+    /// CR 701.31c / CR 312.5 / CR 704.6f: Phenomenon encounter, phenomenon
+    /// state-based planeswalk, and other rules-process planeswalks that are not
+    /// the planar-die ability and not an ability resolving on the stack.
+    #[default]
+    RulesProcess,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ProposedEvent {
     ZoneChange {
@@ -375,6 +411,13 @@ pub enum ProposedEvent {
         /// `ProposedEvent` (and the `Result<_, ProposedEvent>` pipeline).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         face_down_profile: Option<Box<FaceDownProfile>>,
+        /// CR 614.12a + CR 616.1c + CR 707.2: Pre-entry copy payload for
+        /// Mystic Reflection-style replacements. The copied values ride the
+        /// event so later replacement passes can match the entering permanent
+        /// as it would exist after the copy effect, before the zone change is
+        /// delivered.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        enter_as_copy: Option<Box<CopyTokenSpec>>,
         applied: HashSet<AppliedReplacementKey>,
     },
     Damage {
@@ -440,6 +483,11 @@ pub enum ProposedEvent {
     /// already resolved from `QuantityExpr` at propose time.
     Connive {
         object_id: ObjectId,
+        /// CR 400.7 + CR 701.50b/f: the exact permanent that proposed this
+        /// action. A replacement-ordering pause must not recapture a later
+        /// incarnation that reused `object_id`. Intentionally no serde default:
+        /// a legacy raw-id-only parked event cannot reconstruct this authority.
+        subject: Box<EventObjectSnapshot>,
         count: u32,
         applied: HashSet<AppliedReplacementKey>,
     },
@@ -624,15 +672,18 @@ pub enum ProposedEvent {
         #[serde(default, deserialize_with = "deserialize_applied_keys_step_end_mana")]
         applied: HashSet<AppliedReplacementKey>,
     },
-    /// CR 701.31 + CR 901.9c + CR 614.1a: A player is about to planeswalk as a
-    /// result of rolling the Planeswalker symbol on the planar die (the
-    /// CR 901.8 "planeswalking ability" resolving). This is the ONLY planeswalk
-    /// cause routed through the replacement pipeline — encounter / SBA /
-    /// leave-game planeswalks (CR 701.31c) call `planechase::planeswalk`
-    /// directly and are never replaced. "Chaos ensues instead" (Fixed Point in
-    /// Time) replaces this event.
+    /// CR 701.31 + CR 614.1a: A player is about to planeswalk. All CR 701.31c
+    /// causes except the starting-plane reveal route through
+    /// `planechase::resolve_planeswalk_via_replacements`. Encounter / SBA /
+    /// leave-game paths use [`PlaneswalkCause::RulesProcess`]; ability
+    /// resolutions use [`PlaneswalkCause::Instruction`] or [`PlaneswalkCause::PlanarDie`].
     Planeswalk {
         player_id: PlayerId,
+        /// Distinguishes planar-die planeswalks (CR 901.9c) from ability-
+        /// instructed ones so scoped replacements (Fixed Point in Time) match
+        /// only the cause their Oracle text names.
+        #[serde(default)]
+        cause: PlaneswalkCause,
         applied: HashSet<AppliedReplacementKey>,
     },
     /// CR 701.3a + CR 614.1a: An Aura, Equipment, or Fortification is about to
@@ -669,6 +720,7 @@ impl ProposedEvent {
             controller_override: None,
             enter_transformed: false,
             face_down_profile: None,
+            enter_as_copy: None,
             applied: HashSet::new(),
         }
     }
@@ -694,9 +746,21 @@ impl ProposedEvent {
     /// CR 701.31 + CR 901.9c + CR 614.1a: Construct a `Planeswalk` proposed
     /// event for the planar-die planeswalking ability (CR 901.8).
     pub fn planeswalk(player_id: PlayerId) -> Self {
+        Self::planeswalk_with_applied(player_id, PlaneswalkCause::PlanarDie, HashSet::new())
+    }
+
+    /// CR 701.31 + CR 614.5: Construct a `Planeswalk` proposed event with an
+    /// explicit cause and already-applied replacement keys (chained "then
+    /// planeswalk" riders retain the originating replacement's applied set).
+    pub fn planeswalk_with_applied(
+        player_id: PlayerId,
+        cause: PlaneswalkCause,
+        applied: HashSet<AppliedReplacementKey>,
+    ) -> Self {
         Self::Planeswalk {
             player_id,
-            applied: HashSet::new(),
+            cause,
+            applied,
         }
     }
 
@@ -852,14 +916,14 @@ impl ProposedEvent {
             | ProposedEvent::TurnFaceUp { object_id, .. }
             | ProposedEvent::Destroy { object_id, .. }
             | ProposedEvent::RemoveCounter { object_id, .. }
-            | ProposedEvent::Explore { object_id, .. }
-            // CR 701.50a: The conniving permanent's controller is the affected
-            // player — they draw/discard and choose the connive replacement order.
-            | ProposedEvent::Connive { object_id, .. } => state
+            | ProposedEvent::Explore { object_id, .. } => state
                 .objects
                 .get(object_id)
                 .map(|o| o.controller)
                 .unwrap_or(PlayerId(0)),
+            // CR 701.50a: The conniving permanent's controller is the affected
+            // player — they draw/discard and choose the connive replacement order.
+            ProposedEvent::Connive { subject, .. } => subject.controller,
             ProposedEvent::AddCounter { placement, .. } => match placement {
                 CounterPlacement::Object { object_id, .. } => state
                     .objects

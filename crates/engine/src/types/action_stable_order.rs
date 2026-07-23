@@ -171,6 +171,12 @@ fn cmp_payload(a: &GameAction, b: &GameAction) -> Ordering {
             };
             cmp_val(a0, b0)
         }
+        GameAction::ChooseZoneOpponentChooser { opponent: a0 } => {
+            let GameAction::ChooseZoneOpponentChooser { opponent: b0 } = b else {
+                unreachable!("cmp_payload: same-variant invariant");
+            };
+            cmp_val(a0, b0)
+        }
         GameAction::ChoosePileOpponent { opponent: a0 } => {
             let GameAction::ChoosePileOpponent { opponent: b0 } = b else {
                 unreachable!("cmp_payload: same-variant invariant");
@@ -209,11 +215,11 @@ fn cmp_payload(a: &GameAction, b: &GameAction) -> Ordering {
                 cmp_val(a0, b0)
             }
         }
-        GameAction::TapLandForMana { object_id: a0 } => {
-            let GameAction::TapLandForMana { object_id: b0 } = b else {
+        GameAction::TapLandForMana { selection: a0 } => {
+            let GameAction::TapLandForMana { selection: b0 } = b else {
                 unreachable!("cmp_payload: same-variant invariant");
             };
-            cmp_val(a0, b0)
+            a0.cmp_stable(b0)
         }
         GameAction::UntapLandForMana { object_id: a0 } => {
             let GameAction::UntapLandForMana { object_id: b0 } = b else {
@@ -747,8 +753,8 @@ fn cmp_payload(a: &GameAction, b: &GameAction) -> Ordering {
             };
             cmp_val(a0, b0)
         }
-        GameAction::DeclareCompanion { card_index: a0 } => {
-            let GameAction::DeclareCompanion { card_index: b0 } = b else {
+        GameAction::DeclareCompanion { choice: a0 } => {
+            let GameAction::DeclareCompanion { choice: b0 } = b else {
                 unreachable!("cmp_payload: same-variant invariant");
             };
             cmp_val(a0, b0)
@@ -852,6 +858,12 @@ fn cmp_payload(a: &GameAction, b: &GameAction) -> Ordering {
             {
                 cmp_val(a0, b0)
             }
+        }
+        GameAction::SetPriorityPassingMode { mode: a0 } => {
+            let GameAction::SetPriorityPassingMode { mode: b0 } = b else {
+                unreachable!("cmp_payload: same-variant invariant");
+            };
+            cmp_val(a0, b0)
         }
         GameAction::SetPriorityYield { op: a0 } => {
             let GameAction::SetPriorityYield { op: b0 } = b else {
